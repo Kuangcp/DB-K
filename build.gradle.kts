@@ -27,6 +27,8 @@ dependencies {
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("org.mariadb.jdbc:mariadb-java-client:3.5.1")
     implementation("com.h2database:h2:2.3.232")
+    // ClickHouse（jdbc:clickhouse://host:8123/db，HTTP 协议，默认端口 8123）
+    implementation("com.clickhouse:clickhouse-jdbc:0.7.2")
     // SQL 编辑器语法高亮（api-x 同源：NeoUtils Highlight Compose）
     implementation("com.neoutils.highlight:highlight-compose:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")

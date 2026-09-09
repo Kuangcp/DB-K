@@ -48,6 +48,7 @@ object DialectRegistry {
         DbType.MARIADB to MariaDbDialect,
         DbType.SQLITE to SQLiteDialect,
         DbType.H2 to H2Dialect,
+        DbType.CLICKHOUSE to ClickHouseDialect,
     )
 
     fun forType(type: DbType): DbDialect = dialects[type]

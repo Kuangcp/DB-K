@@ -18,7 +18,16 @@ fun main() {
     smokeSqlite(dir)
     smokeH2(dir)
 
-    Logger.info("smoke result: {}", "SQLite + H2 PASS")
+    // ClickHouse 无本地服务：仅验证驱动类可加载 + URL 格式（真实连接靠用户环境）
+    val chDriver = Class.forName(DbType.CLICKHOUSE.driverClass)
+    val chProfile = ConnectionProfile(
+        id = "smoke-ch", name = "smoke", dbType = DbType.CLICKHOUSE,
+        host = "localhost", port = DbType.CLICKHOUSE.defaultPort, database = "default",
+    )
+    Logger.info("[ClickHouse] driver={} url={}", chDriver.name, chProfile.urlPreview())
+    check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
+
+    Logger.info("smoke result: {}", "SQLite + H2 PASS (ClickHouse driver load OK)")
 }
 
 private fun smokeSqlite(dir: Path) {

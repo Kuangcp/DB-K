@@ -18,6 +18,8 @@ enum class DbType(
     MARIADB("MariaDB", "MA", 3306, "org.mariadb.jdbc.Driver", 0xFF5B3A8E),
     SQLITE("SQLite", "SQ", 0, "org.sqlite.JDBC", 0xFF0F80CC),
     H2("H2", "H2", 9092, "org.h2.Driver", 0xFF2E7D32),
+    // ClickHouse 徽章白字需深黄底：官方黄 #FFCC00 对比度过低，取暗金黄
+    CLICKHOUSE("ClickHouse", "CH", 8123, "com.clickhouse.jdbc.ClickHouseDriver", 0xFFB8860B),
 }
 
 /** 本地 JDBC 连接档案（存储模型，对应 connections 表一行）。 */
@@ -38,13 +40,16 @@ data class ConnectionProfile(
 ) {
     /** 生成 JDBC URL（编辑弹窗实时预览用；M2 连接时以方言实现为准）。 */
     fun urlPreview(): String {
+        // port=0（未显式设置）时回落类型默认端口，避免拼出 :0
+        val p = if (port > 0) port else dbType.defaultPort
         val base = when (dbType) {
-            DbType.POSTGRES -> "jdbc:postgresql://$host:$port/$database"
-            DbType.MYSQL -> "jdbc:mysql://$host:$port/$database"
-            DbType.MARIADB -> "jdbc:mariadb://$host:$port/$database"
+            DbType.POSTGRES -> "jdbc:postgresql://$host:$p/$database"
+            DbType.MYSQL -> "jdbc:mysql://$host:$p/$database"
+            DbType.MARIADB -> "jdbc:mariadb://$host:$p/$database"
             DbType.SQLITE -> "jdbc:sqlite:$database"
             // host 为空 → 本地文件模式（database 即文件路径）；否则 tcp 远程
-            DbType.H2 -> if (host.isBlank()) "jdbc:h2:$database" else "jdbc:h2:tcp://$host:$port/$database"
+            DbType.H2 -> if (host.isBlank()) "jdbc:h2:$database" else "jdbc:h2:tcp://$host:$p/$database"
+            DbType.CLICKHOUSE -> "jdbc:clickhouse://$host:$p/$database"
         }
         return if (extraParams.isNotBlank() && dbType != DbType.SQLITE) {
             "$base?${extraParams.trim().trimStart('?', '&')}"
