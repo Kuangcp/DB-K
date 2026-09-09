@@ -207,6 +207,10 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
                 ps.setString(1, id)
                 ps.executeUpdate()
             }
+            conn.prepareStatement("DELETE FROM meta_cache WHERE profile_id = ?").use { ps ->
+                ps.setString(1, id)
+                ps.executeUpdate()
+            }
             // 连接删除后其历史 profile_id 被 FK 置 NULL；顺带清理历史孤儿行
             conn.createStatement().use { it.executeUpdate("DELETE FROM sql_history WHERE profile_id IS NULL") }
             conn.commit()

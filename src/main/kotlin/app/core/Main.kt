@@ -239,8 +239,9 @@ private fun AppBody(
         }
     }
 
-    // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名（连接后已由上方预取进缓存，
-    // 数据来自数据源目录元信息；树是否展开不影响候选完整性）
+    // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名。
+    // 元数据（库列表 + 对象）已由 ConnectionsState 在连接建立时整体预取并读缓存（见 ensureConnectionReady），
+    // 数据来自数据源目录元信息；树是否展开不影响候选完整性。
     val completionIdentifiers: List<String> = activeProfile?.let { p ->
         connectionsState.schemasOf(p.id).orEmpty()
             .flatMap { s ->
@@ -298,14 +299,9 @@ private fun AppBody(
         scope.launch { consoleState.run(target, p) }
     }
 
-    // 编辑器补全元数据预取：数据源已连接时把全部 schema 的对象补全进内存缓存（树不必展开），
-    // ensureSchemaObjects 幂等——树展开先到也不重复查；失败单个 schema 不打断其余（仅置连接级消息）。
-    LaunchedEffect(activeProfile?.id, connectionsState.statusOf(activeProfile?.id.orEmpty())) {
-        val p = activeProfile ?: return@LaunchedEffect
-        if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) return@LaunchedEffect
-        val schemas = connectionsState.schemasOf(p.id) ?: return@LaunchedEffect
-        schemas.forEach { s -> connectionsState.ensureSchemaObjects(p, s) }
-    }
+    // 编辑器补全元数据已由 ConnectionsState 在连接建立时统一预取（缓存命中/查库回写），
+    // 不再依赖此处 keyed effect —— 旧的实现会在 CONNECTED 但库列表尚未加载完的窗口期提前
+    // return，库列表就绪后又没有重触发，导致双击连接后补全一直为空。
 
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
@@ -320,7 +316,15 @@ private fun AppBody(
                         onSelectRow = ::selectRow,
                         onToggleExpand = ::toggleRow,
                         onDisconnectConnection = ::disconnectProfile,
-                        onRefreshSchemas = { p -> scope.launch { connectionsState.refreshSchemas(p) } },
+                        onRefreshMetadata = { p ->
+                            scope.launch {
+                                val ok = connectionsState.refreshMetadata(p)
+                                toastState.show(
+                                    if (ok) "已刷新「${p.name}」元数据缓存"
+                                    else "刷新「${p.name}」失败：${connectionsState.statusMessageOf(p.id)?.take(80) ?: "未知错误"}",
+                                )
+                            }
+                        },
                         onCopyName = { row -> row.dbObject?.name?.let { writeClipboardText(it) } },
                         onCopyQuery = { row ->
                             val p = row.profile

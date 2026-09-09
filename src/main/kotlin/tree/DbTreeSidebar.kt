@@ -54,8 +54,11 @@ class RowActions(
     val onDeleteFolder: () -> Unit = {},
     val onEditConnection: () -> Unit = {},
     val onDeleteConnection: () -> Unit = {},
+    /** CONNECTION 行（未连接/失败）：连接该数据源。 */
+    val onConnect: () -> Unit = {},
     val onDisconnect: () -> Unit = {},
-    val onRefreshSchemas: () -> Unit = {},
+    /** CONNECTION 行（已连接）：重取该数据源目录元数据并刷新磁盘缓存。 */
+    val onRefreshMetadata: () -> Unit = {},
     val onCopyName: () -> Unit = {},
     val onCopyQuery: () -> Unit = {},
     /** CONNECTION 行：打开/激活该数据源的控制台。 */
@@ -68,9 +71,9 @@ class RowActions(
  * 左侧树：文件夹 → 连接 → 库(schema) → 对象组 → 表/视图/触发器。
  * 扁平化渲染：每行一个 [TreeRowInfo]，缩进按 depth。
  *
- * 交互约定：单击 = 选中；双击可展开行 = 展开/收起；
- * 展开箭头 / “连接”按钮统一走 onToggleExpand（连接未连接时由上层负责连接与懒加载）；
- * 右键按行类型给菜单。
+ * 交互约定：单击 = 选中；连接行未连接/连接失败时**双击 = 连接**（上层负责连接与懒加载库列表，
+ * 连接后自动展开）；已连接后双击 = 展开/收起；可展开行双击同箭头走 onToggleExpand。
+ * 右键按行类型给菜单（连接行右键菜单里的“连接/重新连接”是双击的兜底入口）。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -81,7 +84,7 @@ fun DbTreeSidebar(
     /** 展开/收起一行（FOLDER/CONNECTION/SCHEMA；连接未连接时上层据此发起连接）。 */
     onToggleExpand: (TreeRowInfo) -> Unit,
     onDisconnectConnection: (ConnectionProfile) -> Unit = {},
-    onRefreshSchemas: (ConnectionProfile) -> Unit = {},
+    onRefreshMetadata: (ConnectionProfile) -> Unit = {},
     onCopyName: (TreeRowInfo) -> Unit = {},
     onCopyQuery: (TreeRowInfo) -> Unit = {},
     onAddFolder: () -> Unit = {},
@@ -120,13 +123,14 @@ fun DbTreeSidebar(
                         onSelect = { onSelectRow(row.key) },
                         onToggle = { onToggleExpand(row) },
                         actions = RowActions(
+                            onConnect = { onToggleExpand(row) },
                             onAddConnectionAt = { onAddConnectionAt(row.folderId) },
                             onRenameFolder = { onRenameFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
                             onDeleteFolder = { onDeleteFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
                             onEditConnection = { row.profile?.let(onEditConnection) },
                             onDeleteConnection = { row.profile?.let(onDeleteConnection) },
                             onDisconnect = { row.profile?.let(onDisconnectConnection) },
-                            onRefreshSchemas = { row.profile?.let(onRefreshSchemas) },
+                            onRefreshMetadata = { row.profile?.let(onRefreshMetadata) },
                             onCopyName = { onCopyName(row) },
                             onCopyQuery = { onCopyQuery(row) },
                             onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
@@ -150,12 +154,12 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<ContextMenuItem
         TreeRowKind.CONNECTION -> {
             val items = buildList {
                 when (row.connStatus) {
-                    ConnUiStatus.DISCONNECTED -> add(ContextMenuItem("连接") { actions.onAddConnectionAt() })
+                    ConnUiStatus.DISCONNECTED -> add(ContextMenuItem("连接") { actions.onConnect() })
                     ConnUiStatus.CONNECTING -> add(ContextMenuItem("连接中…", enabled = false) {})
-                    ConnUiStatus.ERROR -> add(ContextMenuItem("重新连接") { actions.onAddConnectionAt() })
+                    ConnUiStatus.ERROR -> add(ContextMenuItem("重新连接") { actions.onConnect() })
                     ConnUiStatus.CONNECTED -> {
                         add(ContextMenuItem("断开连接") { actions.onDisconnect() })
-                        add(ContextMenuItem("刷新库列表") { actions.onRefreshSchemas() })
+                        add(ContextMenuItem("刷新元数据缓存") { actions.onRefreshMetadata() })
                     }
                     null -> {}
                 }
@@ -281,6 +285,9 @@ private fun TreeRowView(
             val double = lastClickMs != 0L && now - lastClickMs < doubleTapMs
             lastClickMs = if (double) 0L else now
             when {
+                // 双击连接行：未连接/失败 → 连接（CONNECTING 忽略，避免重复触发）
+                double && row.kind == TreeRowKind.CONNECTION && row.connStatus != ConnUiStatus.CONNECTED ->
+                    if (row.connStatus == ConnUiStatus.CONNECTING) onSelect() else onToggle()
                 // 双击表/视图/物化视图 → 预览；双击可展开行 → 展开/收起；其余对象无预览语义
                 double && row.kind == TreeRowKind.DB_OBJECT && row.dbObject?.kind?.isPreviewable() == true ->
                     actions.onPreviewTable()
@@ -305,18 +312,8 @@ private fun TreeRowView(
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                 }
                 TreeRowKind.CONNECTION -> {
-                    if (canExpand) {
-                        ExpandArrow(row.expanded, onToggle)
-                    } else if (row.connStatus != ConnUiStatus.DISCONNECTED) {
-                        Spacer(Modifier.width(16.dp))
-                    }
-                    // 未连接时把“连接”入口放在名称前（箭头位）
-                    row.profile?.let {
-                        if (row.connStatus == ConnUiStatus.DISCONNECTED) {
-                            ConnectPill(onClick = onToggle)
-                            Spacer(Modifier.width(5.dp))
-                        }
-                    }
+                    // 连接入口：未连接/失败时双击整行连接（箭头位仅占位保持对齐，无丑按钮）
+                    if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
                     row.profile?.let { TypeBadge(it.dbType) }
                     RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp)
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
@@ -402,20 +399,6 @@ private fun RowName(name: String, modifier: Modifier, fontSize: androidx.compose
         overflow = TextOverflow.Ellipsis,
         color = MaterialTheme.colors.onSurface.copy(alpha = 0.92f),
         modifier = modifier,
-    )
-}
-
-@Composable
-private fun ConnectPill(onClick: () -> Unit) {
-    Text(
-        "连接",
-        fontSize = 10.sp,
-        color = Color.White,
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colors.primary.copy(alpha = 0.85f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 5.dp, vertical = 1.dp),
     )
 }
 

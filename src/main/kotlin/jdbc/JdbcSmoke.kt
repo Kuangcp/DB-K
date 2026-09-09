@@ -40,7 +40,7 @@ fun main() {
     check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
 
     smokeEditorUtils()
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault) + editor-utils PASS (ClickHouse driver load OK)")
+    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils PASS (ClickHouse driver load OK)")
 }
 
 /** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */
@@ -272,6 +272,42 @@ private fun smokeDbStore(dir: Path) {
         repo.clearHistoryForProfile(pid)
         check(repo.listHistoryByProfile(pid).isEmpty())
         Logger.info("[db-store] history clear PASS", "PASS")
+
+        // v5：meta_cache 迁移 + 目录元数据磁盘缓存读写（JSON 含枚举 key / 可空字段）
+        val cacheProfile = repo.getConnection(pid)!!
+        val mc = db.MetaCache(dbFile)
+        val schemas = listOf(
+            jdbc.model.SchemaMeta("smoke", null),
+            jdbc.model.SchemaMeta("aux", "public"),
+        )
+        val objects = mapOf(
+            schemas[0].key to jdbc.model.SchemaObjects(mapOf(
+                ObjectKind.TABLE to listOf(
+                    jdbc.model.DbObjectMeta("t1", ObjectKind.TABLE),
+                    jdbc.model.DbObjectMeta("t2", ObjectKind.TABLE),
+                ),
+            )),
+            schemas[1].key to jdbc.model.SchemaObjects(mapOf(
+                ObjectKind.TABLE to listOf(jdbc.model.DbObjectMeta("accounts", ObjectKind.TABLE)),
+                ObjectKind.MATERIALIZED_VIEW to listOf(jdbc.model.DbObjectMeta("mv1", ObjectKind.MATERIALIZED_VIEW)),
+                ObjectKind.SEQUENCE to listOf(jdbc.model.DbObjectMeta("seq1", ObjectKind.SEQUENCE)),
+                ObjectKind.TRIGGER to listOf(jdbc.model.DbObjectMeta("trg_ins", ObjectKind.TRIGGER, "accounts")),
+            )),
+        )
+        mc.save(cacheProfile, schemas, objects)
+        val hit = mc.load(cacheProfile)
+        check(hit != null && hit.schemas == schemas && hit.objects == objects && !hit.stale) {
+            "缓存读写回环失败"
+        }
+        // URL 身份变了 → 指纹失配，视为未命中（不喂错库的数据）
+        check(mc.load(cacheProfile.copy(host = "other-host")) == null) { "URL 变化应失配" }
+        Logger.info("[db-store] v5 meta_cache 迁移/读写 PASS", "PASS")
+
+        // 删除连接档案 → 级联清掉缓存行
+        mc.save(cacheProfile, schemas, objects)
+        repo.deleteConnection(pid)
+        check(mc.load(cacheProfile) == null) { "删除档案后缓存行应被清理" }
+        Logger.info("[db-store] meta_cache 删除级联 PASS", "PASS")
     }
     Files.deleteIfExists(dbFile)
 }

@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 4
+    private const val CURRENT_VERSION = 5
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -44,6 +44,25 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV4(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (4)").use { it.executeUpdate() }
         }
+        if (!applied.contains(5)) {
+            conn.createStatement().use { st -> migrateToV5(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (5)").use { it.executeUpdate() }
+        }
+    }
+
+    /** v5：数据源目录元数据磁盘缓存（库列表 + 各库对象 JSON），支撑“连接默认读缓存、右键刷新”。 */
+    private fun migrateToV5(st: Statement) {
+        st.executeUpdate(
+            """
+            CREATE TABLE IF NOT EXISTS meta_cache (
+                profile_id TEXT PRIMARY KEY NOT NULL,
+                fingerprint TEXT NOT NULL,
+                saved_at_ms INTEGER NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_meta_cache_fp ON meta_cache(fingerprint)")
     }
 
     /** v4：consoles 记录每控制台的执行目标库/schema（"" = 连接默认）。 */

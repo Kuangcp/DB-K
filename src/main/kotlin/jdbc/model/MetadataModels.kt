@@ -1,9 +1,12 @@
 package jdbc.model
 
+import kotlinx.serialization.Serializable
+
 /**
  * 树中“库”节点：JDBC 中 catalog/schema 语义因库而异（PG 多 schema 单库、
  * MySQL 多 catalog、SQLite 伪 schema main、H2 多 schema），此处合一表示。
  */
+@Serializable
 data class SchemaMeta(
     val catalog: String?,
     val schema: String?,
@@ -19,6 +22,7 @@ data class SchemaMeta(
  * 对象类型（对象组粒度）。各库只产出自己支持的类型：
  * 通用库 = 表/视图/触发器；PG 细分出物化视图/序列/例程等（见 PostgresDialect）。
  */
+@Serializable
 enum class ObjectKind {
     TABLE, VIEW, TRIGGER, MATERIALIZED_VIEW, SEQUENCE,
     ROUTINE, AGGREGATE, OPERATOR, TYPE, OPERATOR_CLASS, OPERATOR_FAMILY,
@@ -46,6 +50,7 @@ val ObjectKind.displayNoun: String
     }
 
 /** 表 / 视图 / 序列……对象节点。TRIGGER 时 tableName 为其所属表名。 */
+@Serializable
 data class DbObjectMeta(
     val name: String,
     val kind: ObjectKind,
@@ -58,6 +63,7 @@ data class DbObjectMeta(
  * 内部以 Map<ObjectKind, List<DbObjectMeta>> 表达（各库只填自己支持的类型），
  * 另提供 tables/views/triggers 便捷读法供预览与补全等既有调用使用。
  */
+@Serializable
 data class SchemaObjects(
     val objects: Map<ObjectKind, List<DbObjectMeta>> = emptyMap(),
 ) {

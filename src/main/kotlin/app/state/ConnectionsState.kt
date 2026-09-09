@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import db.ConnectionProfile
+import db.MetaCache
 import jdbc.LiveConnection
 import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
@@ -28,13 +29,22 @@ internal fun friendlySqlError(t: Throwable?): String {
         else -> (root.message ?: root.javaClass.simpleName).take(180)
     }
 }
+
 /**
  * 连接运行时状态：profileId -> ConnRuntime。
  * 每条连接一个 LiveConnection（单线程串行 JDBC），所有探测/执行经 Dispatchers.IO。
  * UI 可观察状态全部是 compose snapshot（status/schemas/objects…），
  * 方法为 suspend，由 UI 协程调用（内部切 IO 后再写回 snapshot 状态）。
+ *
+ * 目录元数据（库列表 + 各库对象）统一走 [MetaCache] 磁盘缓存：
+ * - 连接只负责 JDBC 建连；库/对象默认读缓存入内存 → 编辑器补全与树展开立即可用、零目标库查询；
+ * - 缓存未命中（首连/URL 变更）才查库，并把“全部 schema 对象”整体预取回写缓存；
+ * - 缓存过期：先用缓存展示，后台静默重取一次（受 TTL 约束，不对数据库造成周期性压力）；
+ * - 右键「刷新元数据缓存」= 主动整体重取 + 回写。
  */
-class ConnectionsState : ConnectionRuntimeView {
+class ConnectionsState(
+    private val metaCache: MetaCache = MetaCache(),
+) : ConnectionRuntimeView {
 
     private class ConnRuntime(val profile: ConnectionProfile) {
         val live = LiveConnection(profile)
@@ -45,6 +55,8 @@ class ConnectionsState : ConnectionRuntimeView {
         var schemasLoading by mutableStateOf(false)
         val objects = mutableStateMapOf<String, SchemaObjects>()
         val objectsLoading = mutableStateMapOf<String, Boolean>()
+        /** 后台静默重取进行中标记（防重复）。非 UI 展示，普通字段即可。 */
+        var backgroundRefreshing = false
 
         fun reset() {
             live.close()
@@ -54,6 +66,7 @@ class ConnectionsState : ConnectionRuntimeView {
             schemasLoading = false
             objects.clear()
             objectsLoading.clear()
+            backgroundRefreshing = false
         }
     }
 
@@ -80,11 +93,13 @@ class ConnectionsState : ConnectionRuntimeView {
     override fun objectsLoadingOf(profileId: String, schemaKey: String): Boolean =
         runtimes[profileId]?.objectsLoading?.get(schemaKey) == true
 
-    // ---------- 动作（suspend；UI 协程调用） ----------
+    // ---------- 连接 / 元数据（suspend；UI 协程调用，内部切 IO） ----------
 
     /**
-     * 展开连接：未连接则连接；已连接则确保库列表已加载（幂等，可并发调）。
-     * 成功后 status=CONNECTED 且 schemas 就绪；失败 status=ERROR + message。
+     * 展开连接：未连接则连接（只建 JDBC 连接，不查目录元数据）；已连接则确保元数据就绪。
+     * 元数据流程见类注释：缓存命中/过期/未命中三种路径，成功后 status=CONNECTED 且
+     * schemas 就绪、对象已整体入缓存（编辑器补全与树展开不依赖额外预取触发）。
+     * 幂等，可并发调（CONNECTING / schemasLoading 期间调用直接返回）。
      */
     suspend fun ensureConnectionReady(profile: ConnectionProfile) {
         val rt = runtime(profile)
@@ -103,27 +118,93 @@ class ConnectionsState : ConnectionRuntimeView {
             rt.status = ConnUiStatus.CONNECTED
         }
         if (rt.schemas == null && !rt.schemasLoading) {
-            loadSchemas(rt)
+            loadMetadata(rt)
         }
     }
 
-    private suspend fun loadSchemas(rt: ConnRuntime) {
+    /** 元数据获取唯一入口：缓存命中(含过期) → 入内存；未命中 → 查库整体预取回写。 */
+    private suspend fun loadMetadata(rt: ConnRuntime) {
         rt.schemasLoading = true
         rt.statusMessage = null
-        val result = withContext(Dispatchers.IO) {
-            runCatching { rt.live.loadSchemas() }
-        }
-        rt.schemasLoading = false
-        result.onSuccess { rt.schemas = it }
-            .onFailure {
-                Logger.error(it, "load schemas failed {}", rt.profile.name)
-                rt.status = ConnUiStatus.ERROR
-                rt.statusMessage = friendlyMessage(it)
+        val cached = withContext(Dispatchers.IO) { metaCache.load(rt.profile) }
+        if (cached != null) {
+            applyMetadata(rt, cached.schemas, cached.objects)
+            rt.schemasLoading = false
+            if (cached.stale) {
+                Logger.info("meta cache stale for {}; silent background refresh", rt.profile.name)
+                backgroundRefresh(rt)
             }
+            return
+        }
+        val fetched = fetchFreshMetadata(rt)
+        rt.schemasLoading = false
+        fetched.onFailure { t ->
+            Logger.error(t, "load metadata failed {}", rt.profile.name)
+            rt.status = ConnUiStatus.ERROR
+            rt.statusMessage = friendlyMessage(t)
+        }
     }
 
     /**
-     * 展开 schema：确保其对象已加载（幂等）。
+     * 显式刷新（右键数据源 → 刷新元数据缓存）：清内存后整体重取并回写磁盘缓存。
+     * @return 是否成功；失败时状态置 ERROR（含原因），可再次连接重试。
+     */
+    suspend fun refreshMetadata(profile: ConnectionProfile): Boolean {
+        val rt = runtimes[profile.id] ?: return false
+        if (rt.status != ConnUiStatus.CONNECTED) return false
+        rt.schemas = null
+        rt.objects.clear()
+        rt.objectsLoading.clear()
+        rt.schemasLoading = true
+        val result = fetchFreshMetadata(rt)
+        rt.schemasLoading = false
+        result.onFailure { t ->
+            Logger.error(t, "refresh metadata failed {}", profile.name)
+            rt.status = ConnUiStatus.ERROR
+            rt.statusMessage = friendlyMessage(t)
+        }
+        return result.isSuccess
+    }
+
+    /** 查库全量元数据并回写缓存（整体预取：编辑器补全依赖全部 schema 对象）。 */
+    private suspend fun fetchFreshMetadata(rt: ConnRuntime): Result<Unit> {
+        val outcome = withContext(Dispatchers.IO) {
+            runCatching { loadAllMetaFromDb(rt) }
+        }
+        outcome.onSuccess { (schemas, objects, warn) ->
+            applyMetadata(rt, schemas, objects)
+            if (warn != null) rt.statusMessage = warn
+            withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, objects) }
+        }
+        return outcome.map { }
+    }
+
+    /**
+     * 缓存过期后的后台静默刷新：不闪占位符、不打断浏览——成功才整体替换 + 回写。
+     * 频率受 TTL 约束（过期连接时最多一次）；失败仅记日志，沿用旧缓存。
+     */
+    private suspend fun backgroundRefresh(rt: ConnRuntime) {
+        if (rt.backgroundRefreshing) return
+        rt.backgroundRefreshing = true
+        try {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { loadAllMetaFromDb(rt) }
+            }
+            outcome.onSuccess { (schemas, objects, warn) ->
+                applyMetadata(rt, schemas, objects)
+                if (warn != null) rt.statusMessage = warn
+                withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, objects) }
+            }.onFailure {
+                Logger.error(it, "background meta refresh failed {}", rt.profile.name)
+            }
+        } finally {
+            rt.backgroundRefreshing = false
+        }
+    }
+
+    /**
+     * 展开 schema：确保其对象已加载（幂等）。缓存命中时对象已在内存；个别 schema 因
+     * 刷新/预取失败未入缓存时，这里兜底查库。
      * schema 展开错误直接置 statusMessage（连接级显示），对象失败不打断其它 schema。
      */
     suspend fun ensureSchemaObjects(profile: ConnectionProfile, schema: SchemaMeta) {
@@ -142,22 +223,12 @@ class ConnectionsState : ConnectionRuntimeView {
             }
     }
 
-    /** 刷新库列表：清对象缓存后重载 schemas（连接保持）。 */
-    suspend fun refreshSchemas(profile: ConnectionProfile) {
-        val rt = runtime(profile)
-        if (rt.status != ConnUiStatus.CONNECTED) return
-        rt.schemas = null
-        rt.objects.clear()
-        rt.objectsLoading.clear()
-        loadSchemas(rt)
-    }
-
-    /** 主动断开。 */
+    /** 主动断开：只放连接与内存运行时，磁盘缓存保留（下次连接直接命中，零元数据查询）。 */
     fun disconnect(profile: ConnectionProfile) {
         runtime(profile).reset()
     }
 
-    /** 档案被编辑（URL 可能变）：断开并丢弃运行缓存。 */
+    /** 档案被编辑（URL 可能变）：断开并丢弃运行缓存；指纹失配的旧缓存行自动作废。 */
     fun invalidate(profileId: String) {
         runtimes.remove(profileId)?.live?.close()
     }
@@ -169,9 +240,10 @@ class ConnectionsState : ConnectionRuntimeView {
     fun cancelCurrentQuery(profileId: String): Boolean =
         runtimes[profileId]?.live?.cancelCurrentQuery() ?: false
 
-    /** 档案被删除。 */
+    /** 档案被删除：丢运行时并清磁盘缓存行。 */
     fun forget(profileId: String) {
         invalidate(profileId)
+        metaCache.delete(profileId)
     }
 
     /** 应用退出清理。 */
@@ -180,7 +252,44 @@ class ConnectionsState : ConnectionRuntimeView {
         runtimes.clear()
     }
 
-    /** 树收起时是否可释放：M2 缓存策略 —— 不释放，连接保持到断开/退出。 */
+    // ---------- 内部 ----------
+
+    /** 把新元数据整体替换进运行时（对象加载标记一并复位）。 */
+    private fun applyMetadata(
+        rt: ConnRuntime,
+        schemas: List<SchemaMeta>,
+        objects: Map<String, SchemaObjects>,
+    ) {
+        rt.schemas = schemas
+        rt.objects.clear()
+        rt.objects.putAll(objects)
+        rt.objectsLoading.clear()
+    }
+
+    /**
+     * 阻塞读库全量元数据（调用方负责切 IO）：
+     * 库列表失败抛异常；单个 schema 的对象失败只记消息不打断（对齐旧的 ensureSchemaObjects 语义）。
+     * @return schemas、各库对象（schema.key → SchemaObjects）、警告消息（可能有对象未取到）。
+     */
+    private fun loadAllMetaFromDb(
+        rt: ConnRuntime,
+    ): Triple<List<SchemaMeta>, Map<String, SchemaObjects>, String?> {
+        val live = rt.live
+        val schemas = live.loadSchemas()
+        val objects = linkedMapOf<String, SchemaObjects>()
+        val failed = mutableListOf<String>()
+        schemas.forEach { s ->
+            runCatching { live.loadObjects(s) }
+                .onSuccess { objects[s.key] = it }
+                .onFailure { t ->
+                    Logger.error(t, "load objects failed {} {}", rt.profile.name, s.displayName)
+                    failed += s.displayName
+                }
+        }
+        val warn = if (failed.isEmpty()) null else "对象加载失败：${failed.joinToString("、").take(60)}"
+        return Triple(schemas, objects, warn)
+    }
+
     companion object {
         private fun friendlyMessage(t: Throwable?): String = friendlySqlError(t)
     }
