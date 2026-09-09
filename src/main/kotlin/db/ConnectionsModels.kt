@@ -51,9 +51,17 @@ data class ConnectionProfile(
             DbType.H2 -> if (host.isBlank()) "jdbc:h2:$database" else "jdbc:h2:tcp://$host:$p/$database"
             DbType.CLICKHOUSE -> "jdbc:clickhouse://$host:$p/$database"
         }
-        return if (extraParams.isNotBlank() && dbType != DbType.SQLITE) {
-            "$base?${extraParams.trim().trimStart('?', '&')}"
-        } else base
+        // 拼接查询参数；ClickHouse 默认关 HTTP 压缩：驱动默认 compress=true，期望 ClickHouse-LZ4
+        // 帧（0x82…），但经反代/网关/内网转发链路常返回未压缩体导致 “Magic is not correct”。
+        // 用户在“附加参数”显式写 compress=… 时尊重其选择。
+        var params = extraParams.trim().trimStart('?', '&')
+        if (dbType == DbType.CLICKHOUSE &&
+            extraParams.split('&', ';', '?')
+                .none { it.trim().startsWith("compress=", ignoreCase = true) }
+        ) {
+            params = if (params.isEmpty()) "compress=0" else "compress=0&$params"
+        }
+        return if (params.isNotEmpty() && dbType != DbType.SQLITE) "$base?$params" else base
     }
 }
 
