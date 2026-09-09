@@ -6,6 +6,7 @@ import org.tinylog.Logger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -63,9 +64,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -171,6 +176,17 @@ fun SqlWorkspace(
     LaunchedEffect(activeConsole?.id) {
         transposed = false
     }
+    // —— 编辑区/结果区分隔 ——
+    // 编辑区与结果区按比例分配剩余高度（resultFrac 归结果区）；拖动中部窄分隔条实时改比例
+    // （像素差 / 内容区可用高换算，窗口缩放不改变已设比例）。Alt+B 隐藏/显示结果区；
+    // 新执行结果到达时自动重新显示，避免隐藏状态下“跑完看不到结果”。
+    var resultsVisible by remember { mutableStateOf(true) }
+    var resultFrac by remember { mutableStateOf(0.5f) }
+    // 内容区总高度（px，拖动换算用）
+    var paneH by remember { mutableStateOf(0) }
+    LaunchedEffect(run.result) {
+        if (run.result != null && !resultsVisible) resultsVisible = true
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -185,6 +201,11 @@ fun SqlWorkspace(
                 // Ctrl+T 行列转制（仅在有可转置结果时消费，避免与其它用途冲突）
                 if (e.isCtrlPressed && e.key == Key.T && canTranspose(run)) {
                     transposed = !transposed
+                    return@onPreviewKeyEvent true
+                }
+                // Alt+B：显示/隐藏底部执行结果区
+                if (e.isAltPressed && e.key == Key.B) {
+                    resultsVisible = !resultsVisible
                     return@onPreviewKeyEvent true
                 }
                 // Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
@@ -256,40 +277,69 @@ fun SqlWorkspace(
             if (tfv.text != editorText) tfv = TextFieldValue(editorText, TextRange(editorText.length))
         }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .onSizeChanged { paneH = it.height },
+            ) {
                 Column(
                     modifier = Modifier.fillMaxSize().padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    EditorPane(
-                        value = tfv,
-                        dirty = editorDirty,
-                        onValueChange = { v -> tfv = v; onTextChange(v.text) },
-                        onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
-                        completionIdentifiers = completionIdentifiers,
-                        modifier = Modifier.weight(0.44f).fillMaxWidth(),
-                    )
-                    ExecBar(
-                        executing = run.executing,
-                        result = run.result,
-                        error = run.error,
-                        transposed = transposed,
-                        onToggleTranspose = { transposed = !transposed },
-                        onRun = { onRun(selectedSqlOf(tfv)) },
-                        onCancel = onCancelRun,
-                        onClear = onClear,
-                        onExportCsv = onExportCsv,
-                        onExportAllCsv = onExportAllCsv,
-                        exportEnabled = exportEnabledFor(run),
-                        enabled = status != ConnUiStatus.CONNECTING,
-                    )
-                    ResultPane(
-                        result = run.result,
-                        error = run.error,
-                        transposed = transposed,
-                        onCopyText = onCopyText,
-                        modifier = Modifier.weight(0.56f).fillMaxWidth(),
-                    )
+                    // 上半块：编辑器（吃满剩余高）+ 执行条；下半块：分隔条 + 结果区。
+                    // 两块按 resultFrac 比例分剩余高，分隔条拖动即改比例。
+                    Column(
+                        modifier = Modifier
+                            .weight(if (resultsVisible) 1f - resultFrac else 1f)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        EditorPane(
+                            value = tfv,
+                            dirty = editorDirty,
+                            onValueChange = { v ->
+                                val textChanged = v.text != tfv.text
+                                tfv = v
+                                // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
+                                // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
+                                if (textChanged) onTextChange(v.text)
+                            },
+                            onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
+                            completionIdentifiers = completionIdentifiers,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                        ExecBar(
+                            executing = run.executing,
+                            result = run.result,
+                            error = run.error,
+                            transposed = transposed,
+                            onToggleTranspose = { transposed = !transposed },
+                            onRun = { onRun(selectedSqlOf(tfv)) },
+                            onCancel = onCancelRun,
+                            onClear = onClear,
+                            onExportCsv = onExportCsv,
+                            onExportAllCsv = onExportAllCsv,
+                            exportEnabled = exportEnabledFor(run),
+                            enabled = status != ConnUiStatus.CONNECTING,
+                        )
+                    }
+                    if (resultsVisible) {
+                        // 拖动分隔条：像素差 / 可用高 → 比例增量；窗口缩放不改变已设比例。
+                        ResultSplitter(
+                            paneHeightPx = paneH,
+                            onDragDeltaPx = { delta ->
+                                resultFrac = (resultFrac + delta).coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)
+                            },
+                        )
+                        ResultPane(
+                            result = run.result,
+                            error = run.error,
+                            transposed = transposed,
+                            onCopyText = onCopyText,
+                            modifier = Modifier.weight(resultFrac).fillMaxWidth(),
+                        )
+                    }
                 }
             }
             if (showHistory) {
@@ -1176,6 +1226,47 @@ private fun ExecBar(
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
             )
         }
+    }
+}
+
+/** 结果区占上下两块剩余高的比例下限/上限（拖动 clamp 用）。 */
+private const val MIN_RESULT_FRAC = 0.15f
+private const val MAX_RESULT_FRAC = 0.85f
+
+/**
+ * 编辑区/结果区分隔条：12dp 热区整条可上下拖动（悬停 N/S 双向箭头光标），
+ * 中央一条浅色短线作视觉提示。拖动像素按内容区可用高换算成比例增量后由上层累加。
+ */
+@Composable
+private fun ResultSplitter(
+    paneHeightPx: Int,
+    onDragDeltaPx: (Float) -> Unit,
+) {
+    // 固定开销：上下 padding 10+10、外侧 spacedBy 两处 8、本条高 12 —— 不算入比例换算基数
+    val chromePx = LocalDensity.current.run { 48.dp.toPx() }
+    val resizeCursor = remember {
+        PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.N_RESIZE_CURSOR))
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(12.dp)
+            .pointerHoverIcon(resizeCursor)
+            .pointerInput(paneHeightPx) {
+                detectVerticalDragGestures { _, dragAmount ->
+                    val free = (paneHeightPx - chromePx).coerceAtLeast(1f)
+                    onDragDeltaPx(dragAmount / free)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.15f)),
+        )
     }
 }
 
