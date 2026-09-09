@@ -11,10 +11,8 @@
 
 **执行与结果区**
 
-- 长查询取消：执行中按钮变"取消"，Esc 可中断。注意：LiveConnection 是单线程执行器，取消语义要先想清楚（Statement.cancel 各驱动支持不一，ClickHouse HTTP 驱动基本不支持 → 至少支持"放弃等待 + 状态复位"，别误伤同连接后续查询）
 - 单元格复制：点击/右键复制单元格值（NULL 显示灰色 "(NULL)"，复制为空串要有明确规则）
 - 复制行 → INSERT 语句（右键菜单）
-- 结果截断提示：QueryExecutor 现 MAX_ROWS=1000，超出只打日志 + meta 显示"（截断）"；需要执行后明显提示，并考虑"导出 CSV 是否绕过上限"
 
 **数据源支持**
 
@@ -56,13 +54,11 @@
 
 **历史与日志**
 
-- sql_history 表已建（AppDatabase DDL）但无任何写入、无 UI：执行记录（时间/连接/SQL/状态/耗时/行数）落库，控制台旁挂历史面板（或 Alt+K），双击回填编辑器
 - 应用内"打开 logs 目录"入口（现在只能手动 find）
 
 **清理与技术债**
 
 - `app/ui/RightPane.kt` 全工程无引用（M1 首页列表遗留，现被树+SqlWorkspace 取代）→ 确认后整体删除
-- `Main.kt` previewObject 注释写"预览前 200 行"，实际 `previewSelect` 是 LIMIT 100，两处统一
 - TODO 里"支持 CK 数据库"已完成，勿再重复排期（含反代链路的 compress=0 兼容处理）
 
 **工程与发布**

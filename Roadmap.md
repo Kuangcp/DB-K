@@ -26,7 +26,7 @@
 | M0 脚手架 | ✅ | — |
 | M1 元数据+树 | ✅ | — |
 | M2 JDBC 运行时 | ✅ | ClickHouse 已并入（compress=0 反代兼容已修） |
-| M3 编辑执行 | ✅ 主闭环 | sql_history 未接线；无取消执行（→ P1） |
+| M3 编辑执行 | ✅ 主闭环 | 取消执行/历史落库已并入 P1 完成（待人工验收）；P2 起转向体验增强 |
 | M4 体验打磨 | ✅ | 右键菜单/预览/CSV/几何/主题齐；单元测试缺位（→ P5） |
 | M5 打包发布 | ⏳ 配置就绪未产出 | 首次构建 Deb + 干净环境安装验证（→ P5） |
 
@@ -36,12 +36,15 @@
 （P3），随后按需扩数据源（P4），最后收敛工程债并发布（P5）。远期能力不进核心线
 （§5），与 DESIGN「第一版不做」边界保持一致。
 
-### P1 执行闭环补全（短周期，先做）
+### P1 执行闭环补全 ✅（已实现，待人工验收）
 范围：
-- 长查询可取消（UI"取消"+ Esc），语义：单线程执行器上放弃等待并复位状态，不误伤同连接后续查询
-- sql_history 落库（执行时间/连接/SQL/成功与否/耗时/行数）+ 历史面板（双击回填编辑器）
-- 结果 >1000 行截断时明显提示；导出 CSV 不受该上限影响
-验收：跑一个超长查询可取消且连接仍可用；重开应用后历史仍在且能回填；smokeJdbc 绿。
+- 长查询可取消（UI「取消 (Esc)」+ Esc），语义：单线程执行器上放弃等待并复位状态，不误伤同连接后续查询
+- sql_history 落库（执行时间/连接/SQL/成功与否/耗时/行数）+ 右侧历史面板（双击回填编辑器、可清空）
+- 结果 >1000 行截断时醒目提示；「导出全量 CSV」重跑 SQL 流式导出（不受上限影响）
+落点：`jdbc/QueryExecutor|LiveConnection`（registerStatement/cancelCurrentQuery）、
+`app/state/ConsoleState`（代次守卫 + recordHistory）、`app/ui/HistoryPanel`、
+`app/core/CsvExport.exportAll`、`db/AppDatabase v3`、`JdbcSmoke`（cancel + v2→v3 自检）。
+验收口径：跑一个超长查询可取消且连接仍可用；重开应用后历史仍在且能回填；smokeJdbc 绿。
 
 ### P2 编辑器与结果体验（编辑器是日常主战场）
 范围：
@@ -65,7 +68,7 @@
 ### P5 工程收敛与发布
 范围：
 - 单测起步：urlPreview / quoteIdent / isSystemSchemaName / 树行派生（jdbc、tree、db 层均可测）
-- 清理：RightPane.kt 死代码、注释口径（预览 200 vs 100）
+- 清理：RightPane.kt 死代码（TODO 已列）
 - M5 打包：首次 `gradle createDistributable`/Deb，干净环境安装自检（jlink 补 java.sql 等模块、图标、启动即出窗口）
 验收：CI 习惯可跑 `compileKotlin + smokeJdbc + test`；Deb 安装后 demo 连接（SQLite）可开可查。
 
