@@ -50,15 +50,16 @@
 
 ## 会话日志（每次启动一个文件，按月分目录）★ 必读
 
-- 约定：`logs/<yyyy-MM>/<yyyy-MM-dd>_<N>.log`（N=当天会话序号，同一天每启动一次 +1），
-  目录相对工作目录 `logs/`；可用 `-Ddbk.logDir=<dir>` 覆盖。已加 .gitignore。
+- 约定：`<dataDir>/logs/<yyyy-MM>/<yyyy-MM-dd>_<N>.log`（N=当天会话序号，同一天每启动一次 +1），
+  目录默认在应用数据目录下（Linux `~/.local/share/db-k/logs/`，跟随 AppPaths debugHome 重定向），
+  不再落在项目/工作目录；可用 `-Ddbk.logDir=<dir>` 覆盖。
 - 实现：自定义 tinylog writer `app/core/SessionLogWriter.kt`，注册于 `src/main/resources/tinylog.properties`
   （`writer2 = app.core.SessionLogWriter`；`writer = console` 保留开发输出）。
 - 依赖：`tinylog-impl` 是 **implementation**（writer 类编译需要 writers 抽象类）。
 - 坑：tinylog 懒初始化——只有首次 `Logger.*` 调用才建 writer。所以 `main()` 第一行必须有确定的首条日志
   （现为 `Logger.info("db-k session start; …")`）；新增启动流程不要删它。
 - writer 构造：必须同时提供无参与 `(Map<String,String>)` 两个公开构造（tinylog 反射实例化用）。
-- 新增「运行日志写哪」自查：`find logs -name '*.log' | tail` 应与今天日期/启动次数对应。
+- 新增「运行日志写哪」自查：`find ~/.local/share/db-k/logs -name '*.log' | tail` 应与今天日期/启动次数对应。
 
 ### 自查
 

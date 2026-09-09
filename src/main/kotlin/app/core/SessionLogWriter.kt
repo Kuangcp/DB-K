@@ -15,9 +15,10 @@ import kotlin.concurrent.withLock
  * tinylog 2.x 自定义 writer（注册见 src/main/resources/tinylog.properties：writer2 = app.core.SessionLogWriter）。
  *
  * 每次进程启动新建一个日志文件，便于按「会话」排查问题：
- *   logs/2026-09/2026-09-04_0.log、logs/2026-09/2026-09-04_1.log（同一天多次启动，序号递增）
+ *   <dataDir>/logs/2026-09/2026-09-04_0.log、…/2026-09-04_1.log（同一天多次启动，序号递增）
  *
- * 日志根目录默认相对工作目录的 logs/；可用 -Ddbk.logDir=<dir> 覆盖（M5 打包后指向用户目录）。
+ * 日志根目录默认在应用数据目录下（Linux ~/.local/share/db-k/logs/，跟随 AppPaths debugHome
+ * 重定向），避免落在项目/工作目录；可用 -Ddbk.logDir=<dir> 覆盖。
  */
 class SessionLogWriter() : AbstractWriter(emptyMap()) {
 
@@ -29,7 +30,8 @@ class SessionLogWriter() : AbstractWriter(emptyMap()) {
     private val out: BufferedWriter
 
     init {
-        val root = File(System.getProperty("dbk.logDir") ?: "logs")
+        val root = System.getProperty("dbk.logDir")?.let(::File)
+            ?: db.AppPaths.dataDirectory().resolve("logs").toFile()
         val now = LocalDateTime.now()
         val monthDir = File(root, now.format(MONTH_DIR))
         monthDir.mkdirs()
