@@ -44,6 +44,8 @@ import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
 import jdbc.model.ObjectKind
+import jdbc.model.displayNoun
+import jdbc.model.isPreviewable
 
 /** 行上下文动作（闭包已绑定具体行）。 */
 class RowActions(
@@ -164,15 +166,17 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<ContextMenuItem
             )
         }
         TreeRowKind.DB_OBJECT -> {
-            val obj = row.dbObject
-            if (obj?.kind == ObjectKind.TRIGGER) {
-                listOf(ContextMenuItem("复制触发器名") { actions.onCopyName() })
-            } else {
-                listOf(
-                    ContextMenuItem(if (obj?.kind == ObjectKind.VIEW) "复制视图名" else "复制表名") { actions.onCopyName() },
-                    ContextMenuItem("预览（前 200 行）") { actions.onPreviewTable() },
-                    ContextMenuItem("复制查询（SELECT 预览）") { actions.onCopyQuery() },
-                )
+            val obj = row.dbObject ?: return emptyList()
+            val kind = obj.kind
+            if (kind == ObjectKind.TRIGGER) {
+                return listOf(ContextMenuItem("复制触发器名") { actions.onCopyName() })
+            }
+            buildList {
+                add(ContextMenuItem("复制${kind.displayNoun}名") { actions.onCopyName() })
+                if (kind.isPreviewable()) {
+                    add(ContextMenuItem("预览（前 100 行）") { actions.onPreviewTable() })
+                    add(ContextMenuItem("复制查询（SELECT 预览）") { actions.onCopyQuery() })
+                }
             }
         }
         else -> emptyList()
@@ -275,8 +279,8 @@ private fun TreeRowView(
             val double = lastClickMs != 0L && now - lastClickMs < doubleTapMs
             lastClickMs = if (double) 0L else now
             when {
-                // 双击表/视图 → 预览；双击可展开行 → 展开/收起；触发器无预览语义
-                double && row.kind == TreeRowKind.DB_OBJECT && row.dbObject?.kind != ObjectKind.TRIGGER ->
+                // 双击表/视图/物化视图 → 预览；双击可展开行 → 展开/收起；其余对象无预览语义
+                double && row.kind == TreeRowKind.DB_OBJECT && row.dbObject?.kind?.isPreviewable() == true ->
                     actions.onPreviewTable()
                 double && canExpand -> onToggle()
                 else -> onSelect()
@@ -450,23 +454,31 @@ private fun ExpandArrow(expanded: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** 对象类型色徽章（表=蓝 T / 视图=青 V / 触发器=橙 TR）。 */
+/** 对象类型色徽章（表=蓝 T / 视图=青 V / 物化视图=紫 MV / 触发器=橙 TR / 序列=绿 SQ …）。 */
 @Composable
 fun ObjectKindBadge(kind: ObjectKind?) {
     if (kind == null) return
     val (text, color) = when (kind) {
         ObjectKind.TABLE -> "T" to Color(0xFF5586E4)
         ObjectKind.VIEW -> "V" to Color(0xFF26A69A)
+        ObjectKind.MATERIALIZED_VIEW -> "MV" to Color(0xFF9575CD)
         ObjectKind.TRIGGER -> "TR" to Color(0xFFEF8A28)
+        ObjectKind.SEQUENCE -> "SQ" to Color(0xFF43A047)
+        ObjectKind.ROUTINE -> "FN" to Color(0xFF26C6DA)
+        ObjectKind.AGGREGATE -> "AG" to Color(0xFFEC407A)
+        ObjectKind.OPERATOR -> "OP" to Color(0xFF8D6E63)
+        ObjectKind.TYPE -> "TY" to Color(0xFF5C6BC0)
+        ObjectKind.OPERATOR_CLASS -> "OC" to Color(0xFF78909C)
+        ObjectKind.OPERATOR_FAMILY -> "OF" to Color(0xFFD84315)
     }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(width = 15.dp, height = 13.dp)
+            .size(width = 17.dp, height = 13.dp)
             .clip(RoundedCornerShape(3.dp))
             .background(color),
     ) {
-        Text(text, color = Color.White, fontSize = 8.sp, maxLines = 1)
+        Text(text, color = Color.White, fontSize = 7.5.sp, maxLines = 1)
     }
 }
 

@@ -48,6 +48,6 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
                 }
             }
         }
-        return SchemaObjects(tables.sorted(), views.sorted(), emptyList())
+        return SchemaObjects.simple(tables.sorted(), views.sorted())
     }
 }

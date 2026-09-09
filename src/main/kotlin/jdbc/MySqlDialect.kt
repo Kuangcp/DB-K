@@ -68,7 +68,7 @@ open class MySqlLikeDialect(
                 }
             }
         }
-        return SchemaObjects(tables.sorted(), views.sorted(), triggers.sortedBy { it.name })
+        return SchemaObjects.simple(tables.sorted(), views.sorted(), triggers.sortedBy { it.name })
     }
 }
 

@@ -15,9 +15,20 @@ enum class TreeRowKind {
 /** 连接运行状态（供状态点/连接入口展示；树层只做展示判断，不持有连接）。 */
 enum class ConnUiStatus { DISCONNECTED, CONNECTING, CONNECTED, ERROR }
 
-/** 对象组（schema 下的展示分组：表/视图/触发器）。 */
-enum class ObjectGroupKind(val label: String) {
-    TABLES("表"), VIEWS("视图"), TRIGGERS("触发器"),
+/** 对象组（schema 下的展示分组）。条目顺序 = 展示顺序；kind 与该组对象类型一一对应。
+ * 各库只产出自己支持的类型（Map 里没有的类型整组不显示）。 */
+enum class ObjectGroupKind(val label: String, val kind: ObjectKind) {
+    TABLES("表", ObjectKind.TABLE),
+    MATERIALIZED_VIEWS("物化视图", ObjectKind.MATERIALIZED_VIEW),
+    VIEWS("视图", ObjectKind.VIEW),
+    TRIGGERS("触发器", ObjectKind.TRIGGER),
+    SEQUENCES("序列", ObjectKind.SEQUENCE),
+    ROUTINES("函数与过程", ObjectKind.ROUTINE),
+    AGGREGATES("聚合", ObjectKind.AGGREGATE),
+    OPERATORS("操作符", ObjectKind.OPERATOR),
+    TYPES("类型", ObjectKind.TYPE),
+    OPERATOR_CLASSES("操作符类", ObjectKind.OPERATOR_CLASS),
+    OPERATOR_FAMILIES("操作符族", ObjectKind.OPERATOR_FAMILY),
 }
 
 enum class PlaceholderKind { NONE, LOADING, ERROR, INFO }
@@ -179,7 +190,7 @@ private fun appendSchema(
     val rowKey = schemaRowKey(conn.id, schema)
     val expanded = rowKey in expandedSchemaKeys
     val objects = runtime.objectsOf(conn.id, schema.key)
-    val total = objects?.let { it.tables.size + it.views.size + it.triggers.size } ?: 0
+    val total = objects?.total ?: 0
     out += TreeRowInfo(
         key = rowKey,
         kind = TreeRowKind.SCHEMA,
@@ -201,7 +212,7 @@ private fun appendSchema(
             out += infoPlaceholder(depth + 1, "$rowKey:empty", "（空 schema）")
         else -> {
             ObjectGroupKind.entries.forEach { group ->
-                val items = objects.forKind(groupToObjectKind(group))
+                val items = objects.forKind(group.kind)
                 if (items.isEmpty()) return@forEach
                 out += TreeRowInfo(
                     key = "$rowKey:g:${group.name}",
@@ -227,12 +238,6 @@ private fun appendSchema(
             }
         }
     }
-}
-
-private fun groupToObjectKind(g: ObjectGroupKind): ObjectKind = when (g) {
-    ObjectGroupKind.TABLES -> ObjectKind.TABLE
-    ObjectGroupKind.VIEWS -> ObjectKind.VIEW
-    ObjectGroupKind.TRIGGERS -> ObjectKind.TRIGGER
 }
 
 private fun loadingPlaceholder(depth: Int, key: String, text: String) = TreeRowInfo(

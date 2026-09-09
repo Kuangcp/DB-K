@@ -58,6 +58,7 @@ import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
 import jdbc.DialectRegistry
+import jdbc.model.isPreviewable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -217,7 +218,7 @@ private fun AppBody(
         connectionsState.schemasOf(p.id).orEmpty()
             .flatMap { s ->
                 connectionsState.objectsOf(p.id, s.key)
-                    ?.let { o -> o.tables + o.views }.orEmpty()
+                    ?.let { o -> o.tables + o.views + o.materializedViews }.orEmpty()
             }
             .distinct()
             .sorted()
@@ -243,12 +244,12 @@ private fun AppBody(
         return "控制台 $n"
     }
 
-    /** 双击表/视图 → 预览前 100 行（DialectRegistry.previewSelect）：空控制台直接复用，否则新建命名控制台。 */
+    /** 双击表/视图/物化视图 → 预览前 100 行（DialectRegistry.previewSelect）：空控制台直接复用，否则新建命名控制台。 */
     fun previewObject(row: TreeRowInfo) {
         val p = row.profile ?: return
         val obj = row.dbObject ?: return
-        if (obj.kind == jdbc.model.ObjectKind.TRIGGER) {
-            toastState.show("触发器不支持 SQL 预览")
+        if (!obj.kind.isPreviewable()) {
+            toastState.show("该对象类型不支持 SQL 预览")
             return
         }
         val sql = DialectRegistry.forProfile(p).previewSelect(row.schema, obj.name)

@@ -12,6 +12,8 @@ import java.util.UUID
  */
 class ConnectionsRepository(dbPath: Path) : AutoCloseable {
 
+    private val keyFile: Path = PasswordVault.keyFileFor(dbPath)
+
     private val conn: Connection = DriverManager.getConnection(
         "jdbc:sqlite:${dbPath.toAbsolutePath()}",
         SQLiteConfig().apply { enforceForeignKeys(true) }.toProperties(),
@@ -19,6 +21,8 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
 
     init {
         AppDatabase.migrate(conn)
+        // P3：存量明文密码原地转密；新写密码一律加密落盘（见 create/update）
+        PasswordVault.migrateLegacyPasswords(conn, keyFile)
     }
 
     override fun close() {
@@ -150,7 +154,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
             ps.setInt(6, p.port)
             ps.setString(7, p.database)
             ps.setString(8, p.user)
-            ps.setString(9, p.password)
+            ps.setString(9, PasswordVault.encrypt(keyFile, p.password))
             ps.setString(10, p.extraParams)
             ps.setString(11, p.color)
             ps.setInt(12, nextSortOrder("connections"))
@@ -177,7 +181,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
             ps.setInt(5, p.port)
             ps.setString(6, p.database)
             ps.setString(7, p.user)
-            ps.setString(8, p.password)
+            ps.setString(8, PasswordVault.encrypt(keyFile, p.password))
             ps.setString(9, p.extraParams)
             ps.setString(10, p.color)
             ps.setLong(11, System.currentTimeMillis())
@@ -411,7 +415,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
         port = rs.getInt("port"),
         database = rs.getString("database_name"),
         user = rs.getString("user_name"),
-        password = rs.getString("password"),
+        password = PasswordVault.decrypt(keyFile, rs.getString("password")),
         extraParams = rs.getString("extra_params"),
         color = rs.getString("color"),
         sortOrder = rs.getInt("sort_order"),

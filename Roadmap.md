@@ -60,6 +60,15 @@
 - app.db 密码本机加密（AES-GCM + chmod 600 密钥文件），含存量明文迁移
 验收：PG 库树展开到细分类型；重启后连接可用（加密不破坏现有会话）；明文不再落盘。
 
+状态：✅ **已实现（待人工验收）**：
+- `ObjectKind` 扩为 11 类，`SchemaObjects` 改 Map 分组（兼容 tables/views/triggers 访问器），
+  各库只产出自己支持的类型 → 非 PG 库视觉不变
+- PG `loadObjects` 按 relkind/prokind/pg_* 分桶：表/物化视图/视图/触发器/序列/函数与过程/聚合/操作符/类型/操作符类/操作符族（均 DISTINCT + 按 schema 过滤）
+- 对象组计数：schema 收起总数徽章 = 全部类型求和，组行「表 (12)」样式；右键文案按类型泛化（复制物化视图名…），双击/菜单预览仅限 表/视图/物化视图
+- 密码：`db/PasswordVault.kt`（AES-256-GCM、随机 IV、`enc:v1:` 前缀、密钥 `<dataDir>/secret.key` 600），
+  仓库 init 自动迁移存量明文；写库即加密、读库即解密，编辑框回显明文不变
+- smoke：vault 迁移/回环/盘上无明文/密钥文件权限 + 分组键不串组断言 PASS
+
 ### P4 数据源扩展机制（为 Oracle/SQL Server 铺路）
 范围：
 - `<dataDir>/drivers` 外部驱动目录 + 独立 classloader 注册（Oracle license 限制不进内置 classpath）

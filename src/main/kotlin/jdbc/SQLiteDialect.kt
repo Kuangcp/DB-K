@@ -45,6 +45,6 @@ object SQLiteDialect : GenericDialect(DbType.SQLITE, "org.sqlite.JDBC") {
                 }
             }
         }
-        return SchemaObjects(tables.sorted(), views.sorted(), triggers.sortedBy { it.name })
+        return SchemaObjects.simple(tables.sorted(), views.sorted(), triggers.sortedBy { it.name })
     }
 }

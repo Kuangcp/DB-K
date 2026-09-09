@@ -5,7 +5,7 @@
 
 **编辑区域**
 
-- 列名级自动补全：现有关键字 + 表/视图名补全已实现（P2，待人工验收）；列名候选需先在元数据层缓存列（归 P3 数据模型）
+- 列名级自动补全：现有关键字 + 表/视图/物化视图名补全已实现（P2/P3）；列名候选需先在元数据层缓存列（数据模型落地后补）
 - 编辑器增强（可选）：行号、当前行高亮
 
 **数据源支持**
@@ -15,35 +15,13 @@
 
 **树区域**
 
-- DataGrip 式多类型分组：现在每个 schema 下只有 表/视图/触发器 三组（ObjectGroupKind），要扩成按类型细分目录 + 组内计数，PG 示例结构：
-
-```
-* 📁 gptdb
-* 📁 public
-   * 📂 tables 186
-      * 📂 materialized views 4
-      * 📂 views 5
-      * 📂 routines 1330
-      * 📂 aggregates 33
-      * 📂 operators 107
-      * 📂 sequences 81
-      * 📂 object types 21
-      * 📂 operator classes 37
-      * 📂 operator families 37
-   * 📁 Database Objects
-   * 📂 access methods 9
-      * 📂 casts 262
-      * 📂 extensions 3
-      * 📂 languages 4
-   * 📁 virtual views 1
-   * 📁 Server Objects
-   * 📂 roles 56
-      * 📂 tablespaces 2
-```
+- 已做：按类型细分分组 + 组内计数（P3：表/物化视图/视图/触发器/序列/函数与过程/聚合/操作符/类型/操作符类/操作符族，PG 生效；非 PG 库仅产出自己支持的类型）
+- 组内对象多时（如 routines 上千）目前随 schema 展开一次性列出，尚未做组折叠/懒加载 → DataGrip 式“展开到组一级再展开对象”
+- 集群级目录（Database Objects：casts/extensions/languages；Server Objects：roles/tablespaces 等）未做（需跨 schema 查询，列为远期观察项）
 
 **连接与安全**
 
-- app.db 里密码明文存储（ConnectionsRepository 直存）→ 本机级加密（AES-GCM，密钥文件放 dataDir 且 chmod 600），含存量行迁移；明文只在打开编辑框时解密回显
+- 已做：密码本机加密（AES-GCM，密钥 `<dataDir>/secret.key` 600，存量明文自动迁移，`enc:v1:` 前缀标记）→ 待人工验收
 - 连接档案导出/导入（JSON 一份，便于换机迁移；密码字段按导出选项决定带不带）
 
 **历史与日志**

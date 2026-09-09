@@ -9,6 +9,7 @@ import app.ui.rowToInsertSql
 import app.ui.sqlCompletionWord
 import app.ui.transposeResult
 import org.tinylog.Logger
+import jdbc.model.ObjectKind
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
@@ -39,7 +40,7 @@ fun main() {
     check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
 
     smokeEditorUtils()
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store + editor-utils PASS (ClickHouse driver load OK)")
+    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault) + editor-utils PASS (ClickHouse driver load OK)")
 }
 
 /** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */
@@ -103,6 +104,10 @@ private fun smokeSqlite(dir: Path) {
         check(objects.tables.containsAll(listOf("orders", "users")))
         check(objects.views.contains("rich_orders"))
         check(objects.triggers.single().name == "trg_users_ai")
+        // 类型分组：SQLite 只应产出表/视图/触发器三组，且各组 count 与访问器一致
+        check(objects.objects.keys == setOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.TRIGGER))
+        check(objects.forKind(ObjectKind.TABLE).size == objects.tables.size)
+        check(objects.total == objects.tables.size + objects.views.size + objects.triggers.size)
         Logger.info("[SQLite] previewSql: {}", dialect.previewSelect(schemas.first(), "users"))
 
         // QueryExecutor：SELECT 读行、非查询 update 影响行数
@@ -136,6 +141,7 @@ private fun smokeH2(dir: Path) {
         Logger.info("[H2] views={}", objects.views)
         check(objects.tables.any { it.equals("account", ignoreCase = true) })
         check(objects.views.any { it.equals("big_balances", ignoreCase = true) })
+        check(objects.objects.keys == setOf(ObjectKind.TABLE, ObjectKind.VIEW))
         Logger.info("[H2] previewSql: {}", H2Dialect.previewSelect(schemas.first(), "account"))
     }
 }
@@ -205,6 +211,8 @@ private fun smokeDbStore(dir: Path) {
             st.execute("CREATE INDEX idx_sql_history_at ON sql_history(executed_at_ms)")
             st.executeUpdate("INSERT INTO schema_migrations(version) VALUES (1),(2)")
             st.execute("INSERT INTO connections(id, name, db_type, sort_order, created_at, updated_at) VALUES ('c-old','旧档案','SQLITE',0,1000,1000)")
+            // 存量明文密码行：P3 仓库初始化时应被原地转密（enc:v1:…）
+            st.execute("INSERT INTO connections(id, name, db_type, user_name, password, sort_order, created_at, updated_at) VALUES ('c-legacy','旧明文','SQLITE','legacy-user','plain-hunter2',1,1000,1000)")
             st.execute("INSERT INTO sql_history(id, profile_id, sql_text, executed_at_ms, duration_ms) VALUES ('h-old','c-old','SELECT 1',1000,5)")
         }
     }
@@ -213,10 +221,32 @@ private fun smokeDbStore(dir: Path) {
         val old = repo.listHistoryByProfile("c-old")
         check(old.size == 1) { "旧行应保留在历史中" }
         check(old.single().ok && old.single().sqlText == "SELECT 1")
+
+        // P3 密码落盘加密：
+        // a) 旧明文行在仓库初始化时被自动迁移为密文，读回仍为原文
+        // b) 新写入的密码落盘即为密文（不在盘上留明文），读回可解
+        val keyFile = dbFile.resolveSibling("secret.key")
+        check(Files.isRegularFile(keyFile)) { "密钥文件应随 dataDir 创建" }
+        val permsOk = runCatching { Files.getPosixFilePermissions(keyFile) }.getOrNull()?.let { perms ->
+            perms.containsAll(listOf(
+                java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+            )) && perms.none { it.name.startsWith("GROUP") || it.name.startsWith("OTHERS") }
+        } ?: true
+        check(permsOk) { "密钥文件应为 600 权限" }
+        val rawLegacy = rawPassword(dbFile, "c-legacy")
+        check(rawLegacy != null && rawLegacy.startsWith("enc:v1:")) { "旧明文应已转密，实际=$rawLegacy" }
+        check(repo.getConnection("c-legacy")!!.password == "plain-hunter2") { "迁移后读回应等于原文" }
+        check(repo.getConnection("c-old")!!.password == null) { "无密码连接不受影响" }
+
         // 新档案 + 新格式历史：成功（带行数）/ 失败（带错误）
         val pid = repo.createConnection(
-            ConnectionProfile(id = "smoke-new", name = "新档案", dbType = DbType.SQLITE, database = "x.db"),
+            ConnectionProfile(id = "smoke-new", name = "新档案", dbType = DbType.SQLITE, database = "x.db",
+                user = "smoke-user", password = "s3cret!?"),
         )
+        val rawNew = rawPassword(dbFile, pid)
+        check(rawNew != null && rawNew.startsWith("enc:v1:") && !rawNew.contains("s3cret")) { "新密码落盘必须加密，实际=$rawNew" }
+        check(repo.getConnection(pid)!!.password == "s3cret!?") { "加密读写回环失败" }
         repo.insertHistory(profileId = pid, sqlText = "SELECT 2", ok = true, executedAtMs = 2000, durationMs = 3, rowCount = 42)
         repo.insertHistory(profileId = pid, sqlText = "SELECT 3", ok = false, executedAtMs = 3000, durationMs = 4, rowCount = 0, errorMessage = "boom")
         val list = repo.listHistoryByProfile(pid, limit = 10)
@@ -226,7 +256,20 @@ private fun smokeDbStore(dir: Path) {
         Logger.info("[db-store] v2→v3 迁移 + history insert/list PASS", "PASS")
         repo.clearHistoryForProfile(pid)
         check(repo.listHistoryByProfile(pid).isEmpty())
+        Logger.info("[db-store] vault 加密/迁移 PASS", "PASS")
+        repo.clearHistoryForProfile(pid)
+        check(repo.listHistoryByProfile(pid).isEmpty())
         Logger.info("[db-store] history clear PASS", "PASS")
     }
     Files.deleteIfExists(dbFile)
+}
+
+/** 直读某连接行落盘密码（绕过仓库解密层，验证盘上形态）。 */
+private fun rawPassword(dbFile: Path, id: String): String? {
+    return DriverManager.getConnection("jdbc:sqlite:$dbFile").use { raw ->
+        raw.prepareStatement("SELECT password FROM connections WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+        }
+    }
 }

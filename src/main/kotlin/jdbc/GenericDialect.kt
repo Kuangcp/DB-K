@@ -60,6 +60,7 @@ open class GenericDialect(
         val md = conn.metaData
         val tables = mutableListOf<String>()
         val views = mutableListOf<String>()
+        val matViews = mutableListOf<String>()
 
         runCatching {
             md.getTables(schema.catalog, schema.schema, "%", null).use { rs ->
@@ -69,7 +70,8 @@ open class GenericDialect(
                     when (type.uppercase()) {
                         "TABLE", "BASE TABLE", "PARTITIONED TABLE", "FOREIGN TABLE",
                         "GLOBAL TEMPORARY", "LOCAL TEMPORARY" -> if (name.isNotBlank()) tables += name
-                        "VIEW", "MATERIALIZED VIEW" -> if (name.isNotBlank()) views += name
+                        "MATERIALIZED VIEW" -> if (name.isNotBlank()) matViews += name
+                        "VIEW" -> if (name.isNotBlank()) views += name
                     }
                 }
             }
@@ -77,6 +79,10 @@ open class GenericDialect(
 
         // 标准 JDBC 无 getTriggers；触发器由各专用方言（PG/MySQL/SQLite）以 SQL 探测，
         // Generic 兜底库暂不列触发器。
-        return SchemaObjects(tables.sorted(), views.sorted(), emptyList())
+        return SchemaObjects.simple(
+            tables = tables.sorted(),
+            views = views.sorted(),
+            extra = mapOf(ObjectKind.MATERIALIZED_VIEW to matViews.sorted().map { DbObjectMeta(it, ObjectKind.MATERIALIZED_VIEW) }),
+        )
     }
 }
