@@ -1,3 +1,7 @@
+@file:kotlin.jvm.JvmName("DbkMainKt")
+// 主类固定为 app.core.DbkMainKt（不是默认的 MainKt）：AWT 窗口的 WM_CLASS = 主类名（点转短横），
+// 与 api-x 等兄弟项目同名 MainKt 会导致 X11 面板把两个应用当同一个程序归并成一组。
+
 package app.core
 
 import androidx.compose.foundation.background

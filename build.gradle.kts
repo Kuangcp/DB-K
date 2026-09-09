@@ -54,7 +54,9 @@ tasks.register<JavaExec>("smokeJdbc") {
 
 compose.desktop {
     application {
-        mainClass = "app.core.MainKt"
+        // WM_CLASS 由主类名决定（app.core.DbkMainKt → app-core-DbkMainKt），
+        // 刻意不与兄弟项目共用 app.core.MainKt，避免 X11 面板把两个应用归并成一组。
+        mainClass = "app.core.DbkMainKt"
 
         nativeDistributions {
             targetFormats(TargetFormat.Deb)
