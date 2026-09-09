@@ -219,7 +219,8 @@ private fun AppBody(
     val activeConsole = consoleState.activeConsole()
     val activeProfile = activeConsole?.let { a -> profiles.firstOrNull { it.id == a.connectionId } }
 
-    // 编辑器补全候选：当前数据源已加载 schema 中的表/视图名（树展开 + 下方懒预取触发）
+    // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名（连接后已由上方预取进缓存，
+    // 数据来自数据源目录元信息；树是否展开不影响候选完整性）
     val completionIdentifiers: List<String> = activeProfile?.let { p ->
         connectionsState.schemasOf(p.id).orEmpty()
             .flatMap { s ->
@@ -277,12 +278,13 @@ private fun AppBody(
         scope.launch { consoleState.run(target, p) }
     }
 
-    // 编辑器补全元数据预取：数据源已连接时懒加载首个（默认）schema 的对象，不改变树的展开态
+    // 编辑器补全元数据预取：数据源已连接时把全部 schema 的对象补全进内存缓存（树不必展开），
+    // ensureSchemaObjects 幂等——树展开先到也不重复查；失败单个 schema 不打断其余（仅置连接级消息）。
     LaunchedEffect(activeProfile?.id, connectionsState.statusOf(activeProfile?.id.orEmpty())) {
         val p = activeProfile ?: return@LaunchedEffect
         if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) return@LaunchedEffect
         val schemas = connectionsState.schemasOf(p.id) ?: return@LaunchedEffect
-        schemas.firstOrNull()?.let { connectionsState.ensureSchemaObjects(p, it) }
+        schemas.forEach { s -> connectionsState.ensureSchemaObjects(p, s) }
     }
 
     MaterialTheme(colors = appMaterialColors(isDark)) {

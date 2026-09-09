@@ -682,9 +682,10 @@ private fun EditorPane(
                         }
                         val caretTop = if (caretRect != null) padYPx + caretRect.top - scroll.value else padY.toPx() - scroll.value
                         val caretBottom = if (caretRect != null) caretTop + caretRect.height else caretTop + lineH.toPx()
+                        // 下移一格再放：弹窗顶部低于 caret 行下一行的行底，确保不压住当前输入行与紧随其后的行
+                        val rowH = if (caretRect != null) caretRect.height else lineH.toPx()
                         val y = when {
-                            // 下方放得下 → 放在 caret 行下缘之下（不遮当前行）
-                            caretBottom + gapPx + popH <= boxH -> (caretBottom + gapPx).toInt()
+                            caretBottom + rowH + gapPx + popH <= boxH -> (caretBottom + rowH + gapPx).toInt()
                             caretTop - gapPx - popH >= 0 -> (caretTop - gapPx - popH).toInt()
                             else -> (boxH - popH.toInt()).coerceAtLeast(0)
                         }
@@ -696,7 +697,7 @@ private fun EditorPane(
 }
 
 private val COMPLETION_W = 300.dp
-private val COMPLETION_H = 224.dp
+private val COMPLETION_H = 176.dp
 private const val MAX_COMPLETIONS = 60
 
 /** 补全候选弹层：主题化小面板，键盘选中的高亮 + 鼠标点击上屏。 */
@@ -715,10 +716,10 @@ private fun CompletionPopup(
             .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.25f), RoundedCornerShape(8.dp)),
     ) {
         Text(
-            "补全 ${items.size} 项 · Enter/Tab 上屏 · ↑/↓ 选择 · Esc 关闭",
+            "补全 ${items.size} 项 · Enter 上屏 · Esc 关闭",
             fontSize = 10.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         val listState = rememberLazyListState()
@@ -739,12 +740,12 @@ private fun CompletionPopup(
                             if (index == selectedIndex) MaterialTheme.colors.primary.copy(alpha = 0.16f)
                             else Color.Transparent,
                         )
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
                 ) {
                     Text(
                         item,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.5.sp,
+                        fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
