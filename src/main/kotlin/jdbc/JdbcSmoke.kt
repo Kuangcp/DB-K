@@ -208,9 +208,12 @@ private fun smokeDbStore(dir: Path) {
             st.execute("CREATE TABLE folders (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, parent_id TEXT NULL REFERENCES folders(id) ON DELETE CASCADE, sort_order INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)")
             st.execute("CREATE TABLE connections (id TEXT PRIMARY KEY NOT NULL, folder_id TEXT NULL REFERENCES folders(id) ON DELETE SET NULL, name TEXT NOT NULL, db_type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 0, database_name TEXT NOT NULL DEFAULT '', user_name TEXT NULL, password TEXT NULL, extra_params TEXT NOT NULL DEFAULT '', color TEXT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
             st.execute("CREATE TABLE sql_history (id TEXT PRIMARY KEY NOT NULL, profile_id TEXT NULL REFERENCES connections(id) ON DELETE SET NULL, sql_text TEXT NOT NULL, executed_at_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL)")
+            // v2 时代的 consoles 表（无 target 列；v4 迁移会补上）
+            st.execute("CREATE TABLE consoles (id TEXT PRIMARY KEY NOT NULL, connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE, name TEXT NOT NULL, file_path TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
             st.execute("CREATE INDEX idx_sql_history_at ON sql_history(executed_at_ms)")
             st.executeUpdate("INSERT INTO schema_migrations(version) VALUES (1),(2)")
             st.execute("INSERT INTO connections(id, name, db_type, sort_order, created_at, updated_at) VALUES ('c-old','旧档案','SQLITE',0,1000,1000)")
+            st.execute("INSERT INTO consoles(id, connection_id, name, file_path, sort_order, created_at, updated_at) VALUES ('cc-smoke','c-old','smoke-控制台','',0,1000,1000)")
             // 存量明文密码行：P3 仓库初始化时应被原地转密（enc:v1:…）
             st.execute("INSERT INTO connections(id, name, db_type, user_name, password, sort_order, created_at, updated_at) VALUES ('c-legacy','旧明文','SQLITE','legacy-user','plain-hunter2',1,1000,1000)")
             st.execute("INSERT INTO sql_history(id, profile_id, sql_text, executed_at_ms, duration_ms) VALUES ('h-old','c-old','SELECT 1',1000,5)")
@@ -221,6 +224,15 @@ private fun smokeDbStore(dir: Path) {
         val old = repo.listHistoryByProfile("c-old")
         check(old.size == 1) { "旧行应保留在历史中" }
         check(old.single().ok && old.single().sqlText == "SELECT 1")
+
+        // v4 迁移后 consoles 带 target（旧行默认 ""），set/get 回环
+        check(repo.listConsoles("c-old").any { it.id == "cc-smoke" && it.target == "" }) {
+            "旧 consoles 行应补上 target=''"
+        }
+        check(repo.getConsole("cc-smoke")!!.filePath == "")
+        repo.setConsoleTarget("cc-smoke", "main")
+        check(repo.getConsole("cc-smoke")!!.target == "main") { "setConsoleTarget 应生效" }
+        Logger.info("[db-store] v4 consoles.target 迁移/读写 PASS", "PASS")
 
         // P3 密码落盘加密：
         // a) 旧明文行在仓库初始化时被自动迁移为密文，读回仍为原文

@@ -70,6 +70,10 @@ open class MySqlLikeDialect(
         }
         return SchemaObjects.simple(tables.sorted(), views.sorted(), triggers.sortedBy { it.name })
     }
+
+    /** MySQL/MariaDB 的库即 catalog：执行前 USE 一下，保证与树里看到的库一致。 */
+    override fun sessionContextSql(schema: jdbc.model.SchemaMeta): String? =
+        schema.catalog?.let { "USE ${quoteIdent(it)}" }
 }
 
 /** MySQL。 */

@@ -38,6 +38,15 @@ interface DbDialect {
         }
         return "SELECT * FROM $prefix${quoteIdent(name)} LIMIT 100"
     }
+
+    /**
+     * 把会话切到某库/schema 的前导 SQL（每次执行前发一次，保证并发/复切也生效）；
+     * null = 无需切换（该方言没有可切的目标，或连接默认即目标）。
+     */
+    fun sessionContextSql(schema: SchemaMeta): String? = null
+
+    /** 是否支持在控制台内选择执行目标库/schema（SQLite 单文件无意义）。 */
+    val supportsTargetSwitch: Boolean get() = true
 }
 
 /** 方言注册表：dbType -> 单例方言（无状态，可共享）。 */

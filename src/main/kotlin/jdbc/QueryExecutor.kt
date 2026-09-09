@@ -57,6 +57,18 @@ object QueryExecutor {
         }
     }
 
+    /**
+     * 执行会话上下文前导（目标库/schema 切换，如 USE `db` / SET search_path TO …）；
+     * null/空白 = 无需切换。失败会抛异常（由调用方按执行错误展示）。
+     */
+    fun applyContext(conn: Connection, contextSql: String?) {
+        if (contextSql.isNullOrBlank()) return
+        conn.createStatement().use { st ->
+            st.queryTimeout = QUERY_TIMEOUT_SECONDS
+            st.execute(contextSql)
+        }
+    }
+
     private fun readResultSet(sql: String, rs: ResultSet, started: Long): QueryResult {
         val meta = rs.metaData
         val count = meta.columnCount

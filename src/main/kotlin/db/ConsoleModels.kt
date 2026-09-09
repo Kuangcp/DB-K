@@ -3,6 +3,7 @@ package db
 /**
  * SQL 控制台元数据行：一个数据源（connection_id）可有多个命名控制台，
  * 每个控制台最终绑定一个 .sql 文件（filePath），编辑器内容即该文件内容。
+ * [target]：执行目标库/schema（该数据源下的 schema 展示名；"" = 连接默认，不切换）。
  */
 data class ConsoleRecord(
     val id: String,
@@ -11,4 +12,5 @@ data class ConsoleRecord(
     val filePath: String,
     val sortOrder: Int = 0,
     val updatedAt: Long = 0,
+    val target: String = "",
 )

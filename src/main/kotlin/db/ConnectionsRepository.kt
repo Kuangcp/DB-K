@@ -222,7 +222,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
 
     fun listConsoles(connectionId: String): List<ConsoleRecord> {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
+            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
         ).use { ps ->
             ps.setString(1, connectionId)
             ps.executeQuery().use { rs ->
@@ -235,7 +235,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
 
     fun getConsole(id: String): ConsoleRecord? {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at FROM consoles WHERE id = ?",
+            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target FROM consoles WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs -> if (rs.next()) mapConsole(rs) else null }
@@ -279,6 +279,16 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
         }
     }
 
+    /** 设置控制台的执行目标库/schema（"" = 连接默认，不切换）。 */
+    fun setConsoleTarget(id: String, target: String) {
+        conn.prepareStatement("UPDATE consoles SET target = ?, updated_at = ? WHERE id = ?").use { ps ->
+            ps.setString(1, target)
+            ps.setLong(2, System.currentTimeMillis())
+            ps.setString(3, id)
+            ps.executeUpdate()
+        }
+    }
+
     /** 删除控制台：删行 + 删其 .sql 文件。 */
     fun deleteConsole(id: String) {
         val rec = getConsole(id) ?: return
@@ -314,6 +324,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
         filePath = rs.getString("file_path"),
         sortOrder = rs.getInt("sort_order"),
         updatedAt = rs.getLong("updated_at"),
+        target = rs.getString("target") ?: "",
     )
 
     // ---------- sql_history（执行历史） ----------

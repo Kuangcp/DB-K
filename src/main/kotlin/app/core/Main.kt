@@ -58,6 +58,7 @@ import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
 import jdbc.DialectRegistry
+import jdbc.QueryExecutor
 import jdbc.model.isPreviewable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -219,6 +220,13 @@ private fun AppBody(
     val activeConsole = consoleState.activeConsole()
     val activeProfile = activeConsole?.let { a -> profiles.firstOrNull { it.id == a.connectionId } }
 
+    // 控制台主导：启动即回到最近改动的控制台（跨数据源，不必先点树）；无控制台时保持引导态
+    LaunchedEffect(Unit) {
+        if (consoleState.activeConsoleId == null && profiles.isNotEmpty()) {
+            consoleState.activateMostRecent(profiles.map { it.id })
+        }
+    }
+
     // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名（连接后已由上方预取进缓存，
     // 数据来自数据源目录元信息；树是否展开不影响候选完整性）
     val completionIdentifiers: List<String> = activeProfile?.let { p ->
@@ -331,22 +339,33 @@ private fun AppBody(
                         statusMessage = connectionsState.statusMessageOf(activeProfile?.id.orEmpty()),
                         profiles = profiles,
                         onSelectProfile = { pid -> consoleState.activateForProfile(pid) },
-                        consoles = activeProfile?.let { consoleState.profileConsoles(it.id) }.orEmpty(),
+                        consoles = consoleState.allConsoles(profiles.map { it.id }),
                         activeConsole = activeConsole,
                         onSelectConsole = { c -> consoleState.activate(c) },
-                        onCreateConsole = {
-                            val p = activeProfile
+                        onCreateConsoleAt = { pid ->
+                            val p = profiles.firstOrNull { it.id == pid }
                             if (p != null) {
                                 val name = suggestConsoleName(p)
                                 val c = consoleState.createConsole(p.id, name)
-                                toastState.show("已新建控制台「$name」（绑定 ${p.name} 数据源）")
+                                toastState.show("已新建控制台「$name」（绑定 ${p.name}）")
+                            }
+                        },
+                        dirtyConsoleIds = consoleState.dirtyConsoleIds,
+                        schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
+                        supportsTargetSwitch =
+                            activeProfile?.let { DialectRegistry.forProfile(it).supportsTargetSwitch } == true,
+                        targetSchema = activeConsole?.target.orEmpty(),
+                        onSelectTarget = { t ->
+                            val c = consoleState.activeConsole()
+                            if (c != null) {
+                                consoleState.setTarget(c.id, t)
+                                toastState.show(if (t.isBlank()) "已恢复默认执行目标（连接库）" else "执行目标已设为：$t")
                             }
                         },
                         onRenameConsole = { c -> dialogState.consoleRename = ConsoleRenameRequest(c.id, c.name) },
                         onDeleteConsole = { c ->
-                            dialogState.confirm = ConfirmRequest.DeleteConsole(
-                                c.id, c.name, activeProfile?.name ?: "",
-                            )
+                            val srcName = profiles.firstOrNull { it.id == c.connectionId }?.name ?: ""
+                            dialogState.confirm = ConfirmRequest.DeleteConsole(c.id, c.name, srcName)
                         },
                         editorText = activeConsole?.let { consoleState.textOf(it.id) }.orEmpty(),
                         editorDirty = activeConsole?.let { consoleState.isDirty(it.id) } == true,
@@ -402,11 +421,15 @@ private fun AppBody(
                             if (name != null) {
                                 val file = File(fd.directory, name)
                                 scope.launch {
+                                    val contextSql = consoleState.sessionContextSqlFor(c, p)
                                     val outcome = withContext(Dispatchers.IO) {
                                         runCatching {
                                             val live = connectionsState.liveConnection(p.id)
                                                 ?: error("连接已断开，请重连后再导出")
-                                            live.onConnection { conn -> CsvExport.exportAll(file, conn, result.sql) }
+                                            live.onConnection { conn ->
+                                                QueryExecutor.applyContext(conn, contextSql)
+                                                CsvExport.exportAll(file, conn, result.sql)
+                                            }
                                         }
                                     }
                                     outcome.onSuccess { n ->

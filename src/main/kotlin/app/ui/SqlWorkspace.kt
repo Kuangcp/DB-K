@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -77,6 +78,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -92,6 +94,7 @@ import db.ConnectionProfile
 import db.SqlHistoryRow
 import jdbc.QueryExecutor
 import jdbc.QueryResult
+import jdbc.model.SchemaMeta
 import tree.ConnUiStatus
 import tree.TypeBadge
 
@@ -99,9 +102,10 @@ import tree.TypeBadge
 private fun estWidth(chars: Int): Int = (chars * 7 + 20).coerceIn(64, 320)
 
 /**
- * 右侧 SQL 工作台（M4：多控制台）。
- * 结构：顶部「数据源切换 + 控制台标签」→ 编辑器（当前控制台缓冲区）→ 执行条 → 结果区。
- * 纯展示组件；全部编排/持久化在 Main/ConsoleState。
+ * 右侧 SQL 工作台（控制台主导）。
+ * 结构：Header →（当前控制台的数据源导航行 + 执行目标切换）→ 跨数据源控制台标签条
+ * → 编辑器（当前控制台缓冲区）→ 执行条 → 结果区。未激活控制台时显示引导区。
+ * 每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）；纯展示组件，编排在 Main/ConsoleState。
  */
 @Composable
 fun SqlWorkspace(
@@ -113,9 +117,19 @@ fun SqlWorkspace(
     consoles: List<ConsoleRecord>,
     activeConsole: ConsoleRecord?,
     onSelectConsole: (ConsoleRecord) -> Unit,
-    onCreateConsole: () -> Unit,
+    /** 在指定数据源下新建控制台（数据源 id）。 */
+    onCreateConsoleAt: (String) -> Unit,
     onRenameConsole: (ConsoleRecord) -> Unit,
     onDeleteConsole: (ConsoleRecord) -> Unit,
+    /** 未落盘改动控制台 id 集合（标签 ●）。 */
+    dirtyConsoleIds: Set<String>,
+    /** 激活控制台数据源的库/schema 列表（目标切换菜单；null = 未连接/未加载）。 */
+    schemas: List<SchemaMeta>?,
+    /** 数据源方言是否支持切换执行目标（SQLite 单文件不支持）。 */
+    supportsTargetSwitch: Boolean,
+    /** 激活控制台已选执行目标库/schema（"" = 连接默认）。 */
+    targetSchema: String,
+    onSelectTarget: (String) -> Unit,
     editorText: String,
     editorDirty: Boolean,
     onTextChange: (String) -> Unit,
@@ -190,7 +204,8 @@ fun SqlWorkspace(
             onToggleHistory = { showHistory = !showHistory },
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
-        if (profile == null) {
+        val profilesById = remember(profiles) { profiles.associateBy { it.id } }
+        if (profiles.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     "还没有数据源。请在左侧新建连接档案，单击连接即可创建控制台开始写 SQL。",
@@ -201,16 +216,40 @@ fun SqlWorkspace(
             }
             return
         }
-        ConnectionNavBar(profile, status, statusMessage, profiles, onSelectProfile, onDisconnect)
+        // 控制台主导：标签条固定显示全部数据源的控制台；已激活时上方展示该控制台绑定的数据源 + 执行目标。
+        if (profile != null) {
+            ConnectionNavBar(
+                profile = profile,
+                status = status,
+                statusMessage = statusMessage,
+                profiles = profiles,
+                onSelectProfile = onSelectProfile,
+                onDisconnect = onDisconnect,
+                supportsTargetSwitch = supportsTargetSwitch,
+                schemas = schemas,
+                target = targetSchema,
+                onSelectTarget = onSelectTarget,
+            )
+        }
         ConsoleTabBar(
             consoles = consoles,
             activeConsole = activeConsole,
+            dirtyConsoleIds = dirtyConsoleIds,
+            profilesById = profilesById,
             onSelectConsole = onSelectConsole,
-            onCreateConsole = onCreateConsole,
+            onCreateConsoleAt = onCreateConsoleAt,
             onRenameConsole = onRenameConsole,
             onDeleteConsole = onDeleteConsole,
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
+        if (activeConsole == null) {
+            StarterPane(
+                profiles = profiles,
+                consoles = consoles,
+                onCreateConsoleAt = onCreateConsoleAt,
+            )
+            return
+        }
         // 编辑器状态：文本由外部权威（切换控制台/预览/清空），选区是本地瞬态
         var tfv by remember { mutableStateOf(TextFieldValue(editorText)) }
         LaunchedEffect(editorText) {
@@ -331,7 +370,7 @@ private fun HeaderBar(
     }
 }
 
-/** 绑定数据源导航行：点击连接名可切换到其它数据源；含连接状态与断开。 */
+/** 绑定数据源导航行：展示当前控制台的数据源（点击可切到其它数据源），右侧是执行目标切换与断开。 */
 @Composable
 private fun ConnectionNavBar(
     profile: ConnectionProfile,
@@ -340,6 +379,12 @@ private fun ConnectionNavBar(
     profiles: List<ConnectionProfile>,
     onSelectProfile: (String) -> Unit,
     onDisconnect: () -> Unit,
+    supportsTargetSwitch: Boolean,
+    /** 该数据源的库/schema 列表（null = 未连接/未加载完成）。 */
+    schemas: List<SchemaMeta>?,
+    /** 当前控制台已选目标库/schema（"" = 连接默认）。 */
+    target: String,
+    onSelectTarget: (String) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -408,30 +453,130 @@ private fun ConnectionNavBar(
             )
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            "SQL 文件自动保存",
-            fontSize = 10.5.sp,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
-        )
+        if (supportsTargetSwitch) {
+            TargetSwitcher(
+                enabled = status == ConnUiStatus.CONNECTED && schemas != null,
+                loading = status == ConnUiStatus.CONNECTED && schemas == null,
+                schemas = schemas.orEmpty(),
+                target = target,
+                onSelectTarget = onSelectTarget,
+            )
+        }
         if (status == ConnUiStatus.CONNECTED) {
             TextButton(onClick = onDisconnect) { Text("断开", fontSize = 12.sp) }
         }
     }
 }
 
-/** 控制台标签条：当前数据源下所有控制台 + 「新建」。 */
+/**
+ * 执行目标切换：每个控制台可选其数据源下的库/schema（PG 即 schema、MySQL 即库），
+ * 下次执行前自动发出 USE / SET search_path 前导。"" = 默认（连接库/连接默认）。
+ */
+@Composable
+private fun TargetSwitcher(
+    enabled: Boolean,
+    loading: Boolean,
+    schemas: List<SchemaMeta>,
+    target: String,
+    onSelectTarget: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val label = if (target.isBlank()) "默认" else target
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .clickable(enabled = enabled) { open = true }
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    ) {
+        Text(
+            "目标",
+            fontSize = 10.5.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+        )
+        Text(
+            if (loading) "加载中…" else label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (enabled) MaterialTheme.colors.onSurface.copy(alpha = 0.75f)
+            else MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 5.dp).widthIn(max = 150.dp),
+        )
+        Icon(
+            Icons.Filled.ArrowDropDown, "切换执行目标库/Schema",
+            tint = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 0.5f else 0.25f),
+            modifier = Modifier.size(16.dp),
+        )
+    }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenuItem(onClick = {
+            open = false
+            if (target != "") onSelectTarget("")
+        }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (target.isBlank()) "✓ " else "  ",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colors.primary,
+                )
+                Text(
+                    "默认（连接库/连接默认 schema）",
+                    fontSize = 13.sp,
+                    color = if (target.isBlank()) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+                )
+            }
+        }
+        schemas.forEach { s ->
+            val name = s.displayName
+            val selected = name.equals(target, ignoreCase = true)
+            DropdownMenuItem(onClick = {
+                open = false
+                if (!selected) onSelectTarget(name)
+            }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (selected) "✓ " else "  ",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colors.primary,
+                    )
+                    Text(
+                        name,
+                        fontSize = 13.sp,
+                        color = if (selected) MaterialTheme.colors.primary
+                        else MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 控制台标签条（跨数据源）：固定显示全部档案的控制台，每个标签带数据源徽章（含 ● 未保存）；
+ * 右侧「+」下拉选择在哪个数据源下新建。
+ */
 @Composable
 private fun ConsoleTabBar(
     consoles: List<ConsoleRecord>,
     activeConsole: ConsoleRecord?,
+    dirtyConsoleIds: Set<String>,
+    profilesById: Map<String, ConnectionProfile>,
     onSelectConsole: (ConsoleRecord) -> Unit,
-    onCreateConsole: () -> Unit,
+    onCreateConsoleAt: (String) -> Unit,
     onRenameConsole: (ConsoleRecord) -> Unit,
     onDeleteConsole: (ConsoleRecord) -> Unit,
 ) {
+    var createMenuOpen by remember { mutableStateOf(false) }
+    // 条内出现多个数据源时，标签额外显示所属数据源名，避免同类型两个库分不清
+    val multiSource = consoles.map { it.connectionId }.distinct().size > 1
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(36.dp).padding(start = 12.dp, end = 8.dp),
+        modifier = Modifier.fillMaxWidth().height(38.dp).padding(start = 12.dp, end = 6.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -440,7 +585,10 @@ private fun ConsoleTabBar(
             consoles.forEach { c ->
                 ConsoleChip(
                     console = c,
+                    profile = profilesById[c.connectionId],
+                    showSourceTag = multiSource,
                     active = c.id == activeConsole?.id,
+                    dirty = c.id in dirtyConsoleIds,
                     onSelect = { onSelectConsole(c) },
                     onRename = { onRenameConsole(c) },
                     onDelete = { onDeleteConsole(c) },
@@ -450,14 +598,34 @@ private fun ConsoleTabBar(
         }
         Spacer(Modifier.width(6.dp))
         IconButton(
-            onClick = onCreateConsole,
+            onClick = { createMenuOpen = true },
             modifier = Modifier.size(24.dp),
         ) {
             Icon(
-                Icons.Filled.Add, "新建控制台",
+                Icons.Filled.Add, "新建控制台…",
                 tint = MaterialTheme.colors.primary,
                 modifier = Modifier.size(16.dp),
             )
+        }
+        DropdownMenu(expanded = createMenuOpen, onDismissRequest = { createMenuOpen = false }) {
+            profilesById.values.forEach { p ->
+                DropdownMenuItem(onClick = {
+                    createMenuOpen = false
+                    onCreateConsoleAt(p.id)
+                }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TypeBadge(p.dbType)
+                        Text(
+                            "在「${p.name}」新建控制台",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                            modifier = Modifier.padding(start = 8.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -465,7 +633,10 @@ private fun ConsoleTabBar(
 @Composable
 private fun ConsoleChip(
     console: ConsoleRecord,
+    profile: ConnectionProfile?,
+    showSourceTag: Boolean,
     active: Boolean,
+    dirty: Boolean,
     onSelect: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -484,8 +655,27 @@ private fun ConsoleChip(
                     else MaterialTheme.colors.onSurface.copy(alpha = 0.045f),
                 )
                 .clickable(onClick = onSelect)
-                .padding(horizontal = 9.dp, vertical = 4.dp),
+                .padding(start = if (profile != null) 5.dp else 9.dp, end = 9.dp, top = 4.dp, bottom = 4.dp),
         ) {
+            if (profile != null) {
+                TypeBadge(profile.dbType)
+                Spacer(Modifier.width(6.dp))
+            }
+            if (dirty) {
+                Text(
+                    "●",
+                    color = Color(0xFFFFB300), // 语义色：未保存（与状态点同源）
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(end = 3.dp),
+                )
+            }
+            if (showSourceTag && profile != null) {
+                Text(
+                    "${profile.name} · ",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
+                )
+            }
             Text(
                 console.name,
                 fontSize = 12.sp,
@@ -495,6 +685,58 @@ private fun ConsoleChip(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+/** 引导区：还没有激活控制台时的空白态 —— 提示打开上方标签/在左侧树点数据源，并给出按数据源新建入口。 */
+@Composable
+private fun StarterPane(
+    profiles: List<ConnectionProfile>,
+    consoles: List<ConsoleRecord>,
+    onCreateConsoleAt: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 26.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            if (consoles.isEmpty()) "还没有控制台" else "还没有打开的控制台",
+            style = MaterialTheme.typography.subtitle1,
+            color = MaterialTheme.colors.onSurface,
+        )
+        Text(
+            if (consoles.isEmpty())
+                "每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）。\n" +
+                    "点右上角「+」选择数据源新建，或在左侧树单击数据源连接。"
+            else
+                "每个 tab 就是一个控制台。点上方任一标签（徽章 = 所属数据源）即可打开，\n" +
+                    "或点「+」再新建一个；在左侧树单击数据源连接也可直接进入。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+            textAlign = TextAlign.Center,
+        )
+        if (profiles.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            profiles.forEach { p ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onCreateConsoleAt(p.id) }
+                        .background(MaterialTheme.colors.onSurface.copy(alpha = 0.045f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    TypeBadge(p.dbType)
+                    Text(
+                        "在「${p.name}」新建控制台",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(start = 7.dp),
+                    )
+                }
+            }
         }
     }
 }

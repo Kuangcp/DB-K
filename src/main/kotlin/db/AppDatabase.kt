@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 3
+    private const val CURRENT_VERSION = 4
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -40,6 +40,15 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV3(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (3)").use { it.executeUpdate() }
         }
+        if (!applied.contains(4)) {
+            conn.createStatement().use { st -> migrateToV4(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (4)").use { it.executeUpdate() }
+        }
+    }
+
+    /** v4：consoles 记录每控制台的执行目标库/schema（"" = 连接默认）。 */
+    private fun migrateToV4(st: Statement) {
+        st.executeUpdate("ALTER TABLE consoles ADD COLUMN target TEXT NOT NULL DEFAULT ''")
     }
 
     /** v3：sql_history 补记录成败/行数/错误，支撑执行历史面板。 */

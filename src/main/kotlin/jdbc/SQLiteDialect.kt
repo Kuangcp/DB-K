@@ -13,6 +13,10 @@ import java.sql.Connection
  */
 object SQLiteDialect : GenericDialect(DbType.SQLITE, "org.sqlite.JDBC") {
 
+    /** 单文件无库/schema 可切。 */
+    override val supportsTargetSwitch: Boolean get() = false
+
+
     override fun loadSchemas(conn: Connection): List<SchemaMeta> =
         listOf(SchemaMeta(catalog = null, schema = "main"))
 

@@ -17,6 +17,10 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
 
     override fun quoteIdent(name: String): String = "`" + name.replace("`", "``") + "`"
 
+    /** CH 的库即 catalog：USE 切过去。 */
+    override fun sessionContextSql(schema: SchemaMeta): String? =
+        schema.catalog?.let { "USE ${quoteIdent(it)}" }
+
     override fun loadSchemas(conn: Connection): List<SchemaMeta> {
         val out = mutableListOf<SchemaMeta>()
         conn.createStatement().use { st ->

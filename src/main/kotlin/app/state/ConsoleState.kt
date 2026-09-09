@@ -9,6 +9,7 @@ import db.ConnectionsRepository
 import db.SqlHistoryRow
 import jdbc.QueryExecutor
 import jdbc.QueryResult
+import jdbc.DialectRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -86,6 +87,13 @@ class ConsoleState(
     fun profileConsoles(profileId: String): List<ConsoleRecord> =
         consolesByConnection.getOrPut(profileId) { repository.listConsoles(profileId) }
 
+    /** 工作台级全部控制台（按数据源顺序展平，跨数据源）；首次调用按档案惰性载入。 */
+    fun allConsoles(profileIds: List<String>): List<ConsoleRecord> {
+        val out = ArrayList<ConsoleRecord>()
+        profileIds.forEach { pid -> out += profileConsoles(pid) }
+        return out
+    }
+
     fun textOf(consoleId: String): String = buffers[consoleId] ?: ""
 
     fun runStateOf(consoleId: String): ConsoleRunUi = runSlots[consoleId] ?: ConsoleRunUi()
@@ -121,6 +129,16 @@ class ConsoleState(
         return chosen
     }
 
+    /** 启动回位：无激活控制台时回到最近改动的那个（跨数据源）；一个都没有则返回 null。 */
+    fun activateMostRecent(profileIds: List<String>): ConsoleRecord? {
+        if (activeConsoleId != null) return activeConsole()
+        val best = profileIds.asSequence()
+            .flatMap { profileConsoles(it).asSequence() }
+            .maxByOrNull { it.updatedAt } ?: return null
+        activate(best)
+        return best
+    }
+
     // ---------- 控制台管理 ----------
 
     fun createConsole(profileId: String, name: String): ConsoleRecord {
@@ -138,6 +156,17 @@ class ConsoleState(
         if (entry != null) {
             consolesByConnection[entry.key] = entry.value.map {
                 if (it.id == consoleId) it.copy(name = newName) else it
+            }
+        }
+    }
+
+    /** 设置控制台的执行目标库/schema（立即落库；"" = 连接默认不切换）。 */
+    fun setTarget(consoleId: String, target: String) {
+        repository.setConsoleTarget(consoleId, target)
+        val entry = consolesByConnection.entries.firstOrNull { (_, list) -> list.any { it.id == consoleId } }
+        if (entry != null) {
+            consolesByConnection[entry.key] = entry.value.map {
+                if (it.id == consoleId) it.copy(target = target) else it
             }
         }
     }
@@ -232,6 +261,27 @@ class ConsoleState(
     }
 
     /**
+     * 解析控制台已设目标库/schema 的执行前导 SQL（USE / SET search_path…）。
+     * 目标为空、方言不支持切换、或当前目录快照里找不到同名库/schema 时返回 null
+     * （不切换，用连接默认）。目录需已加载（连接后）；加载中时宁可不动也不误切。
+     */
+    fun sessionContextSqlFor(console: ConsoleRecord, profile: db.ConnectionProfile): String? {
+        val t = console.target
+        if (t.isBlank()) return null
+        val schemas = connectionsState.schemasOf(profile.id)
+        if (schemas == null) return null
+        val hit = schemas.firstOrNull { it.displayName.equals(t, ignoreCase = true) }
+        if (hit == null) {
+            Logger.info(
+                "console target '{}' not found in schemas of {}; run with connection default",
+                t, profile.name,
+            )
+            return null
+        }
+        return DialectRegistry.forProfile(profile).sessionContextSql(hit)
+    }
+
+    /**
      * 执行控制台 SQL（目标 = 控制台绑定的 profile；profile 由调用方从档案列表解析）。
      * @param sql 待执行语句；null 时取控制台缓冲全文（预览/程序化执行用）。
      *   交互层规则：编辑器无选中文本时禁止全量执行，因此 UI 一律传选中片段。
@@ -264,6 +314,8 @@ class ConsoleState(
             runSlots[console.id] = ConsoleRunUi(error = "连接已断开")
             return
         }
+        // 控制台已设目标库/schema：每次执行前先切会话（USE / SET search_path…），保证复切/交错执行也生效
+        val contextSql = sessionContextSqlFor(console, profile)
         runGens[console.id] = (runGens[console.id] ?: 0L) + 1
         val gen = runGens.getValue(console.id)
         lastStableSlots[console.id] = runSlots[console.id] ?: ConsoleRunUi()
@@ -274,6 +326,7 @@ class ConsoleState(
         val outcome = withContext(Dispatchers.IO) {
             runCatching {
                 live.onConnection { conn ->
+                    QueryExecutor.applyContext(conn, contextSql)
                     QueryExecutor.execute(conn, target) { st -> live.registerStatement(st) }
                 }
             }
