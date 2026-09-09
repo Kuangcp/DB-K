@@ -200,13 +200,15 @@ class ConsoleState(
     }
 
     /**
-     * 执行控制台当前 SQL（目标 = 控制台绑定的 profile；profile 由调用方从档案列表解析）。
+     * 执行控制台 SQL（目标 = 控制台绑定的 profile；profile 由调用方从档案列表解析）。
+     * @param sql 待执行语句；null 时取控制台缓冲全文（预览/程序化执行用）。
+     *   交互层规则：编辑器无选中文本时禁止全量执行，因此 UI 一律传选中片段。
      * 连接未就绪先补连/重连；同源所有 JDBC 都经 LiveConnection 单线程执行器串行。
      */
-    suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile) {
+    suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile, sql: String? = null) {
         withContext(Dispatchers.IO) { flushNow(console.id) }
-        val sql = textOf(console.id).trim()
-        if (sql.isEmpty()) {
+        val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
+        if (target.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(error = "请输入要执行的 SQL")
             return
         }
@@ -228,7 +230,7 @@ class ConsoleState(
         runSlots[console.id] = ConsoleRunUi(executing = true)
         val outcome = try {
             withContext(Dispatchers.IO) {
-                runCatching { live.onConnection { conn -> QueryExecutor.execute(conn, sql) } }
+                runCatching { live.onConnection { conn -> QueryExecutor.execute(conn, target) } }
             }
         } finally {
             // executing=false 的状态在下面统一写回，避免双写丢失字段
@@ -242,6 +244,8 @@ class ConsoleState(
     }
 
     companion object {
-        private const val AUTOSAVE_MS = 700L
+        // 自动保存防抖窗口：用户停顿超过该时长才写盘（打字期间不写，不影响编辑）；
+        // 切换控制台/执行前/退出仍强制落盘，保证基本不丢。
+        private const val AUTOSAVE_MS = 3000L
     }
 }

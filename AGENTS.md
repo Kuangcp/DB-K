@@ -45,7 +45,20 @@
   - 当前浅色 → 显示 `DbIcons.Moon`（点击进深色）
   - 当前深色 → 显示 `DbIcons.Sun`（点击回浅色）
 - 样式参照 api-x：`IconButton` + `Icon(tint = onSurface alpha 0.7)`，24dp 热区、18dp 图标。
-- 状态：`app/core/Main.kt` 的 `var isDark`（session 级，不持久化；如需持久化参照 api-x ThemeState）。
+- 状态：`Main.kt` 的 `var isDark`，**持久化**：启动读 `ThemePrefs.load()`（`<dataDir>/theme.properties`，key `dark`），
+  切换时同步 `ThemePrefs.save(isDark)`。新增主题相关配置不得只存内存。
+
+## 会话日志（每次启动一个文件，按月分目录）★ 必读
+
+- 约定：`logs/<yyyy-MM>/<yyyy-MM-dd>_<N>.log`（N=当天会话序号，同一天每启动一次 +1），
+  目录相对工作目录 `logs/`；可用 `-Ddbk.logDir=<dir>` 覆盖。已加 .gitignore。
+- 实现：自定义 tinylog writer `app/core/SessionLogWriter.kt`，注册于 `src/main/resources/tinylog.properties`
+  （`writer2 = app.core.SessionLogWriter`；`writer = console` 保留开发输出）。
+- 依赖：`tinylog-impl` 是 **implementation**（writer 类编译需要 writers 抽象类）。
+- 坑：tinylog 懒初始化——只有首次 `Logger.*` 调用才建 writer。所以 `main()` 第一行必须有确定的首条日志
+  （现为 `Logger.info("db-k session start; …")`）；新增启动流程不要删它。
+- writer 构造：必须同时提供无参与 `(Map<String,String>)` 两个公开构造（tinylog 反射实例化用）。
+- 新增「运行日志写哪」自查：`find logs -name '*.log' | tail` 应与今天日期/启动次数对应。
 
 ### 自查
 

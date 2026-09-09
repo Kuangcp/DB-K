@@ -38,6 +38,7 @@ import app.dialog.ConfirmDialog
 import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
 import app.dialog.FolderNameDialog
+import app.settings.ThemePrefs
 import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
 import app.state.ConfirmRequest
@@ -72,6 +73,8 @@ import java.awt.datatransfer.StringSelection
 import java.io.File
 
 fun main() = application {
+    // 首条日志触发 tinylog 初始化 → SessionLogWriter 立即创建本次会话日志文件（logs/yyyy-MM/yyyy-MM-dd_N.log）
+    Logger.info("db-k session start; dataDir={}", AppPaths.dataDirectory())
     AppRoot(onExit = ::exitApplication)
 }
 
@@ -146,7 +149,7 @@ private fun AppBody(
     toastState: ToastState,
 ) {
     val scope = rememberCoroutineScope()
-    var isDark by remember { mutableStateOf(false) }
+    var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
     var treeWidthDp by remember { mutableStateOf(280f) }
 
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
@@ -206,10 +209,15 @@ private fun AppBody(
     val activeConsole = consoleState.activeConsole()
     val activeProfile = activeConsole?.let { a -> profiles.firstOrNull { it.id == a.connectionId } }
 
-    fun runActiveConsole() {
+    fun runActiveConsole(sql: String?) {
         val c = consoleState.activeConsole() ?: return
         val p = profiles.firstOrNull { it.id == c.connectionId } ?: return
-        scope.launch { consoleState.run(c, p) }
+        val target = sql?.trim().orEmpty()
+        if (target.isEmpty()) {
+            toastState.show("请先选中要执行的 SQL（Ctrl+A 全选）")
+            return
+        }
+        scope.launch { consoleState.run(c, p, target) }
     }
 
     fun suggestConsoleName(profile: ConnectionProfile): String {
@@ -309,8 +317,7 @@ private fun AppBody(
                         editorDirty = activeConsole?.let { consoleState.isDirty(it.id) } == true,
                         onTextChange = { t -> activeConsole?.let { consoleState.setText(it.id, t) } },
                         run = activeRun,
-                        onRun = ::runActiveConsole,
-                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },
+                        onRun = ::runActiveConsole,                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },
                         onExportCsv = {
                             val result = activeConsole?.let { consoleState.runStateOf(it.id).result }
                             if (result != null) {
@@ -335,7 +342,10 @@ private fun AppBody(
                         },
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },
                         isDark = isDark,
-                        onToggleTheme = { isDark = !isDark },
+                        onToggleTheme = {
+                            isDark = !isDark
+                            ThemePrefs.save(isDark)
+                        },
                     )
                 }
 

@@ -3,6 +3,7 @@ package app.ui
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +24,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
@@ -32,13 +35,13 @@ import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,19 +50,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ConsoleRunUi
+import com.neoutils.highlight.compose.remember.rememberHighlight
+import com.neoutils.highlight.compose.remember.rememberTextFieldValue
+import com.neoutils.highlight.core.extension.textColor
 import db.ConsoleRecord
 import db.ConnectionProfile
 import jdbc.QueryResult
@@ -91,7 +100,8 @@ fun SqlWorkspace(
     editorDirty: Boolean,
     onTextChange: (String) -> Unit,
     run: ConsoleRunUi,
-    onRun: () -> Unit,
+    /** 执行请求：参数为编辑器当前选中片段（去首尾空白）；null = 无有效选中。 */
+    onRun: (String?) -> Unit,
     onClear: () -> Unit,
     onExportCsv: () -> Unit,
     onDisconnect: () -> Unit,
@@ -123,22 +133,27 @@ fun SqlWorkspace(
             onDeleteConsole = onDeleteConsole,
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
+        // 编辑器状态：文本由外部权威（切换控制台/预览/清空），选区是本地瞬态
+        var tfv by remember { mutableStateOf(TextFieldValue(editorText)) }
+        LaunchedEffect(editorText) {
+            if (tfv.text != editorText) tfv = TextFieldValue(editorText, TextRange(editorText.length))
+        }
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             EditorPane(
-                queryText = editorText,
+                value = tfv,
                 dirty = editorDirty,
-                onQueryTextChange = onTextChange,
-                onRun = onRun,
+                onValueChange = { v -> tfv = v; onTextChange(v.text) },
+                onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
                 modifier = Modifier.weight(0.44f).fillMaxWidth(),
             )
             ExecBar(
                 executing = run.executing,
                 result = run.result,
                 error = run.error,
-                onRun = onRun,
+                onRun = { onRun(selectedSqlOf(tfv)) },
                 onClear = onClear,
                 onExportCsv = onExportCsv,
                 exportEnabled = exportEnabledFor(run),
@@ -156,6 +171,17 @@ fun SqlWorkspace(
 private fun exportEnabledFor(run: ConsoleRunUi): Boolean {
     val res = run.result ?: return false
     return !run.executing && run.error == null && res.isQuery && res.rowCount > 0
+}
+
+/** 编辑器当前选中片段（去首尾空白）；无选中或选中空白 → null。 */
+private fun selectedSqlOf(v: TextFieldValue): String? {
+    val s = v.selection
+    if (s.collapsed) return null
+    // 反向选择（从下往上）时 start>end，必须取 min/max
+    val from = minOf(s.start, s.end)
+    val to = maxOf(s.start, s.end)
+    val sub = v.text.substring(from, to)
+    return sub.trim().takeIf { it.isNotEmpty() }
 }
 
 @Composable
@@ -353,34 +379,68 @@ private fun ConsoleChip(
     }
 }
 
+/**
+ * SQL 编辑器（M5 起点：NeoUtils 语法高亮）。
+ *
+ * 结构：外层自绘边框/底；内部 BasicTextField 消费带 span 高亮的 TextFieldValue（NeoUtils
+ * rememberHighlight + rememberTextFieldValue 实时着色），滚动用外层 verticalScroll。
+ * 文本/选区权威仍在上层 SqlWorkspace 持有的 tfv（受控），高亮是纯派生渲染。
+ *
+ * 后续补全提示的接入点：本组件 value/onValueChange 已是受控 TextFieldValue，补全只需
+ * （1）上层算好候选 + 待替换 TextRange，（2）在此处 value 上替换选区后回调 onValueChange，
+ * （3）候选列表 UI 做成锚定光标的弹层（见 README/AGENTS 补全段落）。
+ */
 @Composable
 private fun EditorPane(
-    queryText: String,
+    value: TextFieldValue,
     dirty: Boolean,
-    onQueryTextChange: (String) -> Unit,
-    onRun: () -> Unit,
+    onValueChange: (TextFieldValue) -> Unit,
+    onCtrlEnter: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier = modifier) {
-        OutlinedTextField(
-            value = queryText,
-            onValueChange = onQueryTextChange,
-            modifier = Modifier.fillMaxSize().onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.Enter && e.isCtrlPressed) {
-                    onRun()
-                    true
-                } else {
-                    false
-                }
-            },
+    val isDark = MaterialTheme.colors.isLight.not()
+    val pal = sqlSyntaxPalette(isDark)
+    val keywords = remember { sqlHighlightKeywords().distinct() }
+    val highlightedValue = rememberHighlight {
+        // 顺序：注释/字符串先注册（其内部关键字与数字不误染），再数字/关键字/标点。
+        textColor { "--[^\n]*".toRegex().fully(pal.comment.toUiColor()) }
+        textColor { "/\\*[\\s\\S]*?\\*/".toRegex().fully(pal.comment.toUiColor()) }
+        textColor { "'(?:[^']|'')*'".toRegex().fully(pal.string.toUiColor()) }
+        textColor { "\"(?:[^\"]|\"\")*\"".toRegex().fully(pal.string.toUiColor()) }
+        textColor { "\\b\\d+(?:\\.\\d+)?\\b".toRegex().fully(pal.number.toUiColor()) }
+        textColor {
+            "\\b(${keywords.joinToString("|")})\\b"
+                .toRegex(RegexOption.IGNORE_CASE)
+                .fully(pal.keyword.toUiColor())
+        }
+        textColor { "[(),;.]".toRegex().fully(pal.punctuation.toUiColor()) }
+    }.rememberTextFieldValue(value)
+
+    val scroll = rememberScrollState()
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colors.surface)
+            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp)),
+    ) {
+        BasicTextField(
+            value = highlightedValue.copy(composition = value.composition),
+            onValueChange = onValueChange,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .verticalScroll(scroll)
+                .onPreviewKeyEvent { e ->
+                    if (e.type == KeyEventType.KeyDown && e.key == Key.Enter && e.isCtrlPressed) {
+                        // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
+                        onCtrlEnter()
+                        true
+                    } else {
+                        false
+                    }
+                },
             singleLine = false,
-            placeholder = {
-                Text(
-                    "输入 SQL，Ctrl+Enter 执行，例如：\nSELECT * FROM users",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
-                )
-            },
+            cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
             textStyle = TextStyle(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
@@ -388,6 +448,19 @@ private fun EditorPane(
                 color = MaterialTheme.colors.onSurface,
             ),
             keyboardOptions = KeyboardOptions.Default,
+            decorationBox = { innerTextField ->
+                Box {
+                    if (value.text.isEmpty()) {
+                        Text(
+                            "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）",
+                            fontSize = 12.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                        )
+                    }
+                    innerTextField()
+                }
+            },
         )
         // 编辑状态提示（● = 有未落盘改动，自动保存中）
         Text(

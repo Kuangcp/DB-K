@@ -27,10 +27,13 @@ dependencies {
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("org.mariadb.jdbc:mariadb-java-client:3.5.1")
     implementation("com.h2database:h2:2.3.232")
+    // SQL 编辑器语法高亮（api-x 同源：NeoUtils Highlight Compose）
+    implementation("com.neoutils.highlight:highlight-compose:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
     implementation("org.tinylog:tinylog-api:2.7.0")
-    runtimeOnly("org.tinylog:tinylog-impl:2.7.0")
+    // impl 含 writers 抽象类，SessionLogWriter 编译需在 compileClasspath
+    implementation("org.tinylog:tinylog-impl:2.7.0")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
