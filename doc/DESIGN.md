@@ -1,0 +1,276 @@
+# db-k 设计文档：轻量级 JDBC 数据库客户端（Compose Desktop）
+
+> 目标：做一个类似 api-x 架构的轻量数据库客户端。
+> 技术底座完全对齐 api-x 已验证过的组合，架构沿用其「分层 + Repository + 状态即 ViewModel」的最佳实践。
+
+---
+
+## 1. 定位与范围
+
+**形态**：单窗口桌面工具，左树 + 右上 SQL 编辑器 + 右下结果区（传统 DB 客户端布局）。
+
+**首发支持数据库**：PostgreSQL / MySQL / MariaDB / SQLite / H2（全部走 JDBC）。
+后置可扩展：ClickHouse、SQL Server、Oracle（Oracle 驱动需手动放 libs，license 限制）。
+
+**应用自身元数据**（连接、分组文件夹、SQL 历史）持久化在本地 SQLite，与目标库无关。
+
+**明确不做（第一版）**：ER 图、数据编辑表、索引/约束管理、多窗口、插件体系。
+
+---
+
+## 2. 技术选型（复用本机已验证工具链）
+
+| 项 | 选择 | 说明 |
+|---|---|---|
+| Kotlin / Compose | 2.4.0 / 1.12.0（对齐 api-x） | api-x 在本机构建验证过 |
+| Gradle | wrapper 8.3（api-x 同一份，已缓存） | 拷贝 api-x 的 wrapper，避免重新下载 |
+| JDK | 25.0.3-jbr（sdkman 已有） | 与 api-x 一致，字体渲染/打包行为统一 |
+| UI 组件 | Material2（M2）+ material-icons-core | 跟随 api-x，代码最稳；不用 M3 |
+| 日志 | tinylog 2.x | api-x 同款 |
+| 元数据存储 | org.xerial:sqlite-jdbc | 应用自己的 SQLite（不是连目标库的） |
+| JDBC 驱动 | pgjdbc / mysql-connector-j / mariadb-java-client / sqlite-jdbc / h2 | 全放 classpath（jar 包名不冲突），够轻 |
+| 打包 | compose.desktop nativeDistributions | jlink 需补 `java.sql` 等模块（见 §12） |
+
+驱动版本以 mavenCentral 当前稳定为准，构建时锁定具体版本号。
+
+---
+
+## 3. 模块分包（对齐 api-x 四层）
+
+```
+src/main/kotlin/
+├── app/            # 应用层：Compose UI 组合 + 状态（可 import 一切）
+│   ├── core/       #   Main.kt：Window + 全局快捷键 + 副作用动作 AppActions
+│   ├── state/      #   TreeState / ConnectionsState / EditorState /
+│   │               #   ResultState / HistoryState / DialogState / ThemeState
+│   ├── ui/         #   AppTheme、通用组件（分割条、Toast、空态、状态点）
+│   ├── dialog/     #   ConnectionEditorDialog、新建文件夹、关于
+│   └── editor/     #   SqlEditor、ResultPanel、顶部工具栏
+├── db/             # 元数据层：AppPaths / AppDatabase(migrate) / ConnectionsRepository
+├── jdbc/           # 运行时层：方言、连接生命周期、元数据探测、查询执行（禁止 import compose）
+│   ├── dialect/    #   DbDialect 接口 + Generic + Postgres/MySql/MariaDb/SQLite/H2
+│   ├── LiveConnection.kt / MetadataLoader.kt / QueryExecutor.kt
+│   └── model/      #   SchemaTree / TableInfo / ColumnInfo / RunOutcome 等纯模型
+└── tree/           # 树形模型（UI 树节点）+ DbTreeSidebar 组件
+```
+
+**分层纪律**：
+- `jdbc/` 与 `tree/` 不依赖 compose，纯 Kotlin + JDK，逻辑可单测；
+- `db/`（元数据）也不依赖 compose；
+- `app/` 允许 import 所有层，负责状态与调用编排；
+- 依赖方向单向：`app → (db, jdbc, tree)`。
+
+---
+
+## 4. 核心数据模型
+
+### 4.1 存储模型（SQLite 行 → data class）
+
+```kotlin
+enum class DbType { POSTGRES, MYSQL, MARIADB, SQLITE, H2 }
+
+data class ConnectionProfile(
+    val id: String,
+    val name: String,
+    val folderId: String?,
+    val color: String? = null,
+    val dbType: DbType,
+    val host: String, val port: Int, val database: String,  // SQLite: database=文件路径
+    val user: String?, val password: String?,
+    val extraParams: String = "",   // sslmode=require&connectTimeout=5
+    val sortOrder: Int = 0,
+)
+// URL 由 dbType 模板 + 字段拼装（host:port/db?extra），首版不开放手写 override URL
+```
+
+### 4.2 UI 树模型 + 虚拟树渲染
+
+树深度：`文件夹* → 数据源 → 库(catalog/schema) → [表|视图|触发器] 分组 → 对象`。
+
+```kotlin
+sealed interface UiTreeNode {
+    val id: String; val name: String; val depth: Int; val icon: IconKind
+    data class Folder(n, folderId, children...)        : UiTreeNode
+    data class DataSource(profileId, connStatus)       : UiTreeNode   // 连接状态点
+    data class Schema(catalog, schema, childrenLoaded) : UiTreeNode
+    data class ObjectGroup(kind: Table|View|Trigger)   : UiTreeNode
+    data class DbObject(catalog, schema, kind, name)   : UiTreeNode   // 表/视图/触发器
+}
+```
+
+**渲染策略**：不用递归嵌套 lazy（深度大、滚动抖动），改为**扁平展开**——
+给定 `expandedIds + 元数据缓存`，把可见节点展开成 `List<UiTreeNode>`，单条 `LazyColumn` 每行一个节点（缩进按 depth）。这与 api-x 树（嵌套数据类递归）不同，是 DB 工具更优解。
+
+**懒加载契约**：`DataSource` 展开 → 拉 catalog/schema 列表；`Schema` 展开 → 拉该库的表/视图/触发器名（只读名字，快）；双击/右键表 → 才拉 columns/主键/行预览。避免大库启动即卡。
+
+### 4.3 JDBC 运行时模型
+
+```kotlin
+// 元数据（探测结果，只取名字层）
+data class DbSchema(catalog: String?, schema: String?, tables: List<TableMeta>)
+data class TableMeta(name: String, kind: ObjKind /*TABLE|VIEW|TRIGGER|SYSTEM*/, system: Boolean)
+data class ColumnMeta(name: String, jdbcType: String, size: Int, nullable: Boolean, pk: Boolean)
+
+// 一次执行的结果
+sealed interface RunOutcome {
+    data class Query(cols: List<String>, rows: List<List<Cell?>>, pageSize, total, truncated, elapsedMs)
+    data class Update(count: Long, elapsedMs)
+    data class Failure(message: String, sqlState: String?)
+}
+```
+
+---
+
+## 5. 方言抽象（jdbc/dialect）
+
+```kotlin
+interface DbDialect {
+    val dbType: DbType
+    fun openConnection(profile: ConnectionProfile): Connection   // Class.forName + DriverManager
+    fun loadSchemas(conn: Connection): List<SchemaMeta>          // PG 返回 schema 列表
+    fun loadObjects(conn: Connection, s: SchemaMeta): ObjectsMeta// 该库的表/视图/触发器
+    fun quoteIdent(name: String): String                          // PG/H2 用 "x"，MySQL 用 `x`
+    fun limitSql(sql: String, n: Int): String                     // 预览 LIMIT；SQL Server 用 TOP
+    fun listCatalogs(conn: Connection): List<String>              // MySQL: catalog==database
+}
+
+object DialectRegistry { fun forType(t: DbType): DbDialect }
+```
+
+- `GenericDialect` 用 `java.sql.DatabaseMetaData` 兜底（getTables/getColumns/getTriggers），新库可零代码接入；
+- PG 实现：过滤 `pg_catalog`/`information_schema`；SQLite：无 catalog 概念，只有 `main`，走 `sqlite_master`；MySQL/MariaDB：catalog 即库，schema 层合一；
+- 双击表「预览 100 行」= `limitSql("SELECT * FROM schema.table", 100)`，标识符统一 `quoteIdent`。
+
+---
+
+## 6. 运行时连接与线程模型（核心纪律）
+
+- 每个已保存连接 = 一个 `LiveConnection`：
+  - 持有懒创建的 `java.sql.Connection` + **单线程 Executor**（该连接所有 JDBC 调用串行投递）；
+  - 状态机：`IDLE → CONNECTING → CONNECTED / ERROR`，状态以 snapshot state 暴露给 Compose；
+  - 生命周期由 `ConnectionsState` 管理：连接/断开/重连/刷新，以及应用退出时全部 close。
+- **UI 线程永不碰 JDBC**。所有同步 JDBC 调用包成 `suspend fun`（内部 `withContext(ioDispatcher) { executor.submit {...} }`），Compose 主线程只改 `mutableStateOf`。
+- **取消执行**：记录当前 `Statement` 引用，取消时投递 `statement.cancel()`（JDBC 原生线程安全）；真卡死可降级为整连接 close + 重建。
+- 查询防呆：默认 `maxRows=1000`、超时 30s、大字段（blob/json/longvarchar）在单元格截断并提示。
+
+---
+
+## 7. 状态管理（api-x ViewModel 模式）
+
+App 顶层 `remember { XxxState(...) }` 拆成独立状态类，组件纯参数 + 回调，副作用集中到 `app/core/AppActions.kt`：
+
+| 状态类 | 职责 |
+|---|---|
+| TreeState | folders、expandedIds、selection、滚动定位、schema 元数据缓存 `profileId→DbSchema`、各节点 loading/error 标记 |
+| ConnectionsState | `profileId → LiveConnection`、连接状态、正在执行集合 |
+| EditorState | 目标连接、sqlText（450ms 防抖自动保存）、选中片段、快捷键状态 |
+| ResultState | 本次执行 outcome 列表、激活 tab、编辑/结果分割比例 |
+| HistoryState | SQL 历史（执行即入库，面板可选） |
+| DialogState / ThemeState / ToastState | 弹窗开关、深浅色、轻提示 |
+
+关键动作（放 AppActions）：`connectDataSource / disconnect / refreshSchema / executeSql / cancelExecution / previewTable`。
+
+数据流：点击运行 → `executeSql(EditorState.sqlText, 目标连接)` → QueryExecutor（IO）→ 结果写回 ResultState → ResultPanel 重组 → 历史入 SQLite（IO）。
+
+---
+
+## 8. UI 布局（传统 DB 客户端）
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 顶部工具栏：数据源状态点 | 当前连接/库下拉 | [▶ 运行] | 主题 | 设置 │
+├──────────────┬─────────────────────────────────────────────────┤
+│ 左侧树        │  SQL 编辑器（monospace，软换行，Ctrl+Enter 运行）   │
+│  工具栏:       ├───────────────────── 水平分割条（比例持久化）────── │
+│  ＋连接 ＋文件夹 │  结果区 Tabs: [结果1][结果2]…[消息]                │
+│  搜索框(后置)   │   数据网格：表头固定 + LazyColumn 行虚拟化          │
+│  树(扁平展开)   │   列头: 可拖列宽；NULL 灰显；大字段截断            │
+│  ＋右键菜单     │   状态栏: 行数/耗时/截断提示 | 导出 CSV | 取消      │
+└──────────────┴─────────────────────────────────────────────────┘
+```
+
+交互细节（按里程碑逐条落地）：
+- 树右键：数据源 → 连接/断开/刷新/编辑/删除；表 → 预览 100 行 / 生成 `SELECT *` / 复制表名（生成 DDL 后置）；
+- 双击表：`SELECT * FROM t LIMIT 100` 注入编辑器并直接运行；
+- 结果支持多语句一次执行（`;` 切分或整段提交），每个结果集一个 Tab，消息 Tab 收错误/update 行数，错误不弹窗刷屏；
+- 列宽：首版「内容估算 + 双击表头自动适配」即可，拖动列宽后置；
+- 深/浅主题 + 窗口几何/树展开/分割比持久化（api-x 同款 prefs）。
+
+---
+
+## 9. 本地元数据存储（db 层，独立于目标库）
+
+数据目录沿用 api-x 方案（XDG/APPDATA + `debugHome` 沙箱重定向便于开发调试）。
+
+`app.db`（SQLite）表设计，`schema_migrations` 版本迁移机制照抄 api-x：
+
+```sql
+folders       (id TEXT PK, name, parent_id NULL REFERENCES folders, sort_order)
+connections   (id TEXT PK, folder_id NULL REFERENCES folders ON DELETE SET NULL,
+               name, db_type, host, port, database_name, user_name, password,
+               extra_params, color, sort_order, created_at, updated_at)
+sql_history   (id TEXT PK, profile_id NULL, sql_text, executed_at_ms, duration_ms)
+saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
+```
+
+**密码策略**：第一版本地明文（面向本地开发工具，README 明示风险）；后续可加简单 AES + 本地密钥文件或 master password（DBeaver 模式）。不在第一版引入 OS keychain 依赖。
+
+访问全部收敛到 `ConnectionsRepository`（prepareStatement + try-with-resources，同 api-x Repository 写法）。
+
+---
+
+## 10. 快捷键
+
+| 键 | 动作 |
+|---|---|
+| Ctrl+Enter | 运行（编辑器内） |
+| Ctrl+B | 收起/展开左侧树 |
+| Ctrl+1..9 | 切结果 Tab |
+| F5 | 刷新当前连接 schema |
+| Esc | 取消当前执行 |
+| Ctrl+↑ / Ctrl+↓ | 翻 SQL 历史（后置） |
+
+全局键处理用 Window `onPreviewKeyEvent`（api-x 同款），编辑器内快捷键在编辑器层拦截。
+
+---
+
+## 11. 里程碑（从空目录到可分发）
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| **M0 脚手架** | 拷贝 api-x 的 gradle wrapper/settings；build.gradle.kts 最小化；AppTheme + 空窗口 | `gradle run` 出窗口 |
+| **M1 元数据+树** | AppPaths + app.db 迁移 + ConnectionsRepository；文件夹/连接 CRUD 弹窗；左树 + 拖拽分割 + 展开持久化 | 能建文件夹和连接档案（未真正连库） |
+| **M2 JDBC 运行时** | DbDialect 四方言 + LiveConnection + 懒加载 schema 树 + 连接状态点 + 断线重连；先拿 SQLite 冒烟（无需服务端） | 树能展开到表/视图/触发器 |
+| **M3 编辑执行** | SqlEditor(自动保存) + QueryExecutor + ResultPanel 网格/消息 + 历史入库 + Esc 取消 | 连上 PG/MySQL 跑查询出网格 |
+| **M4 体验打磨** | 双击表预览、CSV 导出、错误展示、Toast、几何持久化、右键菜单 | 日常可用 |
+| **M5 打包** | nativeDistributions + jlink modules（java.sql/java.sql.rowset/java.naming/java.management）+ MSI/Deb | 安装包可跑 |
+
+**建议实施顺序理由**：M1 不碰 JDBC 就能把「树 + 弹窗 + 本地存储」这层最繁琐的 UI 先立起来（api-x 同路径：集合树先于 HTTP 引擎）；M2 引入真正的元数据驱动树；M3 才做执行闭环。
+
+---
+
+## 12. 打包与风险
+
+- jlink 模块：JDBC/驱动需要 `java.sql`（api-x 注释里已踩过）、`java.sql.rowset`、`java.naming`（部分驱动）、`java.management`；
+- 驱动体积：PG+MySQL+MariaDB+SQLite+H2 约 40MB 内，可接受；想更轻可后续做「驱动目录按需加载」；
+- Oracle 驱动 license 不可中央仓库直接引入 → 手动 libs；ClickHouse 驱动依赖重 → 后置；
+- 编辑器高亮：后置接 highlight-compose 或自写轻量 SQL tokenizer；
+- 大库风险：schema 探测必须懒加载 + IO 线程，绝不启动时全量探测；
+- 工具链风险：如果 Kotlin 2.4.0 + Gradle 8.3 wrapper 组合出现意外问题，退回方案是复制 api-x 完整 gradle 配置逐项对齐（同机器同缓存，概率极低）。
+
+---
+
+## 13. 从 api-x 提炼、本项目坚持的最佳实践清单
+
+1. 工具链复用本机已验证组合（wrapper/Kotlin/Compose/JBR），不重新发明版本矩阵。
+2. 四层分包 + 单向依赖；`jdbc/` `db/` `tree/` 不 import compose。
+3. Repository 模式收敛 SQLite 访问；schema_migrations 版本化迁移。
+4. 状态即 ViewModel：细分状态类 + `remember` 创建 + 回调下发，副作用收拢到 AppActions。
+5. 树扁平展开渲染 + 元数据懒加载，DB 客户端大库不卡的关键。
+6. JDBC 全走单线程 executor + suspend 包装，UI 线程只改 snapshot。
+7. 大结果集治理：maxRows 截断、分页取数、单元格截断、CSV 独立导出通道。
+8. 防抖自动保存（450ms）；窗口/分割/展开持久化。
+9. 模型分层：UI 树节点 / 存储行 / JDBC 探测模型三者分离，边界转换。
+10. 错误人性化：SQLState + 方言友好文案，展示在消息区而非弹窗刷屏。
+11. debugHome 沙箱重定向，开发期不污染真实数据。
+12. 所有长耗时动作带 loading/取消，符合桌面工具心智。

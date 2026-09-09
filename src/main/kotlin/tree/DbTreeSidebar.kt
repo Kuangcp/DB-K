@@ -1,0 +1,490 @@
+package tree
+
+import androidx.compose.foundation.ContextMenuArea
+import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.Icon
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import app.ui.DbIcons
+import db.ConnectionProfile
+import db.DbType
+import db.FolderRow
+import jdbc.model.ObjectKind
+
+/** 行上下文动作（闭包已绑定具体行）。 */
+class RowActions(
+    val onAddConnectionAt: () -> Unit = {},
+    val onRenameFolder: () -> Unit = {},
+    val onDeleteFolder: () -> Unit = {},
+    val onEditConnection: () -> Unit = {},
+    val onDeleteConnection: () -> Unit = {},
+    val onDisconnect: () -> Unit = {},
+    val onRefreshSchemas: () -> Unit = {},
+    val onCopyName: () -> Unit = {},
+    val onCopyQuery: () -> Unit = {},
+    /** CONNECTION 行：打开/激活该数据源的控制台。 */
+    val onOpenConsole: () -> Unit = {},
+    /** DB_OBJECT 行：在控制台里预览（SELECT 前 200 行）。 */
+    val onPreviewTable: () -> Unit = {},
+)
+
+/**
+ * 左侧树：文件夹 → 连接 → 库(schema) → 对象组 → 表/视图/触发器。
+ * 扁平化渲染：每行一个 [TreeRowInfo]，缩进按 depth。
+ *
+ * 交互约定：单击 = 选中；双击可展开行 = 展开/收起；
+ * 展开箭头 / “连接”按钮统一走 onToggleExpand（连接未连接时由上层负责连接与懒加载）；
+ * 右键按行类型给菜单。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun DbTreeSidebar(
+    rows: List<TreeRowInfo>,
+    selectedKey: String?,
+    onSelectRow: (String?) -> Unit,
+    /** 展开/收起一行（FOLDER/CONNECTION/SCHEMA；连接未连接时上层据此发起连接）。 */
+    onToggleExpand: (TreeRowInfo) -> Unit,
+    onDisconnectConnection: (ConnectionProfile) -> Unit = {},
+    onRefreshSchemas: (ConnectionProfile) -> Unit = {},
+    onCopyName: (TreeRowInfo) -> Unit = {},
+    onCopyQuery: (TreeRowInfo) -> Unit = {},
+    onAddFolder: () -> Unit = {},
+    onAddConnectionAt: (String?) -> Unit = {},
+    onRenameFolder: (FolderRow) -> Unit = {},
+    onDeleteFolder: (FolderRow) -> Unit = {},
+    onEditConnection: (ConnectionProfile) -> Unit = {},
+    onDeleteConnection: (ConnectionProfile) -> Unit = {},
+    onRefresh: () -> Unit = {},
+    /** 连接行：打开/激活该数据源控制台。 */
+    onOpenConsoleForProfile: (ConnectionProfile) -> Unit = {},
+    /** DB_OBJECT（表/视图）：双击或菜单触发预览。 */
+    onPreviewObject: (TreeRowInfo) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        SidebarToolbar(onAddFolder, { onAddConnectionAt(null) }, onRefresh)
+        if (rows.isEmpty()) {
+            EmptyTreeHint(onAddFolder, { onAddConnectionAt(null) })
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(vertical = 4.dp),
+            ) {
+                items(rows, key = { it.key }) { row ->
+                    TreeRowView(
+                        row = row,
+                        selected = row.key == selectedKey,
+                        canExpand = when (row.kind) {
+                            TreeRowKind.FOLDER -> row.childCount > 0
+                            TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
+                            TreeRowKind.SCHEMA -> true
+                            else -> false
+                        },
+                        onSelect = { onSelectRow(row.key) },
+                        onToggle = { onToggleExpand(row) },
+                        actions = RowActions(
+                            onAddConnectionAt = { onAddConnectionAt(row.folderId) },
+                            onRenameFolder = { onRenameFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
+                            onDeleteFolder = { onDeleteFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
+                            onEditConnection = { row.profile?.let(onEditConnection) },
+                            onDeleteConnection = { row.profile?.let(onDeleteConnection) },
+                            onDisconnect = { row.profile?.let(onDisconnectConnection) },
+                            onRefreshSchemas = { row.profile?.let(onRefreshSchemas) },
+                            onCopyName = { onCopyName(row) },
+                            onCopyQuery = { onCopyQuery(row) },
+                            onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
+                            onPreviewTable = { onPreviewObject(row) },
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 行右键菜单；空则不弹。 */@Composable
+private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<ContextMenuItem> =
+    when (row.kind) {
+        TreeRowKind.FOLDER -> listOf(
+            ContextMenuItem("在此新建连接") { actions.onAddConnectionAt() },
+            ContextMenuItem("重命名文件夹") { actions.onRenameFolder() },
+            ContextMenuItem("删除文件夹") { actions.onDeleteFolder() },
+        )
+        TreeRowKind.CONNECTION -> {
+            val items = buildList {
+                when (row.connStatus) {
+                    ConnUiStatus.DISCONNECTED -> add(ContextMenuItem("连接") { actions.onAddConnectionAt() })
+                    ConnUiStatus.CONNECTING -> add(ContextMenuItem("连接中…", enabled = false) {})
+                    ConnUiStatus.ERROR -> add(ContextMenuItem("重新连接") { actions.onAddConnectionAt() })
+                    ConnUiStatus.CONNECTED -> {
+                        add(ContextMenuItem("断开连接") { actions.onDisconnect() })
+                        add(ContextMenuItem("刷新库列表") { actions.onRefreshSchemas() })
+                    }
+                    null -> {}
+                }
+            }
+            items + listOf(
+                ContextMenuItem("打开控制台") { actions.onOpenConsole() },
+                ContextMenuItem("编辑连接") { actions.onEditConnection() },
+                ContextMenuItem("删除连接档案") { actions.onDeleteConnection() },
+            )
+        }
+        TreeRowKind.DB_OBJECT -> {
+            val obj = row.dbObject
+            if (obj?.kind == ObjectKind.TRIGGER) {
+                listOf(ContextMenuItem("复制触发器名") { actions.onCopyName() })
+            } else {
+                listOf(
+                    ContextMenuItem(if (obj?.kind == ObjectKind.VIEW) "复制视图名" else "复制表名") { actions.onCopyName() },
+                    ContextMenuItem("预览（前 200 行）") { actions.onPreviewTable() },
+                    ContextMenuItem("复制查询（SELECT 预览）") { actions.onCopyQuery() },
+                )
+            }
+        }
+        else -> emptyList()
+    }
+
+@Composable
+private fun SidebarToolbar(
+    onAddFolder: () -> Unit,
+    onAddConnection: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("连接管理", style = MaterialTheme.typography.subtitle2, color = MaterialTheme.colors.onBackground)
+        Spacer(Modifier.weight(1f))
+        ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = "文件夹", onClick = onAddFolder)
+        Spacer(Modifier.width(2.dp))
+        ToolPill(icon = { Icon(DbIcons.Database, null, Modifier.size(13.dp)) }, label = "连接", onClick = onAddConnection)
+        Spacer(Modifier.width(2.dp))
+        ToolPill(icon = { Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp)) }, label = null, onClick = onRefresh)
+    }
+}
+
+@Composable
+private fun ToolPill(
+    icon: @Composable () -> Unit,
+    label: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    ) {
+        icon()
+        if (label != null) {
+            Text(
+                label,
+                fontSize = 11.sp,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.65f),
+                modifier = Modifier.padding(start = 3.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyTreeHint(onAddFolder: () -> Unit, onAddConnection: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(DbIcons.Database, null, tint = MaterialTheme.colors.onSurface.copy(alpha = 0.3f), modifier = Modifier.size(32.dp))
+        Text(
+            "还没有连接档案",
+            style = MaterialTheme.typography.body2,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(
+            "先新建文件夹分组，再添加数据库连接",
+            style = MaterialTheme.typography.caption,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.padding(top = 2.dp),
+        )
+        Row(modifier = Modifier.padding(top = 12.dp)) {
+            ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = "新建文件夹", onClick = onAddFolder)
+            Spacer(Modifier.width(8.dp))
+            ToolPill(icon = { Icon(Icons.Filled.Add, null, Modifier.size(13.dp)) }, label = "新建连接", onClick = onAddConnection)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TreeRowView(
+    row: TreeRowInfo,
+    selected: Boolean,
+    canExpand: Boolean,
+    onSelect: () -> Unit,
+    onToggle: () -> Unit,
+    actions: RowActions,
+) {
+    val doubleTapMs = LocalViewConfiguration.current.doubleTapTimeoutMillis
+    var lastClickMs by remember { mutableStateOf(0L) }
+    val menu = rowMenu(row, actions)
+    val clickable = row.kind != TreeRowKind.PLACEHOLDER && row.kind != TreeRowKind.OBJECT_GROUP
+
+    val baseModifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 4.dp, vertical = 1.dp)
+        .clip(RoundedCornerShape(4.dp))
+        .background(if (selected) MaterialTheme.colors.primary.copy(alpha = 0.16f) else Color.Transparent)
+        .clickable(enabled = clickable) {
+            val now = System.currentTimeMillis()
+            val double = lastClickMs != 0L && now - lastClickMs < doubleTapMs
+            lastClickMs = if (double) 0L else now
+            when {
+                // 双击表/视图 → 预览；双击可展开行 → 展开/收起；触发器无预览语义
+                double && row.kind == TreeRowKind.DB_OBJECT && row.dbObject?.kind != ObjectKind.TRIGGER ->
+                    actions.onPreviewTable()
+                double && canExpand -> onToggle()
+                else -> onSelect()
+            }
+        }
+        .padding(start = 6.dp + (row.depth * 16).dp, end = 6.dp)
+        .padding(vertical = if (row.kind == TreeRowKind.OBJECT_GROUP) 1.dp else 3.dp)
+
+    val content: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            when (row.kind) {
+                TreeRowKind.FOLDER -> {
+                    if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
+                    Icon(
+                        DbIcons.Folder, null,
+                        tint = MaterialTheme.colors.primary.copy(alpha = 0.75f),
+                        modifier = Modifier.size(15.dp),
+                    )
+                    RowName(row.name, Modifier.weight(1f), 13.sp)
+                    if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
+                }
+                TreeRowKind.CONNECTION -> {
+                    if (canExpand) {
+                        ExpandArrow(row.expanded, onToggle)
+                    } else if (row.connStatus != ConnUiStatus.DISCONNECTED) {
+                        Spacer(Modifier.width(16.dp))
+                    }
+                    // 未连接时把“连接”入口放在名称前（箭头位）
+                    row.profile?.let {
+                        if (row.connStatus == ConnUiStatus.DISCONNECTED) {
+                            ConnectPill(onClick = onToggle)
+                            Spacer(Modifier.width(5.dp))
+                        }
+                    }
+                    row.profile?.let { TypeBadge(it.dbType) }
+                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp)
+                    if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
+                    when (row.connStatus) {
+                        ConnUiStatus.CONNECTING -> CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.5.dp)
+                        ConnUiStatus.CONNECTED -> StatusDot(Color(0xFF43A047))
+                        ConnUiStatus.ERROR -> StatusDot(Color(0xFFE53935))
+                        else -> {}
+                    }
+                }
+                TreeRowKind.SCHEMA -> {
+                    if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
+                    Icon(
+                        DbIcons.Database, null,
+                        tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.size(14.dp),
+                    )
+                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp)
+                    if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
+                }
+                TreeRowKind.OBJECT_GROUP -> {
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        "${row.name} (${row.childCount})",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                        letterSpacing = 0.4.sp,
+                        modifier = Modifier.padding(start = 2.dp),
+                    )
+                }
+                TreeRowKind.DB_OBJECT -> {
+                    ObjectKindBadge(row.dbObject?.kind)
+                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f, fill = false), 12.5.sp)
+                    row.dbObject?.tableName?.let {
+                        Text(
+                            "on $it",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.38f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
+                TreeRowKind.PLACEHOLDER -> {
+                    when (row.placeholderKind) {
+                        PlaceholderKind.LOADING -> CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.5.dp)
+                        PlaceholderKind.ERROR -> Text("⚠", fontSize = 10.sp, color = Color(0xFFE53935))
+                        else -> Spacer(Modifier.size(11.dp))
+                    }
+                    Text(
+                        row.name,
+                        fontSize = 11.sp,
+                        color = when (row.placeholderKind) {
+                            PlaceholderKind.ERROR -> Color(0xFFE53935)
+                            PlaceholderKind.INFO -> MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+                            else -> MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                        },
+                        maxLines = 3,
+                        modifier = Modifier.padding(start = 6.dp).weight(1f),
+                    )
+                }
+            }
+        }
+    }
+
+    if (menu.isEmpty()) {
+        Box(modifier = baseModifier) { content() }
+    } else {
+        ContextMenuArea(items = { menu }) { Box(modifier = baseModifier) { content() } }
+    }
+}
+
+@Composable
+private fun RowName(name: String, modifier: Modifier, fontSize: androidx.compose.ui.unit.TextUnit) {
+    Text(
+        name,
+        fontSize = fontSize,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        color = MaterialTheme.colors.onSurface.copy(alpha = 0.92f),
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ConnectPill(onClick: () -> Unit) {
+    Text(
+        "连接",
+        fontSize = 10.sp,
+        color = Color.White,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colors.primary.copy(alpha = 0.85f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+@Composable
+private fun StatusDot(color: Color) {
+    Box(
+        modifier = Modifier
+            .padding(start = 6.dp)
+            .size(7.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(color),
+    )
+}
+
+@Composable
+private fun CountBadge(count: Int) {
+    Text(
+        count.toString(),
+        fontSize = 9.5.sp,
+        color = MaterialTheme.colors.onSurface.copy(alpha = 0.42f),
+        modifier = Modifier.padding(start = 6.dp),
+    )
+}
+
+@Composable
+private fun ExpandArrow(expanded: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .size(width = 16.dp, height = 18.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Icon(
+            imageVector = if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = if (expanded) "收起" else "展开",
+            tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+/** 对象类型色徽章（表=蓝 T / 视图=青 V / 触发器=橙 TR）。 */
+@Composable
+fun ObjectKindBadge(kind: ObjectKind?) {
+    if (kind == null) return
+    val (text, color) = when (kind) {
+        ObjectKind.TABLE -> "T" to Color(0xFF5586E4)
+        ObjectKind.VIEW -> "V" to Color(0xFF26A69A)
+        ObjectKind.TRIGGER -> "TR" to Color(0xFFEF8A28)
+    }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(width = 15.dp, height = 13.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(color),
+    ) {
+        Text(text, color = Color.White, fontSize = 8.sp, maxLines = 1)
+    }
+}
+
+/** 数据库类型徽章：底色圆角方块 + 白字短名。 */
+@Composable
+fun TypeBadge(dbType: DbType) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(17.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(Color(dbType.badgeColor)),
+    ) {
+        Text(
+            dbType.badge,
+            color = Color.White,
+            fontSize = 8.sp,
+            maxLines = 1,
+        )
+    }
+}

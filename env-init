@@ -1,0 +1,2 @@
+sdk use java 25.0.3-jbr
+sdk use gradle 9.4.1
