@@ -51,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -61,12 +60,17 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -518,13 +522,37 @@ private fun EditorPane(
     }.rememberTextFieldValue(value)
 
     val scroll = rememberScrollState()
-    var focused by remember { mutableStateOf(false) }
+    // 补全活性判定：本机 Compose Desktop 中 CoreTextField 的焦点在内部节点，外层 onFocusChanged
+    // 收不到事件（实测输入时 focused 恒为 false）——改以 onValueChange（输入/光标移动/点击选区）
+    // 作为“正在编辑”证据 + 4s 空闲看门狗自动退出。
+    var editing by remember { mutableStateOf(false) }
+    var lastEdit by remember { mutableStateOf(0L) }
+    fun commitEdit(v: TextFieldValue) {
+        lastEdit = System.currentTimeMillis()
+        if (!editing) editing = true
+        onValueChange(v)
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            if (editing && System.currentTimeMillis() - lastEdit > 4000) editing = false
+        }
+    }
     var boxW by remember { mutableStateOf(0) }
     var boxH by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
+    val editorStyle = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
+        color = MaterialTheme.colors.onSurface,
+    )
+    val textMeasurer = rememberTextMeasurer()
 
     // ---- 补全派生状态：caret 词 → 候选 → 弹层 ----
     val sel = value.selection
-    val word = if (!focused || !sel.collapsed) null else sqlCompletionWord(value.text, sel.start)
+    val caretActive = editing
+    val word = if (!caretActive || !sel.collapsed) null else sqlCompletionWord(value.text, sel.start)
     val candidates = word?.let { completionCandidates(it.text, completionIdentifiers) }.orEmpty()
     val shown = candidates.take(MAX_COMPLETIONS)
     var selIdx by remember(shown) { mutableStateOf(0) }
@@ -534,7 +562,12 @@ private fun EditorPane(
     fun accept(c: String) {
         val w = word ?: return
         val newText = value.text.replaceRange(w.start, w.end, c)
-        onValueChange(value.copy(text = newText, selection = TextRange(w.start + c.length)))
+        commitEdit(value.copy(text = newText, selection = TextRange(w.start + c.length)))
+    }
+
+    // 弹窗高度自适配：不超出编辑器可视高度（避免被下方执行条/结果区遮挡），至少 64dp
+    val popupH: Dp = with(density) {
+        ((boxH - 8f).coerceAtLeast(64f)).toDp().coerceAtMost(COMPLETION_H)
     }
 
     Box(modifier = modifier) {
@@ -548,10 +581,9 @@ private fun EditorPane(
         ) {
             BasicTextField(
                 value = highlightedValue.copy(composition = value.composition),
-                onValueChange = onValueChange,
+                onValueChange = ::commitEdit,
                 modifier = Modifier
                     .fillMaxSize()
-                    .onFocusChanged { focused = it.isFocused }
                     .padding(horizontal = 10.dp, vertical = 8.dp)
                     .verticalScroll(scroll)
                     .onPreviewKeyEvent { e ->
@@ -559,6 +591,11 @@ private fun EditorPane(
                         if (e.isCtrlPressed && e.key == Key.Enter) {
                             // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
                             onCtrlEnter()
+                            return@onPreviewKeyEvent true
+                        }
+                        // Ctrl+Space：显式唤起补全（Esc 关闭后可重新呼出）
+                        if (e.isCtrlPressed && e.key == Key.Spacebar) {
+                            dismissed = false
                             return@onPreviewKeyEvent true
                         }
                         if (popupOpen) {
@@ -579,12 +616,7 @@ private fun EditorPane(
                     },
                 singleLine = false,
                 cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
-                textStyle = TextStyle(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colors.onSurface,
-                ),
+                textStyle = editorStyle,
                 keyboardOptions = KeyboardOptions.Default,
                 decorationBox = { innerTextField ->
                     Box {
@@ -609,34 +641,53 @@ private fun EditorPane(
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 6.dp),
             )
         }
-        // 补全弹层：外层 Box 不裁剪，允许超出编辑器边框悬浮（跟随滚动、不裁剪）
+        // 补全弹层：位置 = caret 的真实排版位置（TextMeasurer 按内宽换行测出，避免覆盖正在输入的行）
         if (popupOpen) {
             val w = word ?: return@Box
-            val before = value.text.substring(0, w.start)
-            val lineNo = before.count { it == '\n' }
-            val colNo = w.start - (before.lastIndexOf('\n') + 1)
+            val padXPx = with(density) { 10.dp.toPx() }
+            val padYPx = with(density) { 8.dp.toPx() }
+            val gapPx = with(density) { 6.dp.toPx() }
+            val innerMaxW = (boxW - padXPx * 2).toInt().coerceAtLeast(40)
+            // 与 BasicTextField 同 style + 同内宽排版，取 caret 处字符框作为锚点
+            val layout = runCatching {
+                textMeasurer.measure(
+                    AnnotatedString(value.text),
+                    style = editorStyle,
+                    constraints = Constraints(maxWidth = innerMaxW),
+                )
+            }.getOrNull()
+            val caretRect = layout?.getCursorRect(sel.start.coerceIn(0, value.text.length))
+            val padX = 10.dp
+            val padY = 8.dp
+            val charW = 7.8.dp
+            val lineH = 20.dp
+            val gap = 6.dp
+            val popW = with(density) { COMPLETION_W.toPx() }
+            val popH = with(density) { popupH.toPx() }
             CompletionPopup(
                 items = shown,
                 selectedIndex = selIdx,
                 onSelect = { i -> accept(shown[i]) },
                 modifier = Modifier
                     .width(COMPLETION_W)
-                    .height(COMPLETION_H)
+                    .height(popupH)
                     .offset {
-                        // 近似度量：13sp 等宽 ≈ 7.8dp/字符、行高 20dp、内边距 10/8（仅供参考对齐）
-                        val padX = 10.dp.toPx()
-                        val padY = 8.dp.toPx()
-                        val charW = 7.8.dp.toPx()
-                        val lineH = 20.dp.toPx()
-                        val gap = 4.dp.toPx()
-                        val popW = COMPLETION_W.toPx()
-                        val popH = COMPLETION_H.toPx()
-                        val x = (padX + colNo * charW).toInt().coerceIn(
-                            0, (boxW - popW).toInt().coerceAtLeast(0),
-                        )
-                        val below = padY + (lineNo + 1) * lineH - scroll.value
-                        val y = if (below + gap + popH <= boxH) (below + gap).toInt()
-                        else (below - lineH - gap - popH).toInt().coerceAtLeast(0)
+                        val x = if (caretRect != null) {
+                            (padXPx + caretRect.left).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
+                        } else {
+                            val before = value.text.substring(0, w.start)
+                            val lineNo = before.count { it == '\n' }
+                            val colNo = w.start - (before.lastIndexOf('\n') + 1)
+                            (padX.toPx() + colNo * charW.toPx()).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
+                        }
+                        val caretTop = if (caretRect != null) padYPx + caretRect.top - scroll.value else padY.toPx() - scroll.value
+                        val caretBottom = if (caretRect != null) caretTop + caretRect.height else caretTop + lineH.toPx()
+                        val y = when {
+                            // 下方放得下 → 放在 caret 行下缘之下（不遮当前行）
+                            caretBottom + gapPx + popH <= boxH -> (caretBottom + gapPx).toInt()
+                            caretTop - gapPx - popH >= 0 -> (caretTop - gapPx - popH).toInt()
+                            else -> (boxH - popH.toInt()).coerceAtLeast(0)
+                        }
                         IntOffset(x, y)
                     },
             )
@@ -670,7 +721,14 @@ private fun CompletionPopup(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        val listState = rememberLazyListState()
+        // 键盘选择越出可视区时跟随滚动
+        LaunchedEffect(selectedIndex) {
+            if (items.isNotEmpty() && selectedIndex in items.indices) {
+                listState.animateScrollToItem(selectedIndex)
+            }
+        }
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth()) {
             itemsIndexed(items) { index, item ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

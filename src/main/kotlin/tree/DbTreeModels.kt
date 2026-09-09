@@ -101,6 +101,7 @@ fun buildTreeRows(
     expandedFolderIds: Set<String>,
     expandedConnectionIds: Set<String>,
     expandedSchemaKeys: Set<String>,
+    expandedGroupKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
@@ -119,11 +120,11 @@ fun buildTreeRows(
             childCount = children.size,
         )
         if (expanded) {
-            children.forEach { conn -> appendConnection(out, conn, 1, expandedConnectionIds, expandedSchemaKeys, runtime) }
+            children.forEach { conn -> appendConnection(out, conn, 1, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, runtime) }
         }
     }
     byFolder[null].orEmpty().sortedBy { it.sortOrder }.forEach { conn ->
-        appendConnection(out, conn, 0, expandedConnectionIds, expandedSchemaKeys, runtime)
+        appendConnection(out, conn, 0, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, runtime)
     }
     return out
 }
@@ -134,6 +135,7 @@ private fun appendConnection(
     depth: Int,
     expandedConnectionIds: Set<String>,
     expandedSchemaKeys: Set<String>,
+    expandedGroupKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ) {
     val expanded = conn.id in expandedConnectionIds
@@ -172,7 +174,7 @@ private fun appendConnection(
                 schemas.isEmpty() ->
                     out += infoPlaceholder(depth + 1, "p:${conn.id}:empty", "该连接下没有可见的库")
                 else -> schemas.forEach { schema ->
-                    appendSchema(out, conn, schema, depth + 1, expandedSchemaKeys, runtime)
+                    appendSchema(out, conn, schema, depth + 1, expandedSchemaKeys, expandedGroupKeys, runtime)
                 }
             }
         }
@@ -185,6 +187,7 @@ private fun appendSchema(
     schema: SchemaMeta,
     depth: Int,
     expandedSchemaKeys: Set<String>,
+    expandedGroupKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ) {
     val rowKey = schemaRowKey(conn.id, schema)
@@ -214,26 +217,32 @@ private fun appendSchema(
             ObjectGroupKind.entries.forEach { group ->
                 val items = objects.forKind(group.kind)
                 if (items.isEmpty()) return@forEach
+                val groupKey = "$rowKey:g:${group.name}"
+                val groupExpanded = groupKey in expandedGroupKeys
                 out += TreeRowInfo(
-                    key = "$rowKey:g:${group.name}",
+                    key = groupKey,
                     kind = TreeRowKind.OBJECT_GROUP,
                     depth = depth + 1,
                     name = group.label,
                     profile = conn,
                     schema = schema,
                     groupKind = group,
+                    expanded = groupExpanded,
                     childCount = items.size,
                 )
-                items.forEach { obj ->
-                    out += TreeRowInfo(
-                        key = "$rowKey:o:${group.name}:${obj.name}",
-                        kind = TreeRowKind.DB_OBJECT,
-                        depth = depth + 2,
-                        name = obj.name,
-                        profile = conn,
-                        schema = schema,
-                        dbObject = obj,
-                    )
+                // 组折叠：对象行只在组展开时列出（大库例程上千条也不拖垮渲染）
+                if (groupExpanded) {
+                    items.forEach { obj ->
+                        out += TreeRowInfo(
+                            key = "$groupKey:o:${obj.name}",
+                            kind = TreeRowKind.DB_OBJECT,
+                            depth = depth + 2,
+                            name = obj.name,
+                            profile = conn,
+                            schema = schema,
+                            dbObject = obj,
+                        )
+                    }
                 }
             }
         }

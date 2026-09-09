@@ -163,6 +163,7 @@ private fun AppBody(
         treeState.expandedFolderIds,
         treeState.expandedConnectionIds,
         treeState.expandedSchemaKeys,
+        treeState.expandedGroupKeys,
         connectionsState,
     )
 
@@ -187,6 +188,11 @@ private fun AppBody(
                     treeState.expandSchema(row.key)
                     scope.launch { connectionsState.ensureSchemaObjects(p, schema) }
                 }
+            }
+            // 对象组（表/视图/序列…）支持展开/折叠：只展开单个类型组
+            TreeRowKind.OBJECT_GROUP -> {
+                if (row.expanded) treeState.collapseGroup(row.key)
+                else treeState.expandGroup(row.key)
             }
             else -> {}
         }

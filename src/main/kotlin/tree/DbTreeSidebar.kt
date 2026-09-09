@@ -114,6 +114,7 @@ fun DbTreeSidebar(
                             TreeRowKind.FOLDER -> row.childCount > 0
                             TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
                             TreeRowKind.SCHEMA -> true
+                            TreeRowKind.OBJECT_GROUP -> row.childCount > 0
                             else -> false
                         },
                         onSelect = { onSelectRow(row.key) },
@@ -267,7 +268,8 @@ private fun TreeRowView(
     val doubleTapMs = LocalViewConfiguration.current.doubleTapTimeoutMillis
     var lastClickMs by remember { mutableStateOf(0L) }
     val menu = rowMenu(row, actions)
-    val clickable = row.kind != TreeRowKind.PLACEHOLDER && row.kind != TreeRowKind.OBJECT_GROUP
+    // 组行可点击（单击选中、箭头/双击展开折叠），仅占位符行不可交互
+    val clickable = row.kind != TreeRowKind.PLACEHOLDER
 
     val baseModifier = Modifier
         .fillMaxWidth()
@@ -336,13 +338,15 @@ private fun TreeRowView(
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                 }
                 TreeRowKind.OBJECT_GROUP -> {
-                    Spacer(Modifier.width(16.dp))
+                    if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
                     Text(
                         "${row.name} (${row.childCount})",
                         fontSize = 10.5.sp,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.62f),
                         letterSpacing = 0.4.sp,
-                        modifier = Modifier.padding(start = 2.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 2.dp),
                     )
                 }
                 TreeRowKind.DB_OBJECT -> {

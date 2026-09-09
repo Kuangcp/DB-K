@@ -25,6 +25,8 @@ class TreeState(
     var expandedConnectionIds by mutableStateOf<Set<String>>(emptySet())
     /** schema 展开态（key 形如 s:<profileId>:<catalog>\u0000<schema>）。 */
     var expandedSchemaKeys by mutableStateOf<Set<String>>(emptySet())
+    /** 对象组展开态（key 形如 s:<profileId>:…:g:<GROUP>；随 session，不持久化）。 */
+    var expandedGroupKeys by mutableStateOf<Set<String>>(emptySet())
     var selectedRowKey by mutableStateOf<String?>(null)
 
     fun refresh() {
@@ -66,12 +68,23 @@ class TreeState(
 
     fun collapseSchema(rowKey: String) {
         expandedSchemaKeys = expandedSchemaKeys - rowKey
+        // 收起 schema 时连带收起其下展开的对象组（组 key 以该 schema 行 key 开头）
+        expandedGroupKeys = expandedGroupKeys.filterNot { it.startsWith("$rowKey:g:") }.toSet()
+    }
+
+    fun expandGroup(groupKey: String) {
+        expandedGroupKeys = expandedGroupKeys + groupKey
+    }
+
+    fun collapseGroup(groupKey: String) {
+        expandedGroupKeys = expandedGroupKeys - groupKey
     }
 
     /** 连接档案增删后清掉对应展开痕迹。 */
     fun forgetConnectionExpands(id: String) {
         expandedConnectionIds = expandedConnectionIds - id
         expandedSchemaKeys = expandedSchemaKeys.filterNot { it.startsWith("s:$id:") }.toSet()
+        expandedGroupKeys = expandedGroupKeys.filterNot { it.startsWith("s:$id:") }.toSet()
     }
 
     // ---------- folder actions ----------
