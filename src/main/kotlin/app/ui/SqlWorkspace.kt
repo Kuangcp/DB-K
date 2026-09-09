@@ -50,7 +50,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -62,8 +67,10 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -110,6 +117,8 @@ fun SqlWorkspace(
     editorText: String,
     editorDirty: Boolean,
     onTextChange: (String) -> Unit,
+    /** Ctrl+S 主动保存（异步写盘；Main 取当前控制台）。 */
+    onSaveNow: () -> Unit = {},
     run: ConsoleRunUi,
     /** 执行请求：参数为编辑器当前选中片段（去首尾空白）；null = 无有效选中。 */
     onRun: (String?) -> Unit,
@@ -152,6 +161,11 @@ fun SqlWorkspace(
             .background(MaterialTheme.colors.background)
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // Ctrl+S：主动保存当前控制台（取消防抖，立即异步落盘）
+                if (e.isCtrlPressed && e.key == Key.S) {
+                    onSaveNow()
+                    return@onPreviewKeyEvent true
+                }
                 // Ctrl+T 行列转制（仅在有可转置结果时消费，避免与其它用途冲突）
                 if (e.isCtrlPressed && e.key == Key.T && canTranspose(run)) {
                     transposed = !transposed
@@ -486,8 +500,10 @@ private fun ConsoleChip(
 /**
  * SQL 编辑器（语法高亮 + 自动补全）。
  *
- * 结构：外层自绘边框/底；内部 BasicTextField 消费带 span 高亮的 TextFieldValue（NeoUtils
- * rememberHighlight + rememberTextFieldValue 实时着色），滚动用外层 verticalScroll。
+ * 结构：外层自绘边框/底；左侧行号槽（Canvas 绘制、只画可视行、随滚动重绘）；内部
+ * BasicTextField 消费带 span 高亮的 TextFieldValue（NeoUtils rememberHighlight +
+ * rememberTextFieldValue 实时着色），自身 verticalScroll 滚动。行号/补全弹层共用同一份
+ * TextMeasurer 排版结果，保证与编辑区逐行对齐（含自动换行）。
  * 文本/选区权威仍在上层 SqlWorkspace 持有的 tfv（受控），高亮是纯派生渲染。
  *
  * 自动补全：caret 位于标识符词内（且不在字符串/注释中）时按前缀匹配 [completionIdentifiers]
@@ -570,6 +586,78 @@ private fun EditorPane(
         ((boxH - 8f).coerceAtLeast(64f)).toDp().coerceAtMost(COMPLETION_H)
     }
 
+    // ---- 行号槽 / 当前行高亮：文本布局（与编辑区同 style 同内宽，含自动换行）为唯一坐标来源 ----
+    val content = value.text
+    val gutterWpx = with(density) { GUTTER_W.toPx() }
+    val textPadLPx = with(density) { 4.dp.toPx() }
+    val textPadRPx = with(density) { 10.dp.toPx() }
+    val textTopPx = with(density) { 8.dp.toPx() }
+    val lineHpx = with(density) { 20.dp.toPx() }
+    val textWpxInt = if (boxW > 0) (boxW - gutterWpx - textPadLPx - textPadRPx).toInt().coerceAtLeast(40) else 0
+    val textLayout = if (textWpxInt > 40) {
+        runCatching {
+            textMeasurer.measure(
+                AnnotatedString(content),
+                style = editorStyle,
+                constraints = Constraints(maxWidth = textWpxInt),
+            )
+        }.getOrNull()
+    } else null
+    // 物理行 → 其首个可视行的内容 Y（文本区坐标系内；含自动换行展开）
+    val lineTops: List<Float> = if (content.isEmpty()) {
+        listOf(0f)
+    } else textLayout?.let { lay ->
+        val starts = buildList {
+            add(0)
+            for (i in content.indices) if (content[i] == '\n') add(i + 1)
+        }
+        val bottomLast = lay.getLineBottom(lay.lineCount - 1)
+        // 尾随换行产生的空行起点依次排在末行之下
+        val trail0 = starts.indexOfFirst { it >= content.length }.let { if (it < 0) starts.size else it }
+        starts.mapIndexed { i, off ->
+            if (off < content.length) lay.getLineTop(lay.getLineForOffset(off))
+            else bottomLast + (i - trail0) * lineHpx
+        }
+    }.orEmpty()
+    val gutterTops = lineTops.map { textTopPx + it }
+    val curLineIdx =
+        if (caretActive && sel.collapsed && content.isNotEmpty()) content.take(sel.start).count { it == '\n' } else -1
+
+    // 当前行背景（随 caret 行的文本一并滚动/换行）——仅叠加 background，不动语法色 span
+    val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
+    val displayValue: TextFieldValue =
+        if (caretActive && sel.collapsed && content.isNotEmpty()) {
+            val s = sel.start.coerceIn(0, content.length)
+            val ls = content.lastIndexOf('\n', s - 1) + 1
+            val leRaw = content.indexOf('\n', s)
+            val le = if (leRaw < 0) content.length else leRaw
+            val baseAnn = highlightedValue.annotatedString
+            if (le > ls) {
+                TextFieldValue(
+                    annotatedString = AnnotatedString(
+                        text = baseAnn.text,
+                        spanStyles = baseAnn.spanStyles + listOf(
+                            androidx.compose.ui.text.AnnotatedString.Range(SpanStyle(background = lineBgColor), ls, le),
+                        ),
+                        paragraphStyles = baseAnn.paragraphStyles,
+                    ),
+                    selection = value.selection,
+                    composition = value.composition,
+                )
+            } else highlightedValue.copy(composition = value.composition)
+        } else {
+            highlightedValue.copy(composition = value.composition)
+        }
+    // 行号配色（主题派生）
+    val gutterColor = MaterialTheme.colors.onSurface.copy(alpha = 0.35f)
+    val gutterCurColor = MaterialTheme.colors.onSurface.copy(alpha = 0.95f)
+    val gutterCurBg = MaterialTheme.colors.primary.copy(alpha = 0.16f)
+    val numStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = gutterColor)
+    val numCurStyle = TextStyle(
+        fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = gutterCurColor,
+        fontWeight = FontWeight.Medium,
+    )
+
     Box(modifier = modifier) {
         Box(
             modifier = Modifier
@@ -579,13 +667,54 @@ private fun EditorPane(
                 .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
                 .onSizeChanged { boxW = it.width; boxH = it.height },
         ) {
-            BasicTextField(
-                value = highlightedValue.copy(composition = value.composition),
-                onValueChange = ::commitEdit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
-                    .verticalScroll(scroll)
+            Row(modifier = Modifier.fillMaxSize()) {
+                // 行号槽：Canvas 只绘可视行，滚动时仅重绘（scroll.value 在 draw 内读取）
+                Spacer(
+                    modifier = Modifier
+                        .width(GUTTER_W)
+                        .fillMaxHeight()
+                        .clipToBounds()
+                        .drawBehind {
+                            val tops = gutterTops
+                            if (tops.isNotEmpty()) {
+                                val h = size.height
+                                val w = size.width
+                                for (i in tops.indices) {
+                                    val top = tops[i] - scroll.value
+                                    if (top + lineHpx <= 0f) continue
+                                    if (top >= h) break
+                                    val cur = i == curLineIdx
+                                    if (cur) {
+                                        drawRoundRect(
+                                            color = gutterCurBg,
+                                            topLeft = Offset(3f, top + 2f),
+                                            size = Size(w - 6f, lineHpx - 4f),
+                                            cornerRadius = CornerRadius(4f, 4f),
+                                        )
+                                    }
+                                    val m = textMeasurer.measure(
+                                        AnnotatedString((i + 1).toString()),
+                                        style = if (cur) numCurStyle else numStyle,
+                                    )
+                                    drawText(
+                                        textLayoutResult = m,
+                                        topLeft = Offset(
+                                            w - m.size.width - 6f,
+                                            top + ((lineHpx - m.size.height) / 2f).coerceAtLeast(0f),
+                                        ),
+                                    )
+                                }
+                            }
+                        },
+                )
+                BasicTextField(
+                    value = displayValue,
+                    onValueChange = ::commitEdit,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(start = 4.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
+                        .verticalScroll(scroll)
                     .onPreviewKeyEvent { e ->
                         if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         if (e.isCtrlPressed && e.key == Key.Enter) {
@@ -632,9 +761,10 @@ private fun EditorPane(
                     }
                 },
             )
-            // 编辑状态提示（● = 有未落盘改动，自动保存中）
+            }
+            // 编辑状态提示（● = 有未落盘改动；Ctrl+S 立即保存）
             Text(
-                if (dirty) "● 未保存" else "已保存到 .sql 文件",
+                if (dirty) "● 未保存 · Ctrl+S 保存" else "已保存到 .sql 文件",
                 fontSize = 10.sp,
                 color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
@@ -644,24 +774,9 @@ private fun EditorPane(
         // 补全弹层：位置 = caret 的真实排版位置（TextMeasurer 按内宽换行测出，避免覆盖正在输入的行）
         if (popupOpen) {
             val w = word ?: return@Box
-            val padXPx = with(density) { 10.dp.toPx() }
-            val padYPx = with(density) { 8.dp.toPx() }
             val gapPx = with(density) { 6.dp.toPx() }
-            val innerMaxW = (boxW - padXPx * 2).toInt().coerceAtLeast(40)
-            // 与 BasicTextField 同 style + 同内宽排版，取 caret 处字符框作为锚点
-            val layout = runCatching {
-                textMeasurer.measure(
-                    AnnotatedString(value.text),
-                    style = editorStyle,
-                    constraints = Constraints(maxWidth = innerMaxW),
-                )
-            }.getOrNull()
-            val caretRect = layout?.getCursorRect(sel.start.coerceIn(0, value.text.length))
-            val padX = 10.dp
-            val padY = 8.dp
-            val charW = 7.8.dp
-            val lineH = 20.dp
-            val gap = 6.dp
+            val caretRect = textLayout?.getCursorRect(sel.start.coerceIn(0, value.text.length))
+            val textLeftPx = gutterWpx + textPadLPx
             val popW = with(density) { COMPLETION_W.toPx() }
             val popH = with(density) { popupH.toPx() }
             CompletionPopup(
@@ -673,17 +788,16 @@ private fun EditorPane(
                     .height(popupH)
                     .offset {
                         val x = if (caretRect != null) {
-                            (padXPx + caretRect.left).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
+                            (textLeftPx + caretRect.left).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
                         } else {
                             val before = value.text.substring(0, w.start)
-                            val lineNo = before.count { it == '\n' }
                             val colNo = w.start - (before.lastIndexOf('\n') + 1)
-                            (padX.toPx() + colNo * charW.toPx()).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
+                            (textLeftPx + colNo * 7.8f).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
                         }
-                        val caretTop = if (caretRect != null) padYPx + caretRect.top - scroll.value else padY.toPx() - scroll.value
-                        val caretBottom = if (caretRect != null) caretTop + caretRect.height else caretTop + lineH.toPx()
+                        val caretTop = if (caretRect != null) textTopPx + caretRect.top - scroll.value else textTopPx - scroll.value
+                        val caretBottom = if (caretRect != null) caretTop + caretRect.height else caretTop + lineHpx
                         // 下移一格再放：弹窗顶部低于 caret 行下一行的行底，确保不压住当前输入行与紧随其后的行
-                        val rowH = if (caretRect != null) caretRect.height else lineH.toPx()
+                        val rowH = if (caretRect != null) caretRect.height else lineHpx
                         val y = when {
                             caretBottom + rowH + gapPx + popH <= boxH -> (caretBottom + rowH + gapPx).toInt()
                             caretTop - gapPx - popH >= 0 -> (caretTop - gapPx - popH).toInt()
@@ -696,6 +810,7 @@ private fun EditorPane(
     }
 }
 
+private val GUTTER_W = 40.dp
 private val COMPLETION_W = 300.dp
 private val COMPLETION_H = 176.dp
 private const val MAX_COMPLETIONS = 60

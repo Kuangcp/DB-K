@@ -205,6 +205,15 @@ class ConsoleState(
         dirtyConsoleIds = dirtyConsoleIds - consoleId
     }
 
+    /** Ctrl+S 主动保存：取消未决防抖任务并立即异步写盘（调用方在 IO 之外的协程即可）。 */
+    fun saveNow(consoleId: String) {
+        saveJobs.remove(consoleId)?.cancel()
+        if (consoleId !in dirtyConsoleIds) return
+        scope.launch {
+            withContext(Dispatchers.IO) { flushNow(consoleId) }
+        }
+    }
+
     fun flushAllSync() {
         dirtyConsoleIds.toList().forEach { flushNow(it) }
     }

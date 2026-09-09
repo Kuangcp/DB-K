@@ -351,6 +351,7 @@ private fun AppBody(
                         editorText = activeConsole?.let { consoleState.textOf(it.id) }.orEmpty(),
                         editorDirty = activeConsole?.let { consoleState.isDirty(it.id) } == true,
                         onTextChange = { t -> activeConsole?.let { consoleState.setText(it.id, t) } },
+                        onSaveNow = { consoleState.activeConsole()?.let { consoleState.saveNow(it.id) } },
                         run = activeRun,
                         onRun = ::runActiveConsole,                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },
                         onExportCsv = {
