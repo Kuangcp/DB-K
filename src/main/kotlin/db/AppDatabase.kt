@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 2
+    private const val CURRENT_VERSION = 3
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -36,6 +36,18 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV2(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (2)").use { it.executeUpdate() }
         }
+        if (!applied.contains(3)) {
+            conn.createStatement().use { st -> migrateToV3(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (3)").use { it.executeUpdate() }
+        }
+    }
+
+    /** v3：sql_history 补记录成败/行数/错误，支撑执行历史面板。 */
+    private fun migrateToV3(st: Statement) {
+        st.executeUpdate("ALTER TABLE sql_history ADD COLUMN ok INTEGER NOT NULL DEFAULT 1")
+        st.executeUpdate("ALTER TABLE sql_history ADD COLUMN row_count INTEGER NOT NULL DEFAULT 0")
+        st.executeUpdate("ALTER TABLE sql_history ADD COLUMN error_message TEXT")
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sql_history_profile_at ON sql_history(profile_id, executed_at_ms)")
     }
 
     /** v2：SQL 控制台（一个数据源可有多个命名控制台，每个绑定一个 .sql 文件）。 */

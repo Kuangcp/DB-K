@@ -58,8 +58,10 @@ import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
 import jdbc.DialectRegistry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import org.tinylog.Logger
 import tree.DbTreeSidebar
@@ -217,6 +219,10 @@ private fun AppBody(
             toastState.show("请先选中要执行的 SQL（Ctrl+A 全选）")
             return
         }
+        if (consoleState.runStateOf(c.id).executing) {
+            toastState.show("已有查询在执行中（可点「取消」或按 Esc）")
+            return
+        }
         scope.launch { consoleState.run(c, p, target) }
     }
 
@@ -225,7 +231,7 @@ private fun AppBody(
         return "控制台 $n"
     }
 
-    /** 双击表/视图 → 预览前 200 行：空控制台直接复用，否则新建命名控制台。 */
+    /** 双击表/视图 → 预览前 100 行（DialectRegistry.previewSelect）：空控制台直接复用，否则新建命名控制台。 */
     fun previewObject(row: TreeRowInfo) {
         val p = row.profile ?: return
         val obj = row.dbObject ?: return
@@ -338,6 +344,61 @@ private fun AppBody(
                                             toastState.show("导出失败：${it.message?.take(80)}")
                                         }
                                 }
+                            }
+                        },
+                        onCancelRun = {
+                            val c = consoleState.activeConsole()
+                            if (c != null) {
+                                val hit = consoleState.cancelRun(c.id)
+                                toastState.show(
+                                    if (hit) "已请求取消当前查询"
+                                    else "取消未生效（语句未开始或驱动不支持取消）",
+                                )
+                            }
+                        },
+                        onExportAllCsv = {
+                            val c = consoleState.activeConsole()
+                            val p = activeProfile
+                            val runState = c?.let { consoleState.runStateOf(it.id) }
+                            val result = runState?.result
+                            if (c == null || p == null || result == null || !result.truncated) {
+                                return@SqlWorkspace
+                            }
+                            val ownerFrame: java.awt.Frame? = null
+                            val fd = FileDialog(ownerFrame, "导出全量 CSV（重新执行，不受 1000 行限制）", FileDialog.SAVE)
+                            fd.file = "${p.name}.csv"
+                            fd.isVisible = true
+                            val name = fd.file
+                            if (name != null) {
+                                val file = File(fd.directory, name)
+                                scope.launch {
+                                    val outcome = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            val live = connectionsState.liveConnection(p.id)
+                                                ?: error("连接已断开，请重连后再导出")
+                                            live.onConnection { conn -> CsvExport.exportAll(file, conn, result.sql) }
+                                        }
+                                    }
+                                    outcome.onSuccess { n ->
+                                        toastState.show("全量导出 ${n} 行 → ${file.name}")
+                                    }.onFailure { t ->
+                                        Logger.error(t, "full csv export failed")
+                                        toastState.show("导出失败：${t.message?.take(80)}")
+                                    }
+                                }
+                            }
+                        },
+                        history = activeProfile?.let { consoleState.historyOf(it.id) }.orEmpty(),
+                        onRefreshHistory = { activeProfile?.let { consoleState.refreshHistory(it.id) } },
+                        onClearHistory = {
+                            activeProfile?.let { consoleState.clearHistory(it.id) }
+                            toastState.show("已清空执行历史")
+                        },
+                        onFillHistory = { sql ->
+                            val c = consoleState.activeConsole()
+                            if (c != null) {
+                                consoleState.setText(c.id, sql)
+                                toastState.show("已回填历史 SQL 到当前控制台")
                             }
                         },
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },

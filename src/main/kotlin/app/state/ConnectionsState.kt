@@ -165,6 +165,10 @@ class ConnectionsState : ConnectionRuntimeView {
     /** 供查询执行引擎取连接句柄（连接必须在 CONNECTED 才非空）。 */
     fun liveConnection(profileId: String): LiveConnection? = runtimes[profileId]?.live
 
+    /** 向某连接的当前执行语句发起取消（UI 取消按钮 / Esc）。 */
+    fun cancelCurrentQuery(profileId: String): Boolean =
+        runtimes[profileId]?.live?.cancelCurrentQuery() ?: false
+
     /** 档案被删除。 */
     fun forget(profileId: String) {
         invalidate(profileId)

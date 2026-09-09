@@ -4,6 +4,7 @@ import db.ConnectionProfile
 import jdbc.model.SchemaObjects
 import jdbc.model.SchemaMeta
 import java.sql.Connection
+import java.sql.Statement
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
@@ -14,7 +15,7 @@ import java.util.concurrent.Future
  * 保证所有 JDBC 调用在一条专用线程上串行执行（驱动线程安全性不必假设）。
  *
  * 本层不依赖 compose/coroutines：方法均为阻塞式，由调用方（app 层）放到
- * Dispatchers.IO 执行；取消语义在 M3 执行引擎上补（Statement.cancel）。
+ * Dispatchers.IO 执行。
  */
 class LiveConnection(private val profile: ConnectionProfile) {
 
@@ -22,6 +23,10 @@ class LiveConnection(private val profile: ConnectionProfile) {
 
     @Volatile
     private var conn: Connection? = null
+
+    /** 当前正在执行（或最近登记）的 JDBC 语句，供外部线程发起 Statement.cancel。 */
+    @Volatile
+    private var currentStmt: Statement? = null
 
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "jdbc-${profile.id.take(6)}").apply { isDaemon = true }
@@ -51,6 +56,21 @@ class LiveConnection(private val profile: ConnectionProfile) {
         } catch (e: ExecutionException) {
             throw e.cause ?: e
         }
+    }
+
+    /** 登记/注销当前执行语句（由 QueryExecutor 在语句生命周期内回调）。 */
+    fun registerStatement(st: Statement?) {
+        currentStmt = st
+    }
+
+    /**
+     * 取消正在执行的语句（Statement.cancel，驱动支持时）。
+     * 返回是否发出了取消请求；正在排队尚未开始的执行不在内。
+     * 驱动忽略 cancel 时，等待中的查询仍会按其自身超时（30s）结束。
+     */
+    fun cancelCurrentQuery(): Boolean {
+        val st = currentStmt ?: return false
+        return runCatching { st.cancel(); true }.getOrDefault(false)
     }
 
     // ---------- 便捷元数据入口（内部一律串行到连接线程） ----------

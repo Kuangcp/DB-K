@@ -71,6 +71,8 @@ import com.neoutils.highlight.compose.remember.rememberTextFieldValue
 import com.neoutils.highlight.core.extension.textColor
 import db.ConsoleRecord
 import db.ConnectionProfile
+import db.SqlHistoryRow
+import jdbc.QueryExecutor
 import jdbc.QueryResult
 import tree.ConnUiStatus
 import tree.TypeBadge
@@ -104,13 +106,46 @@ fun SqlWorkspace(
     onRun: (String?) -> Unit,
     onClear: () -> Unit,
     onExportCsv: () -> Unit,
+    /** 取消当前执行（取消按钮 / Esc）。 */
+    onCancelRun: () -> Unit,
+    /** 全量导出：结果被截断时重新执行 SQL 导出全部行。 */
+    onExportAllCsv: () -> Unit,
+    /** 执行历史（当前数据源）。 */
+    history: List<SqlHistoryRow>,
+    onRefreshHistory: () -> Unit,
+    onClearHistory: () -> Unit,
+    onFillHistory: (String) -> Unit,
     onDisconnect: () -> Unit,
     isDark: Boolean,
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
-        HeaderBar(isDark, onToggleTheme)
+    var showHistory by remember { mutableStateOf(false) }
+    // 打开面板或切换数据源时刷新历史列表
+    LaunchedEffect(showHistory, profile?.id) {
+        if (showHistory) onRefreshHistory()
+    }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colors.background)
+            .onPreviewKeyEvent { e ->
+                // Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
+                if (e.type == KeyEventType.KeyDown && e.key == Key.Escape && run.executing) {
+                    onCancelRun()
+                    true
+                } else {
+                    false
+                }
+            },
+    ) {
+        HeaderBar(
+            isDark = isDark,
+            onToggleTheme = onToggleTheme,
+            showHistoryButton = profile != null && activeConsole != null,
+            historyOpen = showHistory,
+            onToggleHistory = { showHistory = !showHistory },
+        )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         if (profile == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -138,32 +173,46 @@ fun SqlWorkspace(
         LaunchedEffect(editorText) {
             if (tfv.text != editorText) tfv = TextFieldValue(editorText, TextRange(editorText.length))
         }
-        Column(
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            EditorPane(
-                value = tfv,
-                dirty = editorDirty,
-                onValueChange = { v -> tfv = v; onTextChange(v.text) },
-                onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
-                modifier = Modifier.weight(0.44f).fillMaxWidth(),
-            )
-            ExecBar(
-                executing = run.executing,
-                result = run.result,
-                error = run.error,
-                onRun = { onRun(selectedSqlOf(tfv)) },
-                onClear = onClear,
-                onExportCsv = onExportCsv,
-                exportEnabled = exportEnabledFor(run),
-                enabled = status != ConnUiStatus.CONNECTING,
-            )
-            ResultPane(
-                result = run.result,
-                error = run.error,
-                modifier = Modifier.weight(0.56f).fillMaxWidth(),
-            )
+        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    EditorPane(
+                        value = tfv,
+                        dirty = editorDirty,
+                        onValueChange = { v -> tfv = v; onTextChange(v.text) },
+                        onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
+                        modifier = Modifier.weight(0.44f).fillMaxWidth(),
+                    )
+                    ExecBar(
+                        executing = run.executing,
+                        result = run.result,
+                        error = run.error,
+                        onRun = { onRun(selectedSqlOf(tfv)) },
+                        onCancel = onCancelRun,
+                        onClear = onClear,
+                        onExportCsv = onExportCsv,
+                        onExportAllCsv = onExportAllCsv,
+                        exportEnabled = exportEnabledFor(run),
+                        enabled = status != ConnUiStatus.CONNECTING,
+                    )
+                    ResultPane(
+                        result = run.result,
+                        error = run.error,
+                        modifier = Modifier.weight(0.56f).fillMaxWidth(),
+                    )
+                }
+            }
+            if (showHistory) {
+                HistoryPanel(
+                    entries = history,
+                    onFill = onFillHistory,
+                    onClear = onClearHistory,
+                    modifier = Modifier.width(256.dp).fillMaxHeight(),
+                )
+            }
         }
     }
 }
@@ -185,7 +234,13 @@ private fun selectedSqlOf(v: TextFieldValue): String? {
 }
 
 @Composable
-private fun HeaderBar(isDark: Boolean, onToggleTheme: () -> Unit) {
+private fun HeaderBar(
+    isDark: Boolean,
+    onToggleTheme: () -> Unit,
+    showHistoryButton: Boolean,
+    historyOpen: Boolean,
+    onToggleHistory: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp),
@@ -200,6 +255,17 @@ private fun HeaderBar(isDark: Boolean, onToggleTheme: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.weight(1f))
+        if (showHistoryButton) {
+            IconButton(onClick = onToggleHistory, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = DbIcons.History,
+                    contentDescription = if (historyOpen) "收起执行历史" else "打开执行历史",
+                    tint = if (historyOpen) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+        }
         IconButton(onClick = onToggleTheme, modifier = Modifier.size(28.dp)) {
             Icon(
                 imageVector = if (isDark) DbIcons.Sun else DbIcons.Moon,
@@ -479,8 +545,10 @@ private fun ExecBar(
     result: QueryResult?,
     error: String?,
     onRun: () -> Unit,
+    onCancel: () -> Unit,
     onClear: () -> Unit,
     onExportCsv: () -> Unit,
+    onExportAllCsv: () -> Unit,
     exportEnabled: Boolean,
     enabled: Boolean,
 ) {
@@ -488,11 +556,24 @@ private fun ExecBar(
         Button(onClick = onRun, enabled = enabled && !executing) {
             Text(if (executing) "执行中…" else "执行 (Ctrl+Enter)", fontSize = 13.sp)
         }
+        if (executing) {
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onCancel, enabled = enabled) {
+                Text("取消 (Esc)", fontSize = 12.sp, color = MaterialTheme.colors.error)
+            }
+        }
         Spacer(Modifier.width(8.dp))
         TextButton(onClick = onClear, enabled = !executing) { Text("清空", fontSize = 12.sp) }
         Spacer(Modifier.width(4.dp))
         TextButton(onClick = onExportCsv, enabled = exportEnabled) {
             Text("导出 CSV", fontSize = 12.sp)
+        }
+        // 结果被截断时提供全量导出（重新执行 SQL，不受 1000 行上限）
+        if (exportEnabled && result?.truncated == true) {
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = onExportAllCsv, enabled = enabled) {
+                Text("导出全量 CSV", fontSize = 12.sp, color = MaterialTheme.colors.primary)
+            }
         }
         Spacer(Modifier.weight(1f))
         if (executing) {
@@ -537,9 +618,39 @@ private fun ResultPane(result: QueryResult?, error: String?, modifier: Modifier 
             error != null -> CenteredHint(error, isError = true)
             result == null -> CenteredHint("执行 SELECT 后在此查看结果表格；可导出 CSV", isError = false)
             result.isQuery && result.rowCount == 0 -> CenteredHint("查询完成：0 行", isError = false)
-            result.isQuery -> ResultTable(result)
+            result.isQuery -> Column(modifier = Modifier.fillMaxSize()) {
+                if (result.truncated) TruncationBanner()
+                ResultTable(result = result, modifier = Modifier.weight(1f).fillMaxWidth())
+            }
             else -> CenteredHint("语句执行成功（非查询，未产生结果集）", isError = false)
         }
+    }
+}
+
+/** 截断醒目提示：结果被 QueryExecutor.MAX_ROWS 截断时显示在表格上方。 */
+@Composable
+private fun TruncationBanner() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFFB300).copy(alpha = 0.16f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xFFFFB300)),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "结果超过 ${QueryExecutor.MAX_ROWS} 行，表格只显示前 ${QueryExecutor.MAX_ROWS} 行（已截断）。" +
+                "「导出全量 CSV」会重新执行并导出全部行。",
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+        )
     }
 }
 
@@ -557,7 +668,7 @@ private fun CenteredHint(text: String, isError: Boolean) {
 
 /** 结果网格：列宽按表头与最多前 300 行采样估算；表头与数据共用横向滚动。 */
 @Composable
-private fun ResultTable(result: QueryResult) {
+private fun ResultTable(result: QueryResult, modifier: Modifier = Modifier) {
     val cols = result.columns
     val widths = IntArray(cols.size) { c ->
         var w = cols[c].name.length
@@ -570,7 +681,7 @@ private fun ResultTable(result: QueryResult) {
         estWidth(w)
     }
     val hScroll = rememberLazyListState()
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {
         LazyRow(state = hScroll, modifier = Modifier.background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))) {
             item {
                 Row {

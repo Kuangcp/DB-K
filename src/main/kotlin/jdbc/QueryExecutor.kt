@@ -3,6 +3,7 @@ package jdbc
 import org.tinylog.Logger
 import java.sql.Connection
 import java.sql.ResultSet
+import java.sql.Statement
 
 /** 查询结果：结果集模式（列+行）或更新模式（影响行数）。行内值为字符串化的单元格。 */
 data class QueryColumn(val name: String)
@@ -35,12 +36,15 @@ object QueryExecutor {
     /**
      * 执行单条 SQL。阻塞调用；调用方负责放到工作线程、保证连接可用。
      * 结果集在连接关闭前整体读出（上限 MAX_ROWS），随后释放语句。
+     * [registerStatement]：可选——语句建立后回调一次、finally 中再回调 null，
+     * 供 LiveConnection 登记当前执行语句以支持外部 cancel（Statement.cancel）。
      */
-    fun execute(conn: Connection, sql: String): QueryResult {
+    fun execute(conn: Connection, sql: String, registerStatement: ((Statement?) -> Unit)? = null): QueryResult {
         val started = System.currentTimeMillis()
         val stmt = conn.createStatement()
         try {
             stmt.queryTimeout = QUERY_TIMEOUT_SECONDS
+            registerStatement?.invoke(stmt)
             return if (isQueryLike(sql)) {
                 stmt.executeQuery(sql).use { rs -> readResultSet(sql, rs, started) }
             } else {
@@ -48,6 +52,7 @@ object QueryExecutor {
                 QueryResult(sql, emptyList(), emptyList(), affectedRows = affected, durationMs = System.currentTimeMillis() - started)
             }
         } finally {
+            registerStatement?.invoke(null)
             runCatching { stmt.close() }
         }
     }
@@ -73,12 +78,13 @@ object QueryExecutor {
         return QueryResult(sql, columns, rows, durationMs = System.currentTimeMillis() - started, truncated = truncated)
     }
 
-    private fun readCell(rs: ResultSet, i: Int): String? {
-        val v = rs.getObject(i) ?: return null
-        return when (v) {
-            is ByteArray -> "[${v.size} bytes]"
-            is Boolean -> if (v) "true" else "false"
-            else -> v.toString()
-        }
+    private fun readCell(rs: ResultSet, i: Int): String? = cellToString(rs.getObject(i))
+
+    /** 单元格值 → 展示/导出字符串（与 CSV 全量导出共用同一转换）。 */
+    fun cellToString(v: Any?): String? = when (v) {
+        null -> null
+        is ByteArray -> "[${v.size} bytes]"
+        is Boolean -> if (v) "true" else "false"
+        else -> v.toString()
     }
 }

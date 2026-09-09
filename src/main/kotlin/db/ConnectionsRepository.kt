@@ -203,6 +203,8 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
                 ps.setString(1, id)
                 ps.executeUpdate()
             }
+            // 连接删除后其历史 profile_id 被 FK 置 NULL；顺带清理历史孤儿行
+            conn.createStatement().use { it.executeUpdate("DELETE FROM sql_history WHERE profile_id IS NULL") }
             conn.commit()
         } catch (e: Exception) {
             conn.rollback()
@@ -308,6 +310,94 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
         filePath = rs.getString("file_path"),
         sortOrder = rs.getInt("sort_order"),
         updatedAt = rs.getLong("updated_at"),
+    )
+
+    // ---------- sql_history（执行历史） ----------
+
+    private val HISTORY_LIMIT = 200
+
+    /** 写一条执行历史（成功后自动按档案裁剪到 HISTORY_LIMIT 条）。 */
+    fun insertHistory(
+        profileId: String,
+        sqlText: String,
+        ok: Boolean,
+        executedAtMs: Long,
+        durationMs: Long,
+        rowCount: Int,
+        errorMessage: String? = null,
+    ): SqlHistoryRow {
+        val id = newId()
+        conn.prepareStatement(
+            """
+            INSERT INTO sql_history(id, profile_id, sql_text, ok, executed_at_ms, duration_ms, row_count, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+        ).use { ps ->
+            ps.setString(1, id)
+            ps.setString(2, profileId)
+            ps.setString(3, sqlText.take(20000))
+            ps.setInt(4, if (ok) 1 else 0)
+            ps.setLong(5, executedAtMs)
+            ps.setLong(6, durationMs)
+            ps.setInt(7, rowCount)
+            ps.setString(8, errorMessage?.take(400))
+            ps.executeUpdate()
+        }
+        pruneHistory(profileId)
+        return SqlHistoryRow(
+            id = id, profileId = profileId, sqlText = sqlText, ok = ok,
+            executedAtMs = executedAtMs, durationMs = durationMs, rowCount = rowCount,
+            errorMessage = errorMessage,
+        )
+    }
+
+    /** 某档案最近 N 条历史，新→旧。 */
+    fun listHistoryByProfile(profileId: String, limit: Int = HISTORY_LIMIT): List<SqlHistoryRow> {
+        return conn.prepareStatement(
+            """
+            SELECT id, profile_id, sql_text, ok, executed_at_ms, duration_ms, row_count, error_message
+            FROM sql_history WHERE profile_id = ?
+            ORDER BY executed_at_ms DESC, id DESC LIMIT ?
+            """.trimIndent(),
+        ).use { ps ->
+            ps.setString(1, profileId)
+            ps.setInt(2, limit)
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) add(mapHistory(rs))
+                }
+            }
+        }
+    }
+
+    /** 清空某档案的历史。 */
+    fun clearHistoryForProfile(profileId: String) {
+        conn.prepareStatement("DELETE FROM sql_history WHERE profile_id = ?").use { ps ->
+            ps.setString(1, profileId)
+            ps.executeUpdate()
+        }
+    }
+
+    private fun pruneHistory(profileId: String) {
+        conn.prepareStatement(
+            "DELETE FROM sql_history WHERE profile_id = ? AND id NOT IN (SELECT id FROM sql_history WHERE profile_id = ? ORDER BY executed_at_ms DESC LIMIT ?)",
+        ).use { ps ->
+            ps.setString(1, profileId)
+            ps.setString(2, profileId)
+            ps.setInt(3, HISTORY_LIMIT)
+            ps.executeUpdate()
+        }
+    }
+
+    private fun mapHistory(rs: java.sql.ResultSet): SqlHistoryRow = SqlHistoryRow(
+        id = rs.getString("id"),
+        profileId = rs.getString("profile_id"),
+        sqlText = rs.getString("sql_text"),
+        ok = rs.getInt("ok") != 0,
+        executedAtMs = rs.getLong("executed_at_ms"),
+        durationMs = rs.getLong("duration_ms"),
+        rowCount = rs.getInt("row_count"),
+        errorMessage = rs.getString("error_message"),
     )
 
     // ---------- helpers ----------
