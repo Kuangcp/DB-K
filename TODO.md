@@ -1,22 +1,32 @@
+# TODO（未完成 / 待办事项清单）
+
+> 零散即时事项。核心分阶段发展计划见 `Roadmap.md`；设计依据见 `doc/DESIGN.md`。
+> 完成一项即删除对应条目（不再保留"已完成"占位）。
+
 **编辑区域**
 
->- 支持选中SQL执行。没选择文本就 Ctrl Enter的话什么都不做，而不是执行整个控制台的SQL，这个是禁止的。
-- 自动补全
+- 自动补全：关键字 + 当前连接的表/列名补全（候选来自连接元数据缓存），Enter/Tab 上屏、Esc 关闭；补全弹层样式跟随主题
+- 结果 Ctrl+T 行列转制（方便看宽行数据）
+- 编辑器增强（可选）：行号、当前行高亮
 
-- 结果 Ctrl T 行列转制方便看数据
-- 
+**执行与结果区**
+
+- 长查询取消：执行中按钮变"取消"，Esc 可中断。注意：LiveConnection 是单线程执行器，取消语义要先想清楚（Statement.cancel 各驱动支持不一，ClickHouse HTTP 驱动基本不支持 → 至少支持"放弃等待 + 状态复位"，别误伤同连接后续查询）
+- 单元格复制：点击/右键复制单元格值（NULL 显示灰色 "(NULL)"，复制为空串要有明确规则）
+- 复制行 → INSERT 语句（右键菜单）
+- 结果截断提示：QueryExecutor 现 MAX_ROWS=1000，超出只打日志 + meta 显示"（截断）"；需要执行后明显提示，并考虑"导出 CSV 是否绕过上限"
 
 **数据源支持**
 
-支持 CK 数据库
-
+- SQL Server / Oracle：需要外部驱动加载机制（Oracle 驱动有 license 不能进内置 classpath）→ `<dataDir>/drivers` 目录放 jar，启动时用独立 classloader 注册进 DriverManager，再加方言（Generic 兜底先跑通，再按需覆写）
+- （远期）SSH 隧道连内网库
 
 **树区域**
 
-数据库下加多虚拟目录层级，表，触发器，视图，序列 都分类放，像DataGrip PG的 gptdb这个数据库 目录是长这样的
+- DataGrip 式多类型分组：现在每个 schema 下只有 表/视图/触发器 三组（ObjectGroupKind），要扩成按类型细分目录 + 组内计数，PG 示例结构：
 
-
-* 📁 gptdb 1 of 3
+```
+* 📁 gptdb
 * 📁 public
    * 📂 tables 186
       * 📂 materialized views 4
@@ -37,4 +47,25 @@
    * 📁 Server Objects
    * 📂 roles 56
       * 📂 tablespaces 2
-   
+```
+
+**连接与安全**
+
+- app.db 里密码明文存储（ConnectionsRepository 直存）→ 本机级加密（AES-GCM，密钥文件放 dataDir 且 chmod 600），含存量行迁移；明文只在打开编辑框时解密回显
+- 连接档案导出/导入（JSON 一份，便于换机迁移；密码字段按导出选项决定带不带）
+
+**历史与日志**
+
+- sql_history 表已建（AppDatabase DDL）但无任何写入、无 UI：执行记录（时间/连接/SQL/状态/耗时/行数）落库，控制台旁挂历史面板（或 Alt+K），双击回填编辑器
+- 应用内"打开 logs 目录"入口（现在只能手动 find）
+
+**清理与技术债**
+
+- `app/ui/RightPane.kt` 全工程无引用（M1 首页列表遗留，现被树+SqlWorkspace 取代）→ 确认后整体删除
+- `Main.kt` previewObject 注释写"预览前 200 行"，实际 `previewSelect` 是 LIMIT 100，两处统一
+- TODO 里"支持 CK 数据库"已完成，勿再重复排期（含反代链路的 compress=0 兼容处理）
+
+**工程与发布**
+
+- 打包验证：nativeDistributions（Deb）+ jlink modules（java.sql 等）配置已就绪但从未产出安装包 → 首次构建 Deb + 干净环境安装自检
+- 单测起步：jdbc/tree 层纯逻辑（urlPreview、quoteIdent、isSystemSchemaName、树行派生）加 kotlin.test；现在只有 smokeJdbc 一个程序化冒烟入口
