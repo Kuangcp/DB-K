@@ -2,6 +2,8 @@ package app.ui
 
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
+import org.tinylog.Logger
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -603,21 +605,15 @@ private fun EditorPane(
             )
         }.getOrNull()
     } else null
-    // 物理行 → 其首个可视行的内容 Y（文本区坐标系内；含自动换行展开）
-    val lineTops: List<Float> = if (content.isEmpty()) {
-        listOf(0f)
-    } else textLayout?.let { lay ->
+    // 物理行 → 其首个可视行的内容 Y（文本区坐标系内；含自动换行展开）。直接按每行起点偏移查
+    // 排版行：TextLayout 本身包含换行产生的空行（含尾随换行后的最后一行），getLineForOffset
+    // 对 offset == length 同样返回该空行的行号，因此无需对尾随换行做算术补偿。
+    val lineTops: List<Float> = textLayout?.let { lay ->
         val starts = buildList {
             add(0)
             for (i in content.indices) if (content[i] == '\n') add(i + 1)
         }
-        val bottomLast = lay.getLineBottom(lay.lineCount - 1)
-        // 尾随换行产生的空行起点依次排在末行之下
-        val trail0 = starts.indexOfFirst { it >= content.length }.let { if (it < 0) starts.size else it }
-        starts.mapIndexed { i, off ->
-            if (off < content.length) lay.getLineTop(lay.getLineForOffset(off))
-            else bottomLast + (i - trail0) * lineHpx
-        }
+        starts.map { off -> lay.getLineTop(lay.getLineForOffset(off.coerceIn(0, content.length))) }
     }.orEmpty()
     val gutterTops = lineTops.map { textTopPx + it }
     val curLineIdx =
