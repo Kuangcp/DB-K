@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,6 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -57,12 +60,14 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ConsoleRunUi
@@ -115,6 +120,10 @@ fun SqlWorkspace(
     onRefreshHistory: () -> Unit,
     onClearHistory: () -> Unit,
     onFillHistory: (String) -> Unit,
+    /** 编辑器补全用数据源对象名（表/视图，已加载）。 */
+    completionIdentifiers: List<String>,
+    /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
+    onCopyText: (String, String) -> Unit,
     onDisconnect: () -> Unit,
     isDark: Boolean,
     onToggleTheme: () -> Unit,
@@ -125,13 +134,27 @@ fun SqlWorkspace(
     LaunchedEffect(showHistory, profile?.id) {
         if (showHistory) onRefreshHistory()
     }
+    // 转置视图：仅展示层翻转；新一次执行 / 切换控制台时复位为原布局
+    var transposed by remember { mutableStateOf(false) }
+    LaunchedEffect(run.executing) {
+        if (run.executing) transposed = false
+    }
+    LaunchedEffect(activeConsole?.id) {
+        transposed = false
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colors.background)
             .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // Ctrl+T 行列转制（仅在有可转置结果时消费，避免与其它用途冲突）
+                if (e.isCtrlPressed && e.key == Key.T && canTranspose(run)) {
+                    transposed = !transposed
+                    return@onPreviewKeyEvent true
+                }
                 // Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
-                if (e.type == KeyEventType.KeyDown && e.key == Key.Escape && run.executing) {
+                if (e.key == Key.Escape && run.executing) {
                     onCancelRun()
                     true
                 } else {
@@ -184,12 +207,15 @@ fun SqlWorkspace(
                         dirty = editorDirty,
                         onValueChange = { v -> tfv = v; onTextChange(v.text) },
                         onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
+                        completionIdentifiers = completionIdentifiers,
                         modifier = Modifier.weight(0.44f).fillMaxWidth(),
                     )
                     ExecBar(
                         executing = run.executing,
                         result = run.result,
                         error = run.error,
+                        transposed = transposed,
+                        onToggleTranspose = { transposed = !transposed },
                         onRun = { onRun(selectedSqlOf(tfv)) },
                         onCancel = onCancelRun,
                         onClear = onClear,
@@ -201,6 +227,8 @@ fun SqlWorkspace(
                     ResultPane(
                         result = run.result,
                         error = run.error,
+                        transposed = transposed,
+                        onCopyText = onCopyText,
                         modifier = Modifier.weight(0.56f).fillMaxWidth(),
                     )
                 }
@@ -218,6 +246,12 @@ fun SqlWorkspace(
 }
 
 private fun exportEnabledFor(run: ConsoleRunUi): Boolean {
+    val res = run.result ?: return false
+    return !run.executing && run.error == null && res.isQuery && res.rowCount > 0
+}
+
+/** 结果可转置：非执行中、无错误、查询结果且非空。 */
+private fun canTranspose(run: ConsoleRunUi): Boolean {
     val res = run.result ?: return false
     return !run.executing && run.error == null && res.isQuery && res.rowCount > 0
 }
@@ -446,15 +480,15 @@ private fun ConsoleChip(
 }
 
 /**
- * SQL 编辑器（M5 起点：NeoUtils 语法高亮）。
+ * SQL 编辑器（语法高亮 + 自动补全）。
  *
  * 结构：外层自绘边框/底；内部 BasicTextField 消费带 span 高亮的 TextFieldValue（NeoUtils
  * rememberHighlight + rememberTextFieldValue 实时着色），滚动用外层 verticalScroll。
  * 文本/选区权威仍在上层 SqlWorkspace 持有的 tfv（受控），高亮是纯派生渲染。
  *
- * 后续补全提示的接入点：本组件 value/onValueChange 已是受控 TextFieldValue，补全只需
- * （1）上层算好候选 + 待替换 TextRange，（2）在此处 value 上替换选区后回调 onValueChange，
- * （3）候选列表 UI 做成锚定光标的弹层（见 README/AGENTS 补全段落）。
+ * 自动补全：caret 位于标识符词内（且不在字符串/注释中）时按前缀匹配 [completionIdentifiers]
+ * + SQL 关键字；Enter/Tab 上屏、↑/↓ 选择、Esc 关闭，也可鼠标点击。弹层颜色取自主题
+ * （surface 底 + onSurface 文字 + primary 选中条），浅/深色均随主题。
  */
 @Composable
 private fun EditorPane(
@@ -462,6 +496,7 @@ private fun EditorPane(
     dirty: Boolean,
     onValueChange: (TextFieldValue) -> Unit,
     onCtrlEnter: () -> Unit,
+    completionIdentifiers: List<String>,
     modifier: Modifier = Modifier,
 ) {
     val isDark = MaterialTheme.colors.isLight.not()
@@ -483,59 +518,182 @@ private fun EditorPane(
     }.rememberTextFieldValue(value)
 
     val scroll = rememberScrollState()
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colors.surface)
-            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp)),
-    ) {
-        BasicTextField(
-            value = highlightedValue.copy(composition = value.composition),
-            onValueChange = onValueChange,
+    var focused by remember { mutableStateOf(false) }
+    var boxW by remember { mutableStateOf(0) }
+    var boxH by remember { mutableStateOf(0) }
+
+    // ---- 补全派生状态：caret 词 → 候选 → 弹层 ----
+    val sel = value.selection
+    val word = if (!focused || !sel.collapsed) null else sqlCompletionWord(value.text, sel.start)
+    val candidates = word?.let { completionCandidates(it.text, completionIdentifiers) }.orEmpty()
+    val shown = candidates.take(MAX_COMPLETIONS)
+    var selIdx by remember(shown) { mutableStateOf(0) }
+    var dismissed by remember(word?.start, word?.end, shown.size) { mutableStateOf(false) }
+    val popupOpen = shown.isNotEmpty() && !dismissed
+
+    fun accept(c: String) {
+        val w = word ?: return
+        val newText = value.text.replaceRange(w.start, w.end, c)
+        onValueChange(value.copy(text = newText, selection = TextRange(w.start + c.length)))
+    }
+
+    Box(modifier = modifier) {
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 10.dp, vertical = 8.dp)
-                .verticalScroll(scroll)
-                .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.Enter && e.isCtrlPressed) {
-                        // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
-                        onCtrlEnter()
-                        true
-                    } else {
-                        false
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colors.surface)
+                .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
+                .onSizeChanged { boxW = it.width; boxH = it.height },
+        ) {
+            BasicTextField(
+                value = highlightedValue.copy(composition = value.composition),
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focused = it.isFocused }
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .verticalScroll(scroll)
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        if (e.isCtrlPressed && e.key == Key.Enter) {
+                            // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
+                            onCtrlEnter()
+                            return@onPreviewKeyEvent true
+                        }
+                        if (popupOpen) {
+                            when (e.key) {
+                                Key.Tab, Key.Enter -> {
+                                    val i = selIdx.coerceIn(0, shown.size - 1)
+                                    accept(shown[i])
+                                    true
+                                }
+                                Key.Escape -> { dismissed = true; true }
+                                Key.DirectionDown -> { selIdx = (selIdx + 1) % shown.size; true }
+                                Key.DirectionUp -> { selIdx = (selIdx - 1 + shown.size) % shown.size; true }
+                                else -> false
+                            }
+                        } else {
+                            false
+                        }
+                    },
+                singleLine = false,
+                cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                textStyle = TextStyle(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colors.onSurface,
+                ),
+                keyboardOptions = KeyboardOptions.Default,
+                decorationBox = { innerTextField ->
+                    Box {
+                        if (value.text.isEmpty()) {
+                            Text(
+                                "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）",
+                                fontSize = 12.sp,
+                                lineHeight = 20.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                            )
+                        }
+                        innerTextField()
                     }
                 },
-            singleLine = false,
-            cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
-            textStyle = TextStyle(
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                lineHeight = 20.sp,
-                color = MaterialTheme.colors.onSurface,
-            ),
-            keyboardOptions = KeyboardOptions.Default,
-            decorationBox = { innerTextField ->
-                Box {
-                    if (value.text.isEmpty()) {
-                        Text(
-                            "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）",
-                            fontSize = 12.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+            )
+            // 编辑状态提示（● = 有未落盘改动，自动保存中）
+            Text(
+                if (dirty) "● 未保存" else "已保存到 .sql 文件",
+                fontSize = 10.sp,
+                color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 6.dp),
+            )
+        }
+        // 补全弹层：外层 Box 不裁剪，允许超出编辑器边框悬浮（跟随滚动、不裁剪）
+        if (popupOpen) {
+            val w = word ?: return@Box
+            val before = value.text.substring(0, w.start)
+            val lineNo = before.count { it == '\n' }
+            val colNo = w.start - (before.lastIndexOf('\n') + 1)
+            CompletionPopup(
+                items = shown,
+                selectedIndex = selIdx,
+                onSelect = { i -> accept(shown[i]) },
+                modifier = Modifier
+                    .width(COMPLETION_W)
+                    .height(COMPLETION_H)
+                    .offset {
+                        // 近似度量：13sp 等宽 ≈ 7.8dp/字符、行高 20dp、内边距 10/8（仅供参考对齐）
+                        val padX = 10.dp.toPx()
+                        val padY = 8.dp.toPx()
+                        val charW = 7.8.dp.toPx()
+                        val lineH = 20.dp.toPx()
+                        val gap = 4.dp.toPx()
+                        val popW = COMPLETION_W.toPx()
+                        val popH = COMPLETION_H.toPx()
+                        val x = (padX + colNo * charW).toInt().coerceIn(
+                            0, (boxW - popW).toInt().coerceAtLeast(0),
                         )
-                    }
-                    innerTextField()
-                }
-            },
-        )
-        // 编辑状态提示（● = 有未落盘改动，自动保存中）
+                        val below = padY + (lineNo + 1) * lineH - scroll.value
+                        val y = if (below + gap + popH <= boxH) (below + gap).toInt()
+                        else (below - lineH - gap - popH).toInt().coerceAtLeast(0)
+                        IntOffset(x, y)
+                    },
+            )
+        }
+    }
+}
+
+private val COMPLETION_W = 300.dp
+private val COMPLETION_H = 224.dp
+private const val MAX_COMPLETIONS = 60
+
+/** 补全候选弹层：主题化小面板，键盘选中的高亮 + 鼠标点击上屏。 */
+@Composable
+private fun CompletionPopup(
+    items: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .shadow(6.dp, RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colors.surface)
+            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.25f), RoundedCornerShape(8.dp)),
+    ) {
         Text(
-            if (dirty) "● 未保存" else "已保存到 .sql 文件",
+            "补全 ${items.size} 项 · Enter/Tab 上屏 · ↑/↓ 选择 · Esc 关闭",
             fontSize = 10.sp,
-            color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
-            else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 6.dp),
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
+        Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            itemsIndexed(items) { index, item ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(index) }
+                        .background(
+                            if (index == selectedIndex) MaterialTheme.colors.primary.copy(alpha = 0.16f)
+                            else Color.Transparent,
+                        )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        item,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -544,6 +702,8 @@ private fun ExecBar(
     executing: Boolean,
     result: QueryResult?,
     error: String?,
+    transposed: Boolean,
+    onToggleTranspose: () -> Unit,
     onRun: () -> Unit,
     onCancel: () -> Unit,
     onClear: () -> Unit,
@@ -552,6 +712,7 @@ private fun ExecBar(
     exportEnabled: Boolean,
     enabled: Boolean,
 ) {
+    val canTranspose = result != null && result.isQuery && result.rowCount > 0
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Button(onClick = onRun, enabled = enabled && !executing) {
             Text(if (executing) "执行中…" else "执行 (Ctrl+Enter)", fontSize = 13.sp)
@@ -575,6 +736,17 @@ private fun ExecBar(
                 Text("导出全量 CSV", fontSize = 12.sp, color = MaterialTheme.colors.primary)
             }
         }
+        // 行列转置开关（Ctrl+T 等效）
+        if (!executing && canTranspose && error == null) {
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = onToggleTranspose) {
+                Text(
+                    if (transposed) "还原布局 (Ctrl+T)" else "转置 (Ctrl+T)",
+                    fontSize = 12.sp,
+                    color = if (transposed) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+                )
+            }
+        }
         Spacer(Modifier.weight(1f))
         if (executing) {
             CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -587,7 +759,7 @@ private fun ExecBar(
             Text("执行出错", fontSize = 12.sp, color = MaterialTheme.colors.error)
         } else if (result != null) {
             Text(
-                metaText(result),
+                metaText(result, transposed),
                 fontSize = 12.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
             )
@@ -595,11 +767,15 @@ private fun ExecBar(
     }
 }
 
-private fun metaText(result: QueryResult): String {
+private fun metaText(result: QueryResult, transposed: Boolean): String {
     val ms = "${result.durationMs} ms"
     return when {
         result.affectedRows != null -> "已更新 ${result.affectedRows} 行 · $ms"
         result.rowCount == 0 -> "查询完成 · 0 行 · $ms"
+        transposed -> {
+            // 转置视图：C 列 → C 行，外加一列“列名”标签列
+            "已转置（Ctrl+T 还原）· ${result.columns.size} 行 × ${result.rowCount + 1} 列 · $ms"
+        }
         else -> {
             val truncated = if (result.truncated) "（截断）" else ""
             "${result.columns.size} 列 × ${result.rowCount} 行$truncated · $ms"
@@ -608,7 +784,13 @@ private fun metaText(result: QueryResult): String {
 }
 
 @Composable
-private fun ResultPane(result: QueryResult?, error: String?, modifier: Modifier = Modifier) {
+private fun ResultPane(
+    result: QueryResult?,
+    error: String?,
+    transposed: Boolean,
+    onCopyText: (String, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
@@ -620,7 +802,12 @@ private fun ResultPane(result: QueryResult?, error: String?, modifier: Modifier 
             result.isQuery && result.rowCount == 0 -> CenteredHint("查询完成：0 行", isError = false)
             result.isQuery -> Column(modifier = Modifier.fillMaxSize()) {
                 if (result.truncated) TruncationBanner()
-                ResultTable(result = result, modifier = Modifier.weight(1f).fillMaxWidth())
+                ResultTable(
+                    result = result,
+                    transposed = transposed,
+                    onCopyText = onCopyText,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             }
             else -> CenteredHint("语句执行成功（非查询，未产生结果集）", isError = false)
         }
@@ -666,21 +853,35 @@ private fun CenteredHint(text: String, isError: Boolean) {
     }
 }
 
-/** 结果网格：列宽按表头与最多前 300 行采样估算；表头与数据共用横向滚动。 */
+/** 结果网格：列宽按表头与最多前 300 行采样估算；表头与数据共用横向滚动。
+ * 交互：单击单元格复制值（NULL → 空串）；右键单元格可「复制单元格值 / 复制本行 → INSERT」。
+ * [transposed]=true 时仅展示行列转制视图（复制交互随之作用于转置后的网格；
+ * “本行 → INSERT”在转置视图下无意义故隐藏）。
+ */
 @Composable
-private fun ResultTable(result: QueryResult, modifier: Modifier = Modifier) {
-    val cols = result.columns
+private fun ResultTable(
+    result: QueryResult,
+    transposed: Boolean,
+    onCopyText: (String, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val view = if (transposed) transposeResult(result) else result
+    val cols = view.columns
     val widths = IntArray(cols.size) { c ->
         var w = cols[c].name.length
-        val sample = minOf(result.rows.size, 300)
+        val sample = minOf(view.rows.size, 300)
         for (r in 0 until sample) {
-            val cell = result.rows[r][c]
+            val cell = view.rows[r][c]
             val len = cell?.length ?: 5 // (NULL)
             if (len > w) w = len
         }
         estWidth(w)
     }
     val hScroll = rememberLazyListState()
+    // 每行可生成的 INSERT（仅原布局；复杂查询/无法定表时 null）
+    val tableName = extractTableName(result.sql)
+    val insertSqls: List<String?> = if (transposed) view.rows.map { null }
+    else result.rows.map { row -> rowToInsertSql(result.sql, result.columns.map { it.name }, row) }
     Column(modifier = modifier.fillMaxSize()) {
         LazyRow(state = hScroll, modifier = Modifier.background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))) {
             item {
@@ -694,7 +895,8 @@ private fun ResultTable(result: QueryResult, modifier: Modifier = Modifier) {
         }
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f))
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            itemsIndexed(result.rows) { index, row ->
+            itemsIndexed(view.rows) { index, row ->
+                val insertSql = insertSqls.getOrNull(index)
                 LazyRow(state = hScroll, modifier = Modifier.fillMaxWidth()) {
                     item {
                         Row(modifier = Modifier.background(
@@ -702,7 +904,33 @@ private fun ResultTable(result: QueryResult, modifier: Modifier = Modifier) {
                             else Color.Transparent,
                         )) {
                             DataCell("${index + 1}", 44, mono = false, muted = true)
-                            row.forEachIndexed { c, v -> DataCell(v, widths[c]) }
+                            row.forEachIndexed { c, v ->
+                                val colName = view.columns[c].name
+                                DataCell(
+                                    value = v,
+                                    width = widths[c],
+                                    onCopy = {
+                                        copyCellValue(onCopyText, v, colName)
+                                    },
+                                    menuItems = buildList {
+                                        add(
+                                            ContextMenuItem("复制单元格值") {
+                                                copyCellValue(onCopyText, v, colName)
+                                            },
+                                        )
+                                        if (insertSql != null) {
+                                            add(
+                                                ContextMenuItem("复制本行 → INSERT") {
+                                                    onCopyText(
+                                                        insertSql,
+                                                        "已复制本行 → INSERT（表 ${tableName ?: "?"}）",
+                                                    )
+                                                },
+                                            )
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -712,6 +940,16 @@ private fun ResultTable(result: QueryResult, modifier: Modifier = Modifier) {
                 )
             }
         }
+    }
+}
+
+/** 复制单元格值：NULL 复制为空串（与 CSV 导出规则一致），Toast 文案带预览。 */
+private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colName: String) {
+    if (v == null) {
+        onCopyText("", "已复制（NULL → 空串），列 $colName")
+    } else {
+        val preview = if (v.length > 28) v.take(28) + "…" else v
+        onCopyText(v, "已复制单元格（列 $colName）：$preview")
     }
 }
 
@@ -734,17 +972,20 @@ private fun RowHeaderCell(text: String, width: Int) {
 }
 
 @Composable
-private fun DataCell(value: String?, width: Int, mono: Boolean = true, muted: Boolean = false) {
-    Box(
-        modifier = Modifier.width(width.dp).height(26.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
+private fun DataCell(
+    value: String?,
+    width: Int,
+    mono: Boolean = true,
+    muted: Boolean = false,
+    onCopy: (() -> Unit)? = null,
+    menuItems: List<ContextMenuItem> = emptyList(),
+) {
+    val content: @Composable () -> Unit = {
         if (value == null) {
             Text(
                 "(NULL)",
                 fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
                 fontSize = 12.sp,
-                fontStyle = null,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -761,6 +1002,19 @@ private fun DataCell(value: String?, width: Int, mono: Boolean = true, muted: Bo
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
+        }
+    }
+    val base = Modifier.width(width.dp).height(26.dp)
+    if (onCopy == null && menuItems.isEmpty()) {
+        Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
+    } else {
+        ContextMenuArea(items = { menuItems }) {
+            Box(
+                modifier = base.clickable(onClick = onCopy ?: {}),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                content()
+            }
         }
     }
 }

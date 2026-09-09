@@ -46,14 +46,15 @@
 `app/core/CsvExport.exportAll`、`db/AppDatabase v3`、`JdbcSmoke`（cancel + v2→v3 自检）。
 验收口径：跑一个超长查询可取消且连接仍可用；重开应用后历史仍在且能回填；smokeJdbc 绿。
 
-### P2 编辑器与结果体验（编辑器是日常主战场）
+### P2 编辑器与结果体验 ✅（已实现，待人工验收；与 P1 一并验收）
 范围：
-- 自动补全：关键字 + 当前连接元数据（表/列名）候选，Enter/Tab 上屏，Esc 关闭
-- 结果 Ctrl+T 行列转制；单元格点击复制；右键"复制行 → INSERT"
-- 编辑器可选小增强：行号、当前行高亮
-验收：人工验证补全在深色/浅色下可读；转制与复制数据无错位。
+- 自动补全：关键字 + 当前连接已加载的表/视图名候选，Enter/Tab 上屏，Esc 关闭，箭头选择（`app/ui/SqlEditing.kt` 纯逻辑 + `SqlWorkspace` 弹层；连接元数据由 Main 懒预取首个 schema，列名级补全需先补元数据列缓存 → 归 P3）
+- 结果 Ctrl+T 行列转制（仅视图切换，不清缓存/历史）；单元格单击复制值（NULL → 空串）；右键“复制单元格值 / 复制本行 → INSERT”（转置视图下隐藏后者）
+- 编辑器可选小增强：行号、当前行高亮 → 未做（Roadmap 原标注可选，验收清单不含）
+落点：`SqlEditing.kt`（新增，smoke 直测）、`SqlWorkspace.kt`（EditorPane/ExecBar/ResultTable）、`Main.kt`（identifiers + 预取）、`JdbcSmoke.smokeEditorUtils`
+验收：人工验证补全在深色/浅色下可读；Ctrl+T 转制与单击/右键复制数据无错位；浅色/深色均无黑字沉底。
 
-### P3 树深化 + 连接安全（给"看库"与"存档案"补课）
+### P3 树深化 + 连接安全（给“看库”与“存档案”补课）
 范围：
 - DataGrip 式多类型分组：PG 的物化视图/序列/routines/… 分类 + 计数（参考 TODO 示例结构）
 - app.db 密码本机加密（AES-GCM + chmod 600 密钥文件），含存量明文迁移

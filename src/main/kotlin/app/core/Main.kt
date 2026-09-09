@@ -64,6 +64,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import org.tinylog.Logger
+import tree.ConnUiStatus
 import tree.DbTreeSidebar
 import tree.TreeRowInfo
 import tree.TreeRowKind
@@ -211,6 +212,17 @@ private fun AppBody(
     val activeConsole = consoleState.activeConsole()
     val activeProfile = activeConsole?.let { a -> profiles.firstOrNull { it.id == a.connectionId } }
 
+    // 编辑器补全候选：当前数据源已加载 schema 中的表/视图名（树展开 + 下方懒预取触发）
+    val completionIdentifiers: List<String> = activeProfile?.let { p ->
+        connectionsState.schemasOf(p.id).orEmpty()
+            .flatMap { s ->
+                connectionsState.objectsOf(p.id, s.key)
+                    ?.let { o -> o.tables + o.views }.orEmpty()
+            }
+            .distinct()
+            .sorted()
+    }.orEmpty()
+
     fun runActiveConsole(sql: String?) {
         val c = consoleState.activeConsole() ?: return
         val p = profiles.firstOrNull { it.id == c.connectionId } ?: return
@@ -256,6 +268,14 @@ private fun AppBody(
             }
         }
         scope.launch { consoleState.run(target, p) }
+    }
+
+    // 编辑器补全元数据预取：数据源已连接时懒加载首个（默认）schema 的对象，不改变树的展开态
+    LaunchedEffect(activeProfile?.id, connectionsState.statusOf(activeProfile?.id.orEmpty())) {
+        val p = activeProfile ?: return@LaunchedEffect
+        if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) return@LaunchedEffect
+        val schemas = connectionsState.schemasOf(p.id) ?: return@LaunchedEffect
+        schemas.firstOrNull()?.let { connectionsState.ensureSchemaObjects(p, it) }
     }
 
     MaterialTheme(colors = appMaterialColors(isDark)) {
@@ -400,6 +420,11 @@ private fun AppBody(
                                 consoleState.setText(c.id, sql)
                                 toastState.show("已回填历史 SQL 到当前控制台")
                             }
+                        },
+                        completionIdentifiers = completionIdentifiers,
+                        onCopyText = { text, label ->
+                            writeClipboardText(text)
+                            toastState.show(label)
                         },
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },
                         isDark = isDark,

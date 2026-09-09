@@ -3,6 +3,11 @@ package jdbc
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.DbType
+import app.ui.completionCandidates
+import app.ui.extractTableName
+import app.ui.rowToInsertSql
+import app.ui.sqlCompletionWord
+import app.ui.transposeResult
 import org.tinylog.Logger
 import java.nio.file.Files
 import java.nio.file.Path
@@ -33,7 +38,43 @@ fun main() {
     Logger.info("[ClickHouse] driver={} url={}", chDriver.name, chProfile.urlPreview())
     check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
 
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store PASS (ClickHouse driver load OK)")
+    smokeEditorUtils()
+    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store + editor-utils PASS (ClickHouse driver load OK)")
+}
+
+/** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */
+private fun smokeEditorUtils() {
+    // caret 词提取：普通标识符、字符串/注释内不触发、纯数字不触发
+    val word = sqlCompletionWord("SELECT * FROM acc\nWHERE id = 1", 17)
+    check(word != null && word.text == "acc" && word.start == 14 && word.end == 17)
+    check(sqlCompletionWord("SELECT 'ab' x", 9) == null) // 引号内
+    check(sqlCompletionWord("SELECT -- ab\nc", 11) == null) // 行注释内
+    check(sqlCompletionWord("SELECT 1", 8) == null) // 纯数字
+    // 候选：表名优先于关键字，长度不长于前缀的不出现
+    val cands = completionCandidates("acc", listOf("account", "accounts", "address", "acc"))
+    check(cands == listOf("account", "accounts"))
+    check(completionCandidates("sele", emptyList()).first() == "SELECT")
+
+    // 转置：2 列 × 2 行 → 首列“列名” + 行1/行2 两列，两行原列
+    val base = QueryResult(
+        sql = "SELECT * FROM t",
+        columns = listOf(QueryColumn("a"), QueryColumn("b")),
+        rows = listOf(listOf("1", "x"), listOf("2", "y")),
+    )
+    val tr = transposeResult(base)
+    check(tr.columns.map { it.name } == listOf("列名", "行 1", "行 2"))
+    check(tr.rows == listOf(listOf("a", "1", "2"), listOf("b", "x", "y")))
+
+    // 行 → INSERT：引号翻倍、NULL 直写；无法定表时返回 null
+    val ins = rowToInsertSql(
+        "SELECT * FROM users WHERE id = 1",
+        listOf("id", "name", "note"),
+        listOf("1", "O'Reilly", null),
+    )
+    check(ins == "INSERT INTO users (id, name, note) VALUES ('1', 'O''Reilly', NULL);")
+    check(rowToInsertSql("SELECT a FROM (SELECT 1 AS a) sub", listOf("a"), listOf("1")) == null)
+    check(extractTableName("SELECT * FROM \"PUBLIC\".\"account\" WHERE 1=1") == "\"PUBLIC\".\"account\"")
+    Logger.info("[editor-utils] completion/transpose/insert PASS", "PASS")
 }
 
 private fun smokeSqlite(dir: Path) {
