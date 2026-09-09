@@ -27,6 +27,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -168,6 +174,8 @@ private fun AppBody(
     val scope = rememberCoroutineScope()
     var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
     var treeWidthDp by remember { mutableStateOf(280f) }
+    // 结果区显隐由窗口根层接管（Alt+B），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
+    var resultsVisible by remember { mutableStateOf(true) }
 
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
     val rows = buildTreeRows(
@@ -307,7 +315,20 @@ private fun AppBody(
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
-            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colors.background)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colors.background)
+                    .onPreviewKeyEvent { e ->
+                        // Alt+B：显示/隐藏底部执行结果区（窗口级，先于任何输入控件消费，避免字母漏进编辑区）
+                        if (e.type == KeyEventType.KeyDown && e.isAltPressed && e.key == Key.B) {
+                            resultsVisible = !resultsVisible
+                            true
+                        } else {
+                            false
+                        }
+                    },
+            ) {
                 Row(modifier = Modifier.fillMaxSize()) {
                     DbTreeSidebar(
                         modifier = Modifier.width(treeWidthDp.dp).fillMaxHeight(),
@@ -476,6 +497,8 @@ private fun AppBody(
                             toastState.show(label)
                         },
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },
+                        resultsVisible = resultsVisible,
+                        onToggleResults = { resultsVisible = !resultsVisible },
                         isDark = isDark,
                         onToggleTheme = {
                             isDark = !isDark

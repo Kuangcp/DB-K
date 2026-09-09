@@ -64,7 +64,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -159,6 +158,9 @@ fun SqlWorkspace(
     /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
     onCopyText: (String, String) -> Unit,
     onDisconnect: () -> Unit,
+    /** 结果区显隐（Alt+B 由 Main 窗口根层统一接管，这里只读它布局）。 */
+    resultsVisible: Boolean,
+    onToggleResults: () -> Unit,
     isDark: Boolean,
     onToggleTheme: () -> Unit,
     modifier: Modifier = Modifier,
@@ -178,14 +180,14 @@ fun SqlWorkspace(
     }
     // —— 编辑区/结果区分隔 ——
     // 编辑区与结果区按比例分配剩余高度（resultFrac 归结果区）；拖动中部窄分隔条实时改比例
-    // （像素差 / 内容区可用高换算，窗口缩放不改变已设比例）。Alt+B 隐藏/显示结果区；
-    // 新执行结果到达时自动重新显示，避免隐藏状态下“跑完看不到结果”。
-    var resultsVisible by remember { mutableStateOf(true) }
+    // （像素差 / 内容区可用高换算，窗口缩放不改变已设比例）。
     var resultFrac by remember { mutableStateOf(0.5f) }
     // 内容区总高度（px，拖动换算用）
     var paneH by remember { mutableStateOf(0) }
+    // 结果区显隐由 Main 窗口根层（Alt+B）控制；新执行结果到达时自动重新显示，
+    // 避免隐藏状态下“跑完看不到结果”
     LaunchedEffect(run.result) {
-        if (run.result != null && !resultsVisible) resultsVisible = true
+        if (run.result != null && !resultsVisible) onToggleResults()
     }
     Column(
         modifier = modifier
@@ -201,11 +203,6 @@ fun SqlWorkspace(
                 // Ctrl+T 行列转制（仅在有可转置结果时消费，避免与其它用途冲突）
                 if (e.isCtrlPressed && e.key == Key.T && canTranspose(run)) {
                     transposed = !transposed
-                    return@onPreviewKeyEvent true
-                }
-                // Alt+B：显示/隐藏底部执行结果区
-                if (e.isAltPressed && e.key == Key.B) {
-                    resultsVisible = !resultsVisible
                     return@onPreviewKeyEvent true
                 }
                 // Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
@@ -1255,7 +1252,8 @@ private fun ResultSplitter(
             .pointerInput(paneHeightPx) {
                 detectVerticalDragGestures { _, dragAmount ->
                     val free = (paneHeightPx - chromePx).coerceAtLeast(1f)
-                    onDragDeltaPx(dragAmount / free)
+                    // 屏幕 y 向下为正：向上拖（负值）要让结果区变大（上边界上移），故取反
+                    onDragDeltaPx(-dragAmount / free)
                 }
             },
         contentAlignment = Alignment.Center,
