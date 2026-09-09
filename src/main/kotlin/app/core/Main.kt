@@ -137,6 +137,14 @@ private fun AppRoot(onExit: () -> Unit) {
             onExit()
         },
     ) {
+        // 运行时窗口图标（X11 任务栏/装饰、Windows 任务栏）：从 classpath 读 png 设到 AWT Frame。
+        // 不用 compose painterResource(String)——已废弃且工程 -Werror。
+        LaunchedEffect(Unit) {
+            db.AppPaths::class.java.getResourceAsStream("/icon/db-k.png")?.use { s ->
+                val img = javax.imageio.ImageIO.read(s) ?: return@LaunchedEffect
+                window.iconImages = listOf(img)
+            }
+        }
         AppBody(
             repository = repository,
             treeState = treeState,

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- db-k 应用图标母版（1024 网格，无文字/字体依赖）
+       深色圆角底（呼应应用深色主题）+ 数据库圆柱（蓝，呼应 表蓝 #5586E4 语义色）
+       + 白色管状 K（db-k 字标）。全部由 path/ellipse 构成，任意缩放不失真。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#333E52"/>
+      <stop offset="1" stop-color="#161C29"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7FB0FF"/>
+      <stop offset="0.55" stop-color="#4B82E6"/>
+      <stop offset="1" stop-color="#2B55B0"/>
+    </linearGradient>
+    <linearGradient id="lid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#BFDAFF"/>
+      <stop offset="1" stop-color="#8CB8F6"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+  </defs>
+
+  <!-- 圆角底色板 -->
+  <rect x="40" y="40" width="944" height="944" rx="212" fill="url(#bg)"/>
+
+  <!-- 圆柱落地投影 -->
+  <ellipse cx="512" cy="842" rx="336" ry="52" fill="#000000" opacity="0.30" filter="url(#soft)"/>
+
+  <!-- 数据库圆柱：侧身（直边到底弧），前宽 rx302 / 高 ry92 -->
+  <path d="M210 372 L210 704 A302 92 0 0 0 814 704 L814 372 Z" fill="url(#body)"/>
+  <!-- 底缘接缝（略深，增强体积感） -->
+  <path d="M210 704 A302 92 0 0 0 814 704" fill="none" stroke="#1B3A7E" stroke-width="12" opacity="0.55"/>
+  <!-- 顶盖（受光面） -->
+  <ellipse cx="512" cy="372" rx="302" ry="92" fill="url(#lid)"/>
+  <!-- 顶盖最前沿高光 -->
+  <path d="M210 372 A302 92 0 0 1 814 372" fill="none" stroke="#EAF3FF" stroke-width="10" opacity="0.9"/>
+
+  <!-- 白色管状 K（db-k）：中杆 + 上下两臂，圆头圆角 -->
+  <g stroke="#FFFFFF" fill="none">
+    <path d="M398 508 V 644" stroke-width="80" stroke-linecap="round"/>
+    <path d="M398 576 L 570 508" stroke-width="72" stroke-linecap="round"/>
+    <path d="M398 576 L 570 650" stroke-width="72" stroke-linecap="round"/>
+  </g>
+</svg>

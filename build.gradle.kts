@@ -62,6 +62,11 @@ compose.desktop {
             targetFormats(TargetFormat.Deb)
             packageName = "db-k"
             packageVersion = "0.1.0"
+            // 应用图标：母版 icon/db-k.svg（1024，纯几何无字体）；
+            // Linux/Deb 用 PNG；icon/db-k.ico（16..256 多尺寸）留给将来 Windows 目标
+            linux {
+                iconFile.set(project.file("icon/db-k-512.png"))
+            }
             // JDBC 驱动需要这些模块（jlink 默认运行时未包含）
             modules("java.sql", "java.naming", "java.management")
         }
