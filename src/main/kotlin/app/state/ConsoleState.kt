@@ -216,6 +216,9 @@ class ConsoleState(
 
     /** 编辑器文本变更：更新内存缓冲，防抖自动写回绑定的 .sql 文件。 */
     fun setText(consoleId: String, text: String) {
+        // 点击/光标移动可能以同文案上报（见 SqlWorkspace onValueChange 转发层的守卫）；
+        // 此处再兜底：内容没变不置脏、不起防抖任务（否则点一下编辑器就变“未保存”）。
+        if (buffers[consoleId] == text) return
         buffers[consoleId] = text
         dirtyConsoleIds = dirtyConsoleIds + consoleId
         saveJobs.remove(consoleId)?.cancel()
