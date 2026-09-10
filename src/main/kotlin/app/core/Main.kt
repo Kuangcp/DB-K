@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,12 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isAltPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -174,7 +169,7 @@ private fun AppBody(
     val scope = rememberCoroutineScope()
     var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
     var treeWidthDp by remember { mutableStateOf(280f) }
-    // 结果区显隐由窗口根层接管（Alt+B），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
+    // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
 
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
@@ -315,19 +310,32 @@ private fun AppBody(
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
+            // Alt+D 显示/隐藏结果区必须用 AWT 级 KeyEventDispatcher 拦截：
+            // Linux/X11 实测，Alt+字母除 KEY_PRESSED 外还会派发一次字符事件
+            // （Compose 侧表现为 key=Unknown、utf16CodePoint=98），该事件绕过 KeyDown 的
+            // 消费直接进入编辑器的文本输入会话（编辑器失焦时平台会话仍绑定它，故
+            // “焦点在哪都会漏 b”）。AWT 派发器在事件进入 Compose 之前把整颗按键
+            // （KEY_PRESSED + KEY_TYPED）吃掉，两条通道都收不到。
+            DisposableEffect(Unit) {
+                val dispatcher = java.awt.KeyEventDispatcher { e ->
+                    if (e.isAltDown && (e.keyCode == java.awt.event.KeyEvent.VK_D || e.keyChar == 'd')) {
+                        // 只在首次按下时切换，忽略自动重复（KEY_RELEASED/KEY_TYPED 只吞不切）
+                        if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                            resultsVisible = !resultsVisible
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+                val kfm = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                kfm.addKeyEventDispatcher(dispatcher)
+                onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colors.background)
-                    .onPreviewKeyEvent { e ->
-                        // Alt+B：显示/隐藏底部执行结果区（窗口级，先于任何输入控件消费，避免字母漏进编辑区）
-                        if (e.type == KeyEventType.KeyDown && e.isAltPressed && e.key == Key.B) {
-                            resultsVisible = !resultsVisible
-                            true
-                        } else {
-                            false
-                        }
-                    },
+                    .background(MaterialTheme.colors.background),
             ) {
                 Row(modifier = Modifier.fillMaxSize()) {
                     DbTreeSidebar(

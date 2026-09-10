@@ -158,7 +158,7 @@ fun SqlWorkspace(
     /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
     onCopyText: (String, String) -> Unit,
     onDisconnect: () -> Unit,
-    /** 结果区显隐（Alt+B 由 Main 窗口根层统一接管，这里只读它布局）。 */
+    /** 结果区显隐（Alt+D 由 Main 窗口根层统一接管，这里只读它布局）。 */
     resultsVisible: Boolean,
     onToggleResults: () -> Unit,
     isDark: Boolean,
@@ -184,7 +184,7 @@ fun SqlWorkspace(
     var resultFrac by remember { mutableStateOf(0.5f) }
     // 内容区总高度（px，拖动换算用）
     var paneH by remember { mutableStateOf(0) }
-    // 结果区显隐由 Main 窗口根层（Alt+B）控制；新执行结果到达时自动重新显示，
+    // 结果区显隐由 Main 窗口根层（Alt+D）控制；新执行结果到达时自动重新显示，
     // 避免隐藏状态下“跑完看不到结果”
     LaunchedEffect(run.result) {
         if (run.result != null && !resultsVisible) onToggleResults()
