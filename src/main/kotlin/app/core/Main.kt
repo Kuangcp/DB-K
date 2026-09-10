@@ -419,7 +419,10 @@ private fun AppBody(
                         onCaretChange = { id, s, e -> consoleState.setCaret(id, s, e) },
                         onSaveNow = { consoleState.activeConsole()?.let { consoleState.saveNow(it.id) } },
                         run = activeRun,
-                        onRun = ::runActiveConsole,                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },
+                        onRun = ::runActiveConsole,
+                        onSelectOutcome = { i ->
+                            activeConsole?.let { consoleState.selectRunOutcome(it.id, i) }
+                        },                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },
                         onExportCsv = {
                             val result = activeConsole?.let { consoleState.runStateOf(it.id).result }
                             if (result != null) {

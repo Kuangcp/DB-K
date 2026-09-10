@@ -139,4 +139,62 @@ class ConsoleStateRunTest {
             assertNull(state.sessionContextSqlFor(state.activeConsole()!!, stored))
         }
     }
+
+    @Test
+    fun `run executes multiple statements into multiple outcomes`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            state.run(
+                console, stored,
+                "SELECT id, name FROM account ORDER BY id;\n-- 中间注释\nSELECT COUNT(*) AS n FROM account;",
+            )
+
+            val slot = state.runStateOf(console.id)
+            assertFalse(slot.executing)
+            assertEquals(2, slot.outcomes.size) // 注释片段被忽略
+            assertTrue(slot.outcomes[0].isQuery)
+            assertEquals(listOf(listOf("1", "a"), listOf("2", "b")), slot.outcomes[0].result!!.rows)
+            assertEquals(listOf(listOf("2")), slot.outcomes[1].result!!.rows)
+            assertEquals(0, slot.activeIndex) // 全部成功时展示第一条
+
+            // 每条语句独立写历史
+            assertEquals(2, it.listHistoryByProfile(pid).size)
+        }
+    }
+
+    @Test
+    fun `run stops at first failing statement`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            state.run(
+                console, stored,
+                "SELECT 1;\nSELECT * FROM no_such_table;\nSELECT 2;",
+            )
+
+            val slot = state.runStateOf(console.id)
+            assertFalse(slot.executing)
+            assertEquals(2, slot.outcomes.size) // 第一条成功 + 第二条失败即停
+            assertTrue(slot.outcomes[0].ok)
+            assertFalse(slot.outcomes[1].ok)
+            assertNotNull(slot.outcomes[1].error)
+            assertEquals(1, slot.activeIndex) // 自动跳到出错语句
+
+            val history = it.listHistoryByProfile(pid)
+            assertEquals(2, history.size) // 每条执行过的语句各一条
+            assertFalse(history.first().ok) // 最新的是失败那条
+            assertTrue(history.last().ok)
+        }
+    }
 }

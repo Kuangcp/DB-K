@@ -7,9 +7,10 @@ import androidx.compose.runtime.setValue
 import db.ConsoleRecord
 import db.ConnectionsRepository
 import db.SqlHistoryRow
+import jdbc.DialectRegistry
 import jdbc.QueryExecutor
 import jdbc.QueryResult
-import jdbc.DialectRegistry
+import jdbc.splitSqlStatements
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,12 +31,35 @@ import tree.ConnUiStatus
  *   切控制台/退出强制落盘；重启后回到上次焦点所在行。
  * - 执行目标 = 控制台绑定的数据源（与左侧树选中解耦，树选中只做导航/切换激活）。
  */
+/** 一次多语句执行中单个 SQL 语句的结果。 */
+data class StatementOutcome(
+    val sql: String,
+    /** 成功且为查询（SELECT 等）时非空。 */
+    val result: QueryResult? = null,
+    /** 该语句失败原因。 */
+    val error: String? = null,
+) {
+    val ok: Boolean get() = error == null
+    val isQuery: Boolean get() = result?.isQuery == true
+    val affectedRows: Int? get() = result?.affectedRows
+}
+
+/**
+ * 控制台最近一次执行快照。多语句执行时 [outcomes] 按序存放每条语句的结果
+ * （出错即停在出错处），[activeIndex] 指向结果区当前展示的语句。
+ */
 data class ConsoleRunUi(
     val executing: Boolean = false,
-    val result: QueryResult? = null,
-    val error: String? = null,
+    val outcomes: List<StatementOutcome> = emptyList(),
+    val activeIndex: Int = 0,
     val ranMs: Long = 0L,
-)
+) {
+    /** 当前激活语句的结果（UI 便捷访问）。 */
+    val active: StatementOutcome? get() = outcomes.getOrNull(activeIndex)
+    val result: QueryResult? get() = active?.result
+    val error: String? get() = active?.error
+    val hasOutcomes: Boolean get() = outcomes.isNotEmpty()
+}
 
 class ConsoleState(
     private val repository: ConnectionsRepository,
@@ -346,18 +370,29 @@ class ConsoleState(
      * 执行控制台 SQL（目标 = 控制台绑定的 profile；profile 由调用方从档案列表解析）。
      * @param sql 待执行语句；null 时取控制台缓冲全文（预览/程序化执行用）。
      *   交互层规则：编辑器无选中文本时禁止全量执行，因此 UI 一律传选中片段。
+     * 选中片段按 `;` 拆成多条语句依次执行（忽略字符串/注释内的分号与仅含注释的片段），
+     * 每条语句一个结果，多语句时结果区多 Tab 展示；某条出错即停（后续不执行）。
      * 连接未就绪先补连/重连；同源所有 JDBC 都经 LiveConnection 单线程执行器串行。
      *
-     * 执行期登记当前 Statement 供取消；结束（成功/失败）都会写 sql_history。
+     * 执行期登记当前 Statement 供取消；每条语句成功/失败都会写 sql_history。
      * 代次守卫：取消或新执行会 bump runGens，使本 run 的迟到结果被丢弃（不覆盖新状态）。
      */
     suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile, sql: String? = null) {
-        // 同控制台不允许叠加执行（按钮已禁，Ctrl+Enter/预览触发时的兜底）
+        // 同控制台不允许叠加执行（执行中兜底）
         if (runSlots[console.id]?.executing == true) return
         withContext(ioDispatcher) { flushNow(console.id) }
         val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
         if (target.isEmpty()) {
-            runSlots[console.id] = ConsoleRunUi(error = "请输入要执行的 SQL")
+            runSlots[console.id] = ConsoleRunUi(
+                outcomes = listOf(StatementOutcome(sql = "", error = "请输入要执行的 SQL")),
+            )
+            return
+        }
+        val statements = splitSqlStatements(target)
+        if (statements.isEmpty()) {
+            runSlots[console.id] = ConsoleRunUi(
+                outcomes = listOf(StatementOutcome(sql = target, error = "没有可执行的 SQL（选中内容全是注释/空白）")),
+            )
             return
         }
         val status = connectionsState.statusOf(profile.id)
@@ -366,16 +401,21 @@ class ConsoleState(
         }
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             runSlots[console.id] = ConsoleRunUi(
-                error = connectionsState.statusMessageOf(profile.id) ?: "连接不可用",
+                outcomes = listOf(StatementOutcome(
+                    sql = target,
+                    error = connectionsState.statusMessageOf(profile.id) ?: "连接不可用",
+                )),
             )
             return
         }
         val live = connectionsState.liveConnection(profile.id)
         if (live == null) {
-            runSlots[console.id] = ConsoleRunUi(error = "连接已断开")
+            runSlots[console.id] = ConsoleRunUi(
+                outcomes = listOf(StatementOutcome(sql = target, error = "连接已断开")),
+            )
             return
         }
-        // 控制台已设目标库/schema：每次执行前先切会话（USE / SET search_path…），保证复切/交错执行也生效
+        // 控制台已设目标库/schema：每条语句执行前先切会话（USE / SET search_path…），保证复切/交错执行也生效
         val contextSql = sessionContextSqlFor(console, profile)
         runGens[console.id] = (runGens[console.id] ?: 0L) + 1
         val gen = runGens.getValue(console.id)
@@ -384,33 +424,54 @@ class ConsoleState(
         runTarget[console.id] = target
         runSlots[console.id] = ConsoleRunUi(executing = true)
 
-        val outcome = withContext(ioDispatcher) {
-            runCatching {
-                live.onConnection { conn ->
-                    QueryExecutor.applyContext(conn, contextSql)
-                    QueryExecutor.execute(conn, target) { st -> live.registerStatement(st) }
+        // 逐条执行；出错即停（后续语句不执行），每条独立写历史
+        val outcomes = mutableListOf<StatementOutcome>()
+        for (stmt in statements) {
+            val stmtStarted = System.currentTimeMillis()
+            val result = withContext(ioDispatcher) {
+                runCatching {
+                    live.onConnection { conn ->
+                        QueryExecutor.applyContext(conn, contextSql)
+                        QueryExecutor.execute(conn, stmt) { st -> live.registerStatement(st) }
+                    }
                 }
+            }
+            if (runGens[console.id] != gen) return // 已被取消/新执行覆盖：丢弃迟到结果
+            result.onSuccess { r ->
+                outcomes += StatementOutcome(stmt, result = r)
+                recordHistory(
+                    profileId = profile.id, sql = stmt, ok = true,
+                    durationMs = r.durationMs, rowCount = r.affectedRows ?: r.rowCount,
+                )
+            }.onFailure { t ->
+                Logger.error(t, "query failed on {}", profile.name)
+                val msg = friendlySqlError(t)
+                outcomes += StatementOutcome(stmt, error = msg)
+                recordHistory(
+                    profileId = profile.id, sql = stmt, ok = false,
+                    durationMs = System.currentTimeMillis() - stmtStarted, rowCount = 0, error = msg,
+                )
+                break
             }
         }
 
+        if (runGens[console.id] != gen) return
         val startedAt = runStartedAt.remove(console.id)
-        val sqlText = runTarget.remove(console.id) ?: target
-        if (runGens[console.id] != gen) return // 已被取消/新执行覆盖：丢弃迟到结果，历史已由发起方记
+        runTarget.remove(console.id)
         val durationMs = startedAt?.let { System.currentTimeMillis() - it } ?: 0L
-        outcome.onSuccess { r ->
-            recordHistory(
-                profileId = profile.id, sql = sqlText, ok = true,
-                durationMs = durationMs, rowCount = r.affectedRows ?: r.rowCount,
-            )
-            runSlots[console.id] = ConsoleRunUi(result = r, ranMs = r.durationMs)
-        }.onFailure { t ->
-            Logger.error(t, "query failed on {}", profile.name)
-            val msg = friendlySqlError(t)
-            recordHistory(
-                profileId = profile.id, sql = sqlText, ok = false,
-                durationMs = durationMs, rowCount = 0, error = msg,
-            )
-            runSlots[console.id] = ConsoleRunUi(error = msg)
+        val errIdx = outcomes.indexOfFirst { !it.ok }
+        runSlots[console.id] = ConsoleRunUi(
+            outcomes = outcomes,
+            activeIndex = if (errIdx >= 0) errIdx else 0,
+            ranMs = durationMs,
+        )
+    }
+
+    /** 切换结果区当前展示的语句（多语句时 Tab 选择）。 */
+    fun selectRunOutcome(consoleId: String, index: Int) {
+        val cur = runSlots[consoleId] ?: return
+        if (index in cur.outcomes.indices && index != cur.activeIndex) {
+            runSlots[consoleId] = cur.copy(activeIndex = index)
         }
     }
 

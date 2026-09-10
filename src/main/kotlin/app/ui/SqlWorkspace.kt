@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Button
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
@@ -149,6 +148,8 @@ fun SqlWorkspace(
     run: ConsoleRunUi,
     /** 执行请求：参数为编辑器当前选中片段（去首尾空白）；null = 无有效选中。 */
     onRun: (String?) -> Unit,
+    /** 结果区多语句 Tab 切换（选中第 index 条语句结果）。 */
+    onSelectOutcome: (Int) -> Unit,
     onClear: () -> Unit,
     onExportCsv: () -> Unit,
     /** 取消当前执行（取消按钮 / Esc）。 */
@@ -185,6 +186,9 @@ fun SqlWorkspace(
     LaunchedEffect(activeConsole?.id) {
         transposed = false
     }
+    LaunchedEffect(run.activeIndex) {
+        transposed = false
+    }
     // —— 编辑区/结果区分隔 ——
     // 编辑区与结果区按比例分配剩余高度（resultFrac 归结果区）；拖动中部窄分隔条实时改比例
     // （像素差 / 内容区可用高换算，窗口缩放不改变已设比例）。
@@ -193,8 +197,8 @@ fun SqlWorkspace(
     var paneH by remember { mutableStateOf(0) }
     // 结果区显隐由 Main 窗口根层（Alt+D）控制；新执行结果到达时自动重新显示，
     // 避免隐藏状态下“跑完看不到结果”
-    LaunchedEffect(run.result) {
-        if (run.result != null && !resultsVisible) onToggleResults()
+    LaunchedEffect(run.executing) {
+        if (!run.executing && run.outcomes.any { it.isQuery } && !resultsVisible) onToggleResults()
     }
     Column(
         modifier = modifier
@@ -342,7 +346,6 @@ fun SqlWorkspace(
                             error = run.error,
                             transposed = transposed,
                             onToggleTranspose = { transposed = !transposed },
-                            onRun = { onRun(selectedSqlOf(tfv)) },
                             onCancel = onCancelRun,
                             onClear = onClear,
                             onExportCsv = onExportCsv,
@@ -359,10 +362,10 @@ fun SqlWorkspace(
                                 resultFrac = (resultFrac + delta).coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)
                             },
                         )
-                        ResultPane(
-                            result = run.result,
-                            error = run.error,
+                        ResultTabs(
+                            run = run,
                             transposed = transposed,
+                            onSelectOutcome = onSelectOutcome,
                             onCopyText = onCopyText,
                             modifier = Modifier.weight(resultFrac).fillMaxWidth(),
                         )
@@ -1219,7 +1222,6 @@ private fun ExecBar(
     error: String?,
     transposed: Boolean,
     onToggleTranspose: () -> Unit,
-    onRun: () -> Unit,
     onCancel: () -> Unit,
     onClear: () -> Unit,
     onExportCsv: () -> Unit,
@@ -1229,9 +1231,12 @@ private fun ExecBar(
 ) {
     val canTranspose = result != null && result.isQuery && result.rowCount > 0
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Button(onClick = onRun, enabled = enabled && !executing) {
-            Text(if (executing) "执行中…" else "执行 (Ctrl+Enter)", fontSize = 13.sp)
-        }
+        // 执行只走快捷键（Ctrl+Enter）；这里保留轻提示，不放大按钮
+        Text(
+            "Ctrl+Enter 运行选中（无选中不执行）",
+            fontSize = 11.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+        )
         if (executing) {
             Spacer(Modifier.width(8.dp))
             TextButton(onClick = onCancel, enabled = enabled) {
@@ -1351,6 +1356,76 @@ private fun dbScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
     hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
 )
 
+/** 结果区多语句 Tab 容器：单语句时不显示 Tab 条，直接渲染结果。 */
+@Composable
+private fun ResultTabs(
+    run: ConsoleRunUi,
+    transposed: Boolean,
+    onSelectOutcome: (Int) -> Unit,
+    onCopyText: (String, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        if (run.outcomes.size > 1) {
+            ResultTabBar(run = run, onSelectOutcome = onSelectOutcome)
+            Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
+        }
+        ResultPane(
+            result = run.result,
+            error = run.error,
+            transposed = transposed,
+            onCopyText = onCopyText,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+/** 多语句结果的 Tab 条：每条语句一个 Tab，查询/更新/失败各有状态标记。 */
+@Composable
+private fun ResultTabBar(run: ConsoleRunUi, onSelectOutcome: (Int) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 4.dp),
+    ) {
+        run.outcomes.forEachIndexed { i, o ->
+            val active = i == run.activeIndex
+            val statusColor = when {
+                !o.ok -> MaterialTheme.colors.error
+                o.isQuery -> MaterialTheme.colors.primary
+                else -> MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(5.dp))
+                    .clickable { onSelectOutcome(i) }
+                    .background(
+                        if (active) MaterialTheme.colors.primary.copy(alpha = 0.14f)
+                        else Color.Transparent,
+                    )
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    "结果 ${i + 1}",
+                    fontSize = 11.5.sp,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (active) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                )
+                Text(
+                    when {
+                        !o.ok -> " ✕"
+                        o.isQuery -> " · ${o.result?.rowCount ?: 0} 行"
+                        else -> " · ${o.result?.affectedRows ?: 0} 行"
+                    },
+                    fontSize = 10.5.sp,
+                    color = statusColor,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ResultPane(
     result: QueryResult?,
@@ -1377,7 +1452,11 @@ private fun ResultPane(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
-            else -> CenteredHint("语句执行成功（非查询，未产生结果集）", isError = false)
+            else -> CenteredHint(
+                if (result.affectedRows != null) "已更新 ${result.affectedRows} 行"
+                else "语句执行成功（非查询，未产生结果集）",
+                isError = false,
+            )
         }
     }
 }
