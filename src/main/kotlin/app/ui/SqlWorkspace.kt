@@ -942,8 +942,9 @@ private fun EditorPane(
 
     // 切换/恢复控制台：把视口滚到恢复后的光标行（父层已在组合期恢复选区，此处 value 已是记忆位置）。
     // 目标为「光标行居中」，首/尾行由 ScrollState 自动夹到 0..max 而自然贴顶/贴底；
-    // 首帧也执行，这样重启后打开上次的控制台能直接回到上次位置。
-    LaunchedEffect(consoleId) {
+    // 键里必须带「排版是否就绪」：启动时编辑区首次组合 boxW=0，取不到内宽 → textLayout=null，
+    // 此时只能提前返回；尺寸量出来（键 false→true）后再跑一次，否则首个控制台永远不做恢复。
+    LaunchedEffect(consoleId, textLayout != null) {
         val lay = textLayout ?: return@LaunchedEffect
         val off = sel.start.coerceIn(0, content.length)
         val top = textTopPx + lay.getLineTop(lay.getLineForOffset(off))
