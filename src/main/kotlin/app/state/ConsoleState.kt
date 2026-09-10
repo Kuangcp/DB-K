@@ -10,6 +10,7 @@ import db.SqlHistoryRow
 import jdbc.QueryExecutor
 import jdbc.QueryResult
 import jdbc.DialectRegistry
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +41,8 @@ class ConsoleState(
     private val repository: ConnectionsRepository,
     private val connectionsState: ConnectionsState,
     private val scope: CoroutineScope,
+    /** 慢操作调度器；测试注入虚拟时间调度器以确定性推进防抖/执行。 */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
     /** profileId -> 该数据源全部控制台（首次访问同步载入）。 */
@@ -152,7 +155,9 @@ class ConsoleState(
 
     fun createConsole(profileId: String, name: String): ConsoleRecord {
         val rec = repository.createConsole(profileId, name)
-        consolesByConnection[profileId] = profileConsoles(profileId) + rec
+        // 直接取缓存追加（不能用 profileConsoles：仓库已插入 rec，getOrPut 会重读导致重复）
+        val existing = consolesByConnection[profileId].orEmpty()
+        consolesByConnection[profileId] = existing + rec
         loaded += rec.id
         buffers[rec.id] = ""
         activate(rec)
@@ -206,6 +211,8 @@ class ConsoleState(
 
     /** 连接档案被删除：清理其下全部控制台状态；若激活的是它则回到无目标引导态。 */
     fun onConnectionDeleted(profileId: String) {
+        // 先判断后清理：activeConsole() 依赖 consolesByConnection 解析 id，删了会查不到
+        val activeWasInProfile = activeConsole()?.connectionId == profileId
         consolesByConnection.remove(profileId)?.forEach { rec ->
             saveJobs.remove(rec.id)?.cancel()
             caretJobs.remove(rec.id)?.cancel()
@@ -220,7 +227,7 @@ class ConsoleState(
             lastStableSlots.remove(rec.id)
         }
         historyByProfile.remove(profileId)
-        if (activeConsole()?.connectionId == profileId) {
+        if (activeWasInProfile) {
             activeConsoleId = null
         }
     }
@@ -237,7 +244,7 @@ class ConsoleState(
         saveJobs.remove(consoleId)?.cancel()
         saveJobs[consoleId] = scope.launch {
             delay(AUTOSAVE_MS)
-            withContext(Dispatchers.IO) { flushNow(consoleId) }
+            withContext(ioDispatcher) { flushNow(consoleId) }
         }
     }
 
@@ -255,7 +262,7 @@ class ConsoleState(
         saveJobs.remove(consoleId)?.cancel()
         if (consoleId !in dirtyConsoleIds) return
         scope.launch {
-            withContext(Dispatchers.IO) { flushNow(consoleId) }
+            withContext(ioDispatcher) { flushNow(consoleId) }
         }
     }
 
@@ -284,7 +291,7 @@ class ConsoleState(
         caretJobs.remove(consoleId)?.cancel()
         caretJobs[consoleId] = scope.launch {
             delay(CARET_SAVE_MS)
-            withContext(Dispatchers.IO) { flushCaretNow(consoleId) }
+            withContext(ioDispatcher) { flushCaretNow(consoleId) }
         }
     }
 
@@ -347,7 +354,7 @@ class ConsoleState(
     suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile, sql: String? = null) {
         // 同控制台不允许叠加执行（按钮已禁，Ctrl+Enter/预览触发时的兜底）
         if (runSlots[console.id]?.executing == true) return
-        withContext(Dispatchers.IO) { flushNow(console.id) }
+        withContext(ioDispatcher) { flushNow(console.id) }
         val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
         if (target.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(error = "请输入要执行的 SQL")
@@ -377,7 +384,7 @@ class ConsoleState(
         runTarget[console.id] = target
         runSlots[console.id] = ConsoleRunUi(executing = true)
 
-        val outcome = withContext(Dispatchers.IO) {
+        val outcome = withContext(ioDispatcher) {
             runCatching {
                 live.onConnection { conn ->
                     QueryExecutor.applyContext(conn, contextSql)

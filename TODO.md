@@ -38,4 +38,4 @@
 **工程与发布**
 
 - 打包验证：nativeDistributions（Deb）+ jlink modules（java.sql 等）配置已就绪但从未产出安装包 → 首次构建 Deb + 干净环境安装自检
-- 单测已起步：kotlin.test + JUnit5（`gradle test`），已覆盖 jdbc 纯逻辑/嵌入式库、tree 行派生、db 迁移/仓库/vault/meta_cache/consoleFiles、SqlEditing/CsvExport；剩余：app/state 协程状态测试（需先给 ConnectionsState 抽接口 + kotlinx-coroutines-test）
+- 单测：kotlin.test + JUnit5（`gradle test`）已覆盖 jdbc 纯逻辑/嵌入式库、tree 行派生、db 迁移/仓库/vault/meta_cache/consoleFiles、SqlEditing/CsvExport、app/state 协程状态（ConsoleState 防抖/激活/删除清理 + run 端到端 H2）。期间修复 ConsoleState.createConsole 冷缓存重复添加、onConnectionDeleted 漏清激活控制台两个缺陷
