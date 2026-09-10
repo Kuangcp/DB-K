@@ -121,6 +121,7 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 ## 验证习惯（每阶段必做）
 
 1. `gradle compileKotlin` 无错
-2. `gradle smokeJdbc` 通过（驱动层 + QueryExecutor 冒烟）
-3. 程序化可验的部分用 sqlite3/python3 直查 `~/.local/share/db-k/app.db`（库表、迁移、演示连接）
+2. `gradle test` 通过（单元测试：jdbc/tree/db 纯逻辑 + 嵌入式库集成，`src/test/kotlin`）
+3. `gradle smokeJdbc` 通过（驱动层 + QueryExecutor 冒烟）
+4. 程序化可验的部分用 sqlite3/python3 直查 `~/.local/share/db-k/app.db`（库表、迁移、演示连接）
 

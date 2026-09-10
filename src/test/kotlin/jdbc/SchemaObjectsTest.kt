@@ -1,0 +1,80 @@
+package jdbc
+
+import jdbc.model.DbObjectMeta
+import jdbc.model.ObjectKind
+import jdbc.model.SchemaObjects
+import jdbc.model.isPreviewable
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class SchemaObjectsTest {
+
+    @Test
+    fun `simple ignores empty groups`() {
+        val obj = SchemaObjects.simple(emptyList(), emptyList())
+        assertTrue(obj.isEmpty)
+        assertEquals(0, obj.total)
+        assertEquals(emptyList(), obj.tables)
+        assertEquals(emptyList(), obj.views)
+        assertEquals(emptyList(), obj.triggers)
+    }
+
+    @Test
+    fun `simple builds tables views and triggers`() {
+        val trigger = DbObjectMeta("trg", ObjectKind.TRIGGER, "users")
+        val obj = SchemaObjects.simple(
+            tables = listOf("users", "orders"),
+            views = listOf("rich_orders"),
+            triggers = listOf(trigger),
+        )
+        assertEquals(listOf("users", "orders"), obj.tables)
+        assertEquals(listOf("rich_orders"), obj.views)
+        assertEquals(listOf(trigger), obj.triggers)
+        assertEquals(4, obj.total)
+        assertEquals(
+            setOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.TRIGGER),
+            obj.objects.keys,
+        )
+    }
+
+    @Test
+    fun `extra empty group is dropped`() {
+        val obj = SchemaObjects.simple(
+            tables = listOf("t"),
+            views = emptyList(),
+            extra = mapOf(ObjectKind.MATERIALIZED_VIEW to emptyList()),
+        )
+        assertEquals(setOf(ObjectKind.TABLE), obj.objects.keys)
+    }
+
+    @Test
+    fun `forKind returns empty for missing kind`() {
+        val obj = SchemaObjects.simple(listOf("t"), emptyList())
+        assertEquals(emptyList(), obj.forKind(ObjectKind.VIEW))
+        assertEquals(1, obj.forKind(ObjectKind.TABLE).size)
+    }
+
+    @Test
+    fun `total sums all groups`() {
+        val obj = SchemaObjects(
+            mapOf(
+                ObjectKind.TABLE to listOf(DbObjectMeta("a", ObjectKind.TABLE), DbObjectMeta("b", ObjectKind.TABLE)),
+                ObjectKind.VIEW to listOf(DbObjectMeta("v", ObjectKind.VIEW)),
+            ),
+        )
+        assertEquals(3, obj.total)
+        assertFalse(obj.isEmpty)
+    }
+
+    @Test
+    fun `previewable kinds are table view materialized view`() {
+        assertTrue(ObjectKind.TABLE.isPreviewable())
+        assertTrue(ObjectKind.VIEW.isPreviewable())
+        assertTrue(ObjectKind.MATERIALIZED_VIEW.isPreviewable())
+        assertFalse(ObjectKind.TRIGGER.isPreviewable())
+        assertFalse(ObjectKind.SEQUENCE.isPreviewable())
+        assertFalse(ObjectKind.ROUTINE.isPreviewable())
+    }
+}

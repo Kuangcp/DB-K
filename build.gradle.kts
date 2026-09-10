@@ -36,6 +36,19 @@ dependencies {
     implementation("org.tinylog:tinylog-api:2.7.0")
     // impl 含 writers 抽象类，SessionLogWriter 编译需在 compileClasspath
     implementation("org.tinylog:tinylog-impl:2.7.0")
+
+    // 单元测试：kotlin.test（JUnit 5 平台） + JUnit Jupiter（含 engine，@TempDir 等）
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
+    testLogging {
+        events("passed", "failed", "skipped")
+        showStandardStreams = false
+    }
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {

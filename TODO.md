@@ -6,6 +6,9 @@
 **编辑区域**
 
 - 列名级自动补全：现有关键字 + 表/视图/物化视图名补全已实现（P2/P3）；列名候选需先在元数据层缓存列（数据模型落地后补）
+- 选中多行，内部有些行是注释了，应该要忽略，而不是报错。
+- 选中多条SQL，就执行多个SQL，直接结果也需要支持多tab展示。
+- 执行的那个大按钮可以去掉了，因为都是快捷键触发执行。
 
 **数据源支持**
 
@@ -35,4 +38,4 @@
 **工程与发布**
 
 - 打包验证：nativeDistributions（Deb）+ jlink modules（java.sql 等）配置已就绪但从未产出安装包 → 首次构建 Deb + 干净环境安装自检
-- 单测起步：jdbc/tree 层纯逻辑（urlPreview、quoteIdent、isSystemSchemaName、树行派生）加 kotlin.test；现在只有 smokeJdbc 一个程序化冒烟入口
+- 单测已起步：kotlin.test + JUnit5（`gradle test`），已覆盖 jdbc 纯逻辑/嵌入式库、tree 行派生、db 迁移/仓库/vault/meta_cache/consoleFiles、SqlEditing/CsvExport；剩余：app/state 协程状态测试（需先给 ConnectionsState 抽接口 + kotlinx-coroutines-test）

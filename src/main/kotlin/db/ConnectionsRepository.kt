@@ -10,7 +10,11 @@ import java.util.UUID
  * 应用元数据访问层：文件夹 / 连接档案 / SQL 历史，全部收敛于此。
  * 与 api-x 的 Repository 模式一致：单一 SQLite 连接 + PRAGMA foreign_keys + try-with-resources。
  */
-class ConnectionsRepository(dbPath: Path) : AutoCloseable {
+class ConnectionsRepository(
+    dbPath: Path,
+    /** 控制台 .sql 文件目录；默认跟随应用数据目录，测试可注入临时目录隔离。 */
+    private val consolesDir: Path = AppPaths.consolesDir(),
+) : AutoCloseable {
 
     private val keyFile: Path = PasswordVault.keyFileFor(dbPath)
 
@@ -250,7 +254,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
     fun createConsole(connectionId: String, name: String): ConsoleRecord {
         val id = newId()
         val now = System.currentTimeMillis()
-        val file = AppPaths.consoleFile(id)
+        val file = consolesDir.resolve("$id.sql")
         val rec = ConsoleRecord(
             id = id, connectionId = connectionId, name = name,
             filePath = file.toString(), sortOrder = nextSortOrder("consoles"), updatedAt = now,
@@ -270,7 +274,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
             ps.setLong(7, now)
             ps.executeUpdate()
         }
-        ConsoleFiles.write(AppPaths.consoleFile(id), "")
+        ConsoleFiles.write(file, "")
         return rec
     }
 
