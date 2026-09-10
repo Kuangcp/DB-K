@@ -26,11 +26,32 @@ object QueryExecutor {
     const val MAX_ROWS = 1000
     private const val QUERY_TIMEOUT_SECONDS = 30
 
-    /** 判断一条 SQL 是否产生结果集（决定走 executeQuery 还是 executeUpdate）。 */
+    /** 可产生结果集的语句首关键字。 */
+    private val QUERY_HEADS = setOf("select", "with", "show", "explain", "desc", "describe", "pragma", "table", "values")
+
+    /** 首个标识符（关键字）词。 */
+    private val LEADING_KEYWORD = Regex("^[A-Za-z]+")
+
+    /**
+     * 判断一条 SQL 是否产生结果集（决定走 executeQuery 还是 executeUpdate）。
+     * 取关键字时必须按“任意空白”切词——SQL 常写成 `SELECT\n    a, b`，若按空格切会得到
+     * `"select\n"` 而误判为非查询（ClickHouse 等驱动对 SELECT 走 executeUpdate 不报错，
+     * 只返回 0，表现为“语句执行成功（非查询，未产生结果集）”）。
+     * 另外跳过前导注释与左括号（如 `-- 注释\nselect`、`(select 1) union all …`）。
+     */
     fun isQueryLike(sql: String): Boolean {
-        val first = sql.trimStart().substringBefore(';').trim()
-        val head = first.lowercase().substringBefore(' ').substringBefore('(')
-        return head in setOf("select", "with", "show", "explain", "desc", "describe", "pragma", "table")
+        var s = sql.trimStart()
+        var stripped = true
+        while (stripped) {
+            stripped = false
+            when {
+                s.startsWith("--") -> { s = s.substringAfter('\n', "").trimStart(); stripped = true }
+                s.startsWith("/*") -> { s = s.substringAfter("*/", "").trimStart(); stripped = true }
+                s.startsWith("(") -> { s = s.substring(1).trimStart(); stripped = true }
+            }
+        }
+        val head = LEADING_KEYWORD.find(s)?.value?.lowercase() ?: return false
+        return head in QUERY_HEADS
     }
 
     /**

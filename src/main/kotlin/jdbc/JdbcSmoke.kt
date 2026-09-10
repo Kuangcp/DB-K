@@ -117,6 +117,17 @@ private fun smokeSqlite(dir: Path) {
         check(!q2.isQuery && q2.affectedRows == 1)
         val q3 = QueryExecutor.execute(conn, "SELECT count(*) AS n FROM users")
         check(q3.isQuery && q3.rows.single().single() == "1")
+        // 关键字识别：换行/注释/括号开头不得误判为非查询（回归：CK 的 SELECT\n  多列语句）
+        check(QueryExecutor.isQueryLike("SELECT\n    table, count() AS n FROM system.parts"))
+        check(QueryExecutor.isQueryLike("select\n\t* from t"))
+        check(QueryExecutor.isQueryLike("-- 注释\nselect 1"))
+        check(QueryExecutor.isQueryLike("/* c */ SELECT 1"))
+        check(QueryExecutor.isQueryLike("(select 1) union all (select 2)"))
+        check(QueryExecutor.isQueryLike("VALUES (1)"))
+        check(!QueryExecutor.isQueryLike("INSERT INTO users(name) VALUES ('x')"))
+        check(!QueryExecutor.isQueryLike("update users set name = 'x'"))
+        val q4 = QueryExecutor.execute(conn, "SELECT\n    count(*) AS n\nFROM users")
+        check(q4.isQuery && q4.rows.single().single() == "1")
         Logger.info("[SQLite] query executor PASS rows={} affected={}", q3.rows.single().single(), q2.affectedRows)
     }
 }
