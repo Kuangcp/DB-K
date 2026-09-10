@@ -76,12 +76,36 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 - 树操作回调由 `Main` 层 `rememberCoroutineScope` 调度，`app/state` 的 suspend 动作内部
   已切 `Dispatchers.IO`。
 
+## 持久化分层（新增需要落盘的状态时先看这里）★ 必读
+
+判断口诀：**删掉实体时该不该跟着消失 / 要不要按它查询？** 是 → SQLite；否则 → properties。
+
+1. **业务实体状态 → `app.db`（SQLite，单连接 + FK 级联）**：connections / folders /
+   consoles（元数据 + 光标）/ sql_history / meta_cache。加字段 = `AppDatabase` 版本 +1 的迁移
+   + repository 读写 + 模型字段（如 `ConsoleRecord`），删实体靠 FK 级联清理，别手写清理。
+2. **应用/窗口级全局偏好 → `<dataDir>/*.properties`（`app/settings/*Prefs`）**：theme、window、
+   tree-expand。都是标量、无查询/级联需求；新增同类项合并进已有文件，别每项开一个文件。
+3. **大块正文 → 独立文件**，DB 只存路径（`consoles/<id>.sql`）。
+4. **纯瞬态 → 只放内存**：结果集（`runSlots`）、补全弹层、错误文案等，可随时重建，不落盘。
+
+### 控制台光标记忆（`consoles.caret_start/caret_end`）
+
+- 语义：每个控制台记住「最后焦点所在的行/选区」，切控制台与**重启**后都恢复到该行
+  （视口居中；首/尾行由滚动夹取自然贴顶/贴底）。
+- 写入：内存草稿为权威（`ConsoleState.caretDrafts`），每次 `setCaret` 重置 1.5s 防抖落库
+  （`CARET_SAVE_MS`）；**强制落库点** = 切控制台（`activate`）、退出（`flushAllSync`）。
+- **写光标绝不更新 `updated_at`**：它表达内容/元数据变更，被光标移动刷新会让
+  `activateForProfile` / `activateMostRecent` 的「最近改动」启发式失真（smoke 有断言守着）。
+- UI 侧（`SqlWorkspace`）：`remember(consoleId)` 在**组合期同步**恢复选区，再由 `EditorPane`
+  的 `LaunchedEffect(consoleId)` 按该行居中滚动。**不要改回在 `LaunchedEffect` 里恢复选区**：
+  子层 effect 先于父层执行，会读到切换前的旧值。
+
 ## M4 控制台 / 持久化约定
 
 - **控制台结构**：一个数据源可多个控制台，每个控制台 = app.db `consoles` 行（元数据）
   + `<dataDir>/consoles/<id>.sql` 单文件（正文）。**rename 只改行不改文件名**（id 稳定）。
   删除连接时由 `ConnectionsRepository.deleteConnection` 级联删行+文件（smoke 已验证）。
-- 编辑器文本：内存 buffer 为唯一权威；防抖 700ms 自动写回 .sql 文件
+- 编辑器文本：内存 buffer 为唯一权威；防抖 3s 自动写回 .sql 文件
   （`ConsoleState.setText` 内 scope.launch { delay(AUTOSAVE_MS); withContext(IO){ flushNow } }）。
   **必须落盘时机**：切控制台 / 执行前 / 退出（`onCloseRequest` 调 `flushAllSync`）。
 - 执行目标 = 控制台绑定的数据源（`activeConsole.connectionId`），与树选中解耦；
