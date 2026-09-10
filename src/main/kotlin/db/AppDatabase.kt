@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 5
+    private const val CURRENT_VERSION = 6
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -48,6 +48,20 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV5(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (5)").use { it.executeUpdate() }
         }
+        if (!applied.contains(6)) {
+            conn.createStatement().use { st -> migrateToV6(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (6)").use { it.executeUpdate() }
+        }
+    }
+
+    /**
+     * v6：每个控制台记住编辑器光标/选区（重启后回到上次焦点所在行）。
+     * 与 consoles 同行 → 删控制台/删连接时随行级联消失，无需额外清理。
+     * 默认 0 = 从头开始；刻意不动 updated_at（由调用方保证），避免污染“最近改动的控制台”启发式。
+     */
+    private fun migrateToV6(st: Statement) {
+        st.executeUpdate("ALTER TABLE consoles ADD COLUMN caret_start INTEGER NOT NULL DEFAULT 0")
+        st.executeUpdate("ALTER TABLE consoles ADD COLUMN caret_end INTEGER NOT NULL DEFAULT 0")
     }
 
     /** v5：数据源目录元数据磁盘缓存（库列表 + 各库对象 JSON），支撑“连接默认读缓存、右键刷新”。 */

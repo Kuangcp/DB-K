@@ -226,7 +226,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
 
     fun listConsoles(connectionId: String): List<ConsoleRecord> {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
+            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
         ).use { ps ->
             ps.setString(1, connectionId)
             ps.executeQuery().use { rs ->
@@ -239,7 +239,7 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
 
     fun getConsole(id: String): ConsoleRecord? {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target FROM consoles WHERE id = ?",
+            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs -> if (rs.next()) mapConsole(rs) else null }
@@ -293,6 +293,20 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
         }
     }
 
+    /**
+     * 记录控制台的光标/选区偏移（重启后回到上次焦点所在行）。
+     * 刻意不碰 updated_at：它表达“内容/元数据变更”，被光标移动刷新会让
+     * activateForProfile/activateMostRecent 的“最近改动”启发式失真。
+     */
+    fun setConsoleCaret(id: String, start: Int, end: Int) {
+        conn.prepareStatement("UPDATE consoles SET caret_start = ?, caret_end = ? WHERE id = ?").use { ps ->
+            ps.setInt(1, start)
+            ps.setInt(2, end)
+            ps.setString(3, id)
+            ps.executeUpdate()
+        }
+    }
+
     /** 删除控制台：删行 + 删其 .sql 文件。 */
     fun deleteConsole(id: String) {
         val rec = getConsole(id) ?: return
@@ -329,6 +343,8 @@ class ConnectionsRepository(dbPath: Path) : AutoCloseable {
         sortOrder = rs.getInt("sort_order"),
         updatedAt = rs.getLong("updated_at"),
         target = rs.getString("target") ?: "",
+        caretStart = rs.getInt("caret_start"),
+        caretEnd = rs.getInt("caret_end"),
     )
 
     // ---------- sql_history（执行历史） ----------

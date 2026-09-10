@@ -245,6 +245,21 @@ private fun smokeDbStore(dir: Path) {
         check(repo.getConsole("cc-smoke")!!.target == "main") { "setConsoleTarget 应生效" }
         Logger.info("[db-store] v4 consoles.target 迁移/读写 PASS", "PASS")
 
+        // v6 迁移后 consoles 带 caret_start/caret_end（旧行默认 0），写光标回环且不动 updated_at
+        val caretBefore = repo.getConsole("cc-smoke")!!
+        check(caretBefore.caretStart == 0 && caretBefore.caretEnd == 0) { "旧 consoles 行应补上 caret=0" }
+        repo.setConsoleCaret("cc-smoke", 840, 846)
+        val caretAfter = repo.getConsole("cc-smoke")!!
+        check(caretAfter.caretStart == 840 && caretAfter.caretEnd == 846) { "setConsoleCaret 应生效" }
+        check(caretAfter.updatedAt == caretBefore.updatedAt) {
+            "记录光标不应刷新 updated_at（会污染“最近改动的控制台”启发式）"
+        }
+        // listConsoles（页面主查询）也要带出 caret
+        check(repo.listConsoles("c-old").first { it.id == "cc-smoke" }.let { it.caretStart == 840 && it.caretEnd == 846 }) {
+            "listConsoles 应带出 caret"
+        }
+        Logger.info("[db-store] v6 consoles.caret 迁移/读写 PASS", "PASS")
+
         // P3 密码落盘加密：
         // a) 旧明文行在仓库初始化时被自动迁移为密文，读回仍为原文
         // b) 新写入的密码落盘即为密文（不在盘上留明文），读回可解

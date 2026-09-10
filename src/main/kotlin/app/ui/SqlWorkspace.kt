@@ -51,7 +51,6 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -141,6 +140,10 @@ fun SqlWorkspace(
     editorText: String,
     editorDirty: Boolean,
     onTextChange: (String) -> Unit,
+    /** 读某控制台上次的光标/选区（重启后恢复焦点所在行）。 */
+    caretOf: (String) -> Pair<Int, Int>,
+    /** 记录控制台光标/选区（内存即时生效，防抖落库）。 */
+    onCaretChange: (String, Int, Int) -> Unit,
     /** Ctrl+S 主动保存（异步写盘；Main 取当前控制台）。 */
     onSaveNow: () -> Unit = {},
     run: ConsoleRunUi,
@@ -272,10 +275,10 @@ fun SqlWorkspace(
             )
             return
         }
-        // 每个控制台记忆光标选区（会话内）：切回时恢复上次焦点所在行，而不是总跳到文末。
-        // 滚动位置由 EditorPane 在切换时按恢复后的光标行滚过去。
-        val caretMemory = remember { mutableStateMapOf<String, TextRange>() }
+        // 每个控制台记住光标/选区（持久化在 consoles.caret_start/caret_end）：
+        // 切回（含重启）时恢复上次焦点所在行，而不是总跳到文末。
         val consoleId = activeConsole.id
+        val savedCaret = caretOf(consoleId)
         // 编辑器状态：文本由外部权威（切换控制台/预览/清空），选区本地瞬态。
         // 用 remember(consoleId) 在「组合期同步」重建，这样切控制台时选区已是记忆值，
         // 子层 LaunchedEffect(consoleId) 的“滚到光标行”不会读到切换前的旧值。
@@ -283,9 +286,10 @@ fun SqlWorkspace(
             mutableStateOf(
                 TextFieldValue(
                     editorText,
-                    caretMemory[consoleId]
-                        ?.takeIf { it.max <= editorText.length }
-                        ?: TextRange(editorText.length),
+                    TextRange(
+                        savedCaret.first.coerceIn(0, editorText.length),
+                        savedCaret.second.coerceIn(0, editorText.length),
+                    ),
                 ),
             )
         }
@@ -293,7 +297,7 @@ fun SqlWorkspace(
             if (tfv.text != editorText) {
                 val v = TextFieldValue(editorText, TextRange(editorText.length))
                 tfv = v
-                caretMemory[consoleId] = v.selection
+                onCaretChange(consoleId, v.selection.start, v.selection.end)
             }
         }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -322,8 +326,8 @@ fun SqlWorkspace(
                             onValueChange = { v ->
                                 val textChanged = v.text != tfv.text
                                 tfv = v
-                                // 记录本控制台最后的光标/选区（点击、输入、选择都更新）
-                                caretMemory[consoleId] = v.selection
+                                // 记录本控制台最后的光标/选区（点击、输入、选择都更新；内存即时、防抖落库）
+                                onCaretChange(consoleId, v.selection.start, v.selection.end)
                                 // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
                                 // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
                                 if (textChanged) onTextChange(v.text)
@@ -936,18 +940,18 @@ private fun EditorPane(
     val curLineIdx =
         if (caretActive && sel.collapsed && content.isNotEmpty()) content.take(sel.start).count { it == '\n' } else -1
 
-    // 切换控制台：把视口滚到恢复后的光标行（父层已在组合期恢复选区，此处 value 已是记忆位置）。
-    // 首帧（启动/首次进入编辑区）不滚，保持“从头看”的既有观感；之后正常编辑/点击不自动滚动。
-    var caretRestoredOnce by remember { mutableStateOf(false) }
+    // 切换/恢复控制台：把视口滚到恢复后的光标行（父层已在组合期恢复选区，此处 value 已是记忆位置）。
+    // 目标为「光标行居中」，首/尾行由 ScrollState 自动夹到 0..max 而自然贴顶/贴底；
+    // 首帧也执行，这样重启后打开上次的控制台能直接回到上次位置。
     LaunchedEffect(consoleId) {
-        if (!caretRestoredOnce) {
-            caretRestoredOnce = true
-            return@LaunchedEffect
-        }
         val lay = textLayout ?: return@LaunchedEffect
         val off = sel.start.coerceIn(0, content.length)
-        val top = lay.getLineTop(lay.getLineForOffset(off))
-        scroll.scrollTo((textTopPx + top - lineHpx).coerceAtLeast(0f).toInt())
+        val top = textTopPx + lay.getLineTop(lay.getLineForOffset(off))
+        // 让记忆行大致落在可视区中间；目标值越界时由 ScrollState 自行夹到 0..max，
+        // 因此文件首/尾的行会自然贴顶/贴底展示，不会出现滚动不到位的空白。
+        val viewport = (boxH - 2f * textTopPx).coerceAtLeast(lineHpx)
+        val target = (top + lineHpx / 2f - viewport / 2f).coerceAtLeast(0f)
+        scroll.scrollTo(target.toInt())
     }
 
     // 当前行背景（随 caret 行的文本一并滚动/换行）——仅叠加 background，不动语法色 span
@@ -1089,13 +1093,22 @@ private fun EditorPane(
                 },
             )
             }
+            // 右侧纵向滚动条（文本区 end padding 已留 10dp，不会遮字）
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(scroll),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp, horizontal = 3.dp),
+                style = dbScrollbarStyle(),
+            )
             // 编辑状态提示（● = 有未落盘改动；Ctrl+S 立即保存）
             Text(
                 if (dirty) "● 未保存 · Ctrl+S 保存" else "已保存到 .sql 文件",
                 fontSize = 10.sp,
                 color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 6.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 6.dp),
             )
         }
         // 补全弹层：位置 = caret 的真实排版位置（TextMeasurer 按内宽换行测出，避免覆盖正在输入的行）
@@ -1326,6 +1339,17 @@ private fun metaText(result: QueryResult, transposed: Boolean): String {
     }
 }
 
+/** 结果表 / 编辑器共用的纵向滚动条样式（主题派生色，深色下可见）。 */
+@Composable
+private fun dbScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
+    minimalHeight = 24.dp,
+    thickness = 10.dp,
+    shape = RoundedCornerShape(5.dp),
+    hoverDurationMillis = 300,
+    unhoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.20f),
+    hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+)
+
 @Composable
 private fun ResultPane(
     result: QueryResult?,
@@ -1430,14 +1454,7 @@ private fun ResultTable(
     val insertSqls: List<String?> = if (transposed) view.rows.map { null }
     else result.rows.map { row -> rowToInsertSql(result.sql, result.columns.map { it.name }, row) }
     // 结果表格滚动条：列多/行多时可见可拖，横向条与表头/各行同步
-    val scrollbarStyle = ScrollbarStyle(
-        minimalHeight = 24.dp,
-        thickness = 10.dp,
-        shape = RoundedCornerShape(5.dp),
-        hoverDurationMillis = 300,
-        unhoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.20f),
-        hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
-    )
+    val scrollbarStyle = dbScrollbarStyle()
     Column(modifier = modifier.fillMaxSize()) {
         Row(
             modifier = Modifier

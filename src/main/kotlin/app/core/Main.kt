@@ -415,6 +415,8 @@ private fun AppBody(
                         editorText = activeConsole?.let { consoleState.textOf(it.id) }.orEmpty(),
                         editorDirty = activeConsole?.let { consoleState.isDirty(it.id) } == true,
                         onTextChange = { t -> activeConsole?.let { consoleState.setText(it.id, t) } },
+                        caretOf = consoleState::caretOf,
+                        onCaretChange = { id, s, e -> consoleState.setCaret(id, s, e) },
                         onSaveNow = { consoleState.activeConsole()?.let { consoleState.saveNow(it.id) } },
                         run = activeRun,
                         onRun = ::runActiveConsole,                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },

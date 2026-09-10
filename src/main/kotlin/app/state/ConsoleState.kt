@@ -25,6 +25,8 @@ import tree.ConnUiStatus
  * - 元数据行（ConsolesRepository，SQLite）+ 正文（ConsoleFiles，.sql 文件）双持久化；
  *   编辑器缓冲区是文件的暂存副本，防抖 700ms 自动写回，切走/退出/执行前强制落盘。
  * - 执行结果按控制台分开存放（切换控制台各自保留最近一次结果）。
+ * - 光标/选区按控制台记忆（consoles.caret_start/caret_end）：内存草稿即时生效 + 1.5s 防抖落库，
+ *   切控制台/退出强制落盘；重启后回到上次焦点所在行。
  * - 执行目标 = 控制台绑定的数据源（与左侧树选中解耦，树选中只做导航/切换激活）。
  */
 data class ConsoleRunUi(
@@ -61,6 +63,10 @@ class ConsoleState(
     private val buffers = mutableMapOf<String, String>()
     private val loaded = mutableSetOf<String>()
     private val saveJobs = mutableMapOf<String, Job>()
+
+    /** 光标草稿（内存权威）：consoleId → (start,end)，防抖落库；记录前切回也立即生效。 */
+    private val caretDrafts = mutableMapOf<String, Pair<Int, Int>>()
+    private val caretJobs = mutableMapOf<String, Job>()
 
     /** 执行期追踪：代次（丢弃迟到结果）、开始时刻、执行 SQL、取消前快照。 */
     private val runGens = mutableMapOf<String, Long>()
@@ -105,7 +111,10 @@ class ConsoleState(
     /** 激活指定控制台（未加载则从 .sql 文件读取，dirty 草稿不丢失）。 */
     fun activate(console: ConsoleRecord) {
         val prev = activeConsole()
-        if (prev != null && prev.id != console.id) flushNow(prev.id)
+        if (prev != null && prev.id != console.id) {
+            flushNow(prev.id)
+            flushCaretNow(prev.id)
+        }
         activeConsoleId = console.id
         lastActivePerProfile[console.connectionId] = console.id
         if (console.id !in loaded) {
@@ -176,6 +185,8 @@ class ConsoleState(
         val rec = consolesByConnection.values.asSequence().flatMap { it.asSequence() }
             .firstOrNull { it.id == consoleId } ?: return
         saveJobs.remove(consoleId)?.cancel()
+        caretJobs.remove(consoleId)?.cancel()
+        caretDrafts.remove(consoleId)
         repository.deleteConsole(consoleId)
         buffers.remove(consoleId)
         loaded.remove(consoleId)
@@ -197,6 +208,8 @@ class ConsoleState(
     fun onConnectionDeleted(profileId: String) {
         consolesByConnection.remove(profileId)?.forEach { rec ->
             saveJobs.remove(rec.id)?.cancel()
+            caretJobs.remove(rec.id)?.cancel()
+            caretDrafts.remove(rec.id)
             buffers.remove(rec.id)
             loaded.remove(rec.id)
             dirtyConsoleIds = dirtyConsoleIds - rec.id
@@ -248,6 +261,44 @@ class ConsoleState(
 
     fun flushAllSync() {
         dirtyConsoleIds.toList().forEach { flushNow(it) }
+        caretDrafts.keys.toList().forEach { flushCaretNow(it) }
+    }
+
+    // ---------- 光标记忆 / 持久化：每个控制台记住上次焦点所在行 ----------
+
+    /**
+     * 该控制台上次离开时的光标/选区（内存草稿优先；无记录 = (0,0) 从头开始）。
+     * 重启后由 consoles.caret_start/caret_end 恢复，UI 层据此居中展示该行。
+     */
+    fun caretOf(consoleId: String): Pair<Int, Int> =
+        caretDrafts[consoleId] ?: findConsole(consoleId)?.let { it.caretStart to it.caretEnd } ?: (0 to 0)
+
+    /**
+     * 光标/选区变化：只更新内存 + 重置防抖落库任务（连续点击/输入不会条条写库）。
+     * 强制落库点：切控制台（[activate]）、退出（[flushAllSync]）。
+     */
+    fun setCaret(consoleId: String, start: Int, end: Int) {
+        val pair = start to end
+        if (caretDrafts[consoleId] == pair) return
+        caretDrafts[consoleId] = pair
+        caretJobs.remove(consoleId)?.cancel()
+        caretJobs[consoleId] = scope.launch {
+            delay(CARET_SAVE_MS)
+            withContext(Dispatchers.IO) { flushCaretNow(consoleId) }
+        }
+    }
+
+    /** 光标立即落库，并同步内存元数据行（否则草稿清掉后 caretOf 会读回旧值）。 */
+    private fun flushCaretNow(consoleId: String) {
+        val c = caretDrafts.remove(consoleId) ?: return
+        runCatching { repository.setConsoleCaret(consoleId, c.first, c.second) }
+            .onFailure { Logger.error(it, "console caret save failed {}", consoleId) }
+        val entry = consolesByConnection.entries.firstOrNull { (_, list) -> list.any { it.id == consoleId } }
+        if (entry != null) {
+            consolesByConnection[entry.key] = entry.value.map {
+                if (it.id == consoleId) it.copy(caretStart = c.first, caretEnd = c.second) else it
+            }
+        }
     }
 
     // ---------- 执行 ----------
@@ -417,6 +468,8 @@ class ConsoleState(
         // 自动保存防抖窗口：用户停顿超过该时长才写盘（打字期间不写，不影响编辑）；
         // 切换控制台/执行前/退出仍强制落盘，保证基本不丢。
         private const val AUTOSAVE_MS = 3000L
+        // 光标落库防抖窗口：光标/选区变化远频于文本改动，单独一个更短的窗口（内存即时生效）。
+        private const val CARET_SAVE_MS = 1500L
         private const val HISTORY_PANEL_LIMIT = 100
     }
 }
