@@ -1358,7 +1358,7 @@ private fun CenteredHint(text: String, isError: Boolean) {
 }
 
 /** 结果网格：列宽按表头与最多前 300 行采样估算；表头与数据共用横向滚动。
- * 交互：单击单元格复制值（NULL → 空串）；右键单元格可「复制单元格值 / 复制本行 → INSERT」。
+ * 交互：右键单元格可「复制单元格值 / 复制本行 → INSERT」（不做单击复制，避免动不动污染剪贴板）。
  * [transposed]=true 时仅展示行列转制视图（复制交互随之作用于转置后的网格；
  * “本行 → INSERT”在转置视图下无意义故隐藏）。
  */
@@ -1433,9 +1433,6 @@ private fun ResultTable(
                                 DataCell(
                                     value = v,
                                     width = widths[c],
-                                    onCopy = {
-                                        copyCellValue(onCopyText, v, colName)
-                                    },
                                     menuItems = buildList {
                                         add(
                                             ContextMenuItem("复制单元格值") {
@@ -1511,7 +1508,6 @@ private fun DataCell(
     width: Int,
     mono: Boolean = true,
     muted: Boolean = false,
-    onCopy: (() -> Unit)? = null,
     menuItems: List<ContextMenuItem> = emptyList(),
 ) {
     val content: @Composable () -> Unit = {
@@ -1539,14 +1535,12 @@ private fun DataCell(
         }
     }
     val base = Modifier.width(width.dp).height(26.dp)
-    if (onCopy == null && menuItems.isEmpty()) {
+    if (menuItems.isEmpty()) {
         Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
     } else {
+        // 仅右键菜单可复制（不做单击复制）
         ContextMenuArea(items = { menuItems }) {
-            Box(
-                modifier = base.clickable(onClick = onCopy ?: {}),
-                contentAlignment = Alignment.CenterStart,
-            ) {
+            Box(modifier = base, contentAlignment = Alignment.CenterStart) {
                 content()
             }
         }
