@@ -2,6 +2,10 @@ package app.ui
 
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.HorizontalScrollbar
+import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.rememberScrollbarAdapter
 import org.tinylog.Logger
 
 import androidx.compose.foundation.background
@@ -24,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -1378,32 +1381,52 @@ private fun ResultTable(
         }
         estWidth(w)
     }
-    val hScroll = rememberLazyListState()
+    // 横向滚动用共享 ScrollState + horizontalScroll（表头与每一行都读同一偏移）——
+    // 不能用多个 LazyRow 共享 LazyListState：虚拟化列表各自测量，滚动条驱动时只有
+    // 最近测量那一个响应，会出现“只有内容滚、表头不动”的错位。
+    val hScroll = rememberScrollState()
+    val vScroll = rememberLazyListState()
     // 每行可生成的 INSERT（仅原布局；复杂查询/无法定表时 null）
     val tableName = extractTableName(result.sql)
     val insertSqls: List<String?> = if (transposed) view.rows.map { null }
     else result.rows.map { row -> rowToInsertSql(result.sql, result.columns.map { it.name }, row) }
+    // 结果表格滚动条：列多/行多时可见可拖，横向条与表头/各行同步
+    val scrollbarStyle = ScrollbarStyle(
+        minimalHeight = 24.dp,
+        thickness = 10.dp,
+        shape = RoundedCornerShape(5.dp),
+        hoverDurationMillis = 300,
+        unhoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.20f),
+        hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+    )
     Column(modifier = modifier.fillMaxSize()) {
-        LazyRow(state = hScroll, modifier = Modifier.background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))) {
-            item {
-                Row {
-                    RowHeaderCell("", 44)
-                    cols.forEachIndexed { c, col ->
-                        RowHeaderCell(col.name, widths[c])
-                    }
-                }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
+                .horizontalScroll(hScroll),
+        ) {
+            RowHeaderCell("", 44)
+            cols.forEachIndexed { c, col ->
+                RowHeaderCell(col.name, widths[c])
             }
         }
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f))
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            itemsIndexed(view.rows) { index, row ->
-                val insertSql = insertSqls.getOrNull(index)
-                LazyRow(state = hScroll, modifier = Modifier.fillMaxWidth()) {
-                    item {
-                        Row(modifier = Modifier.background(
-                            if (index % 2 == 1) MaterialTheme.colors.onSurface.copy(alpha = 0.025f)
-                            else Color.Transparent,
-                        )) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            // 右侧/底部预留滚动条厚度，避免遮挡最后一列与最后一行
+            Column(modifier = Modifier.fillMaxSize().padding(end = scrollbarStyle.thickness, bottom = scrollbarStyle.thickness)) {
+                LazyColumn(state = vScroll, modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    itemsIndexed(view.rows) { index, row ->
+                        val insertSql = insertSqls.getOrNull(index)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (index % 2 == 1) MaterialTheme.colors.onSurface.copy(alpha = 0.025f)
+                                    else Color.Transparent,
+                                )
+                                .horizontalScroll(hScroll),
+                        ) {
                             DataCell("${index + 1}", 44, mono = false, muted = true)
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
@@ -1433,13 +1456,23 @@ private fun ResultTable(
                                 )
                             }
                         }
+                        Divider(
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.05f),
+                            modifier = Modifier.padding(start = 44.dp),
+                        )
                     }
                 }
-                Divider(
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.05f),
-                    modifier = Modifier.padding(start = 44.dp),
-                )
             }
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(vScroll),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(bottom = scrollbarStyle.thickness),
+                style = scrollbarStyle,
+            )
+            HorizontalScrollbar(
+                adapter = rememberScrollbarAdapter(hScroll),
+                modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(end = scrollbarStyle.thickness),
+                style = scrollbarStyle,
+            )
         }
     }
 }
