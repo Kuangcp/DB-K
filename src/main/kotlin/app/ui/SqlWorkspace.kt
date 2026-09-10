@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -271,10 +272,29 @@ fun SqlWorkspace(
             )
             return
         }
-        // 编辑器状态：文本由外部权威（切换控制台/预览/清空），选区是本地瞬态
-        var tfv by remember { mutableStateOf(TextFieldValue(editorText)) }
+        // 每个控制台记忆光标选区（会话内）：切回时恢复上次焦点所在行，而不是总跳到文末。
+        // 滚动位置由 EditorPane 在切换时按恢复后的光标行滚过去。
+        val caretMemory = remember { mutableStateMapOf<String, TextRange>() }
+        val consoleId = activeConsole.id
+        // 编辑器状态：文本由外部权威（切换控制台/预览/清空），选区本地瞬态。
+        // 用 remember(consoleId) 在「组合期同步」重建，这样切控制台时选区已是记忆值，
+        // 子层 LaunchedEffect(consoleId) 的“滚到光标行”不会读到切换前的旧值。
+        var tfv by remember(consoleId) {
+            mutableStateOf(
+                TextFieldValue(
+                    editorText,
+                    caretMemory[consoleId]
+                        ?.takeIf { it.max <= editorText.length }
+                        ?: TextRange(editorText.length),
+                ),
+            )
+        }
         LaunchedEffect(editorText) {
-            if (tfv.text != editorText) tfv = TextFieldValue(editorText, TextRange(editorText.length))
+            if (tfv.text != editorText) {
+                val v = TextFieldValue(editorText, TextRange(editorText.length))
+                tfv = v
+                caretMemory[consoleId] = v.selection
+            }
         }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Box(
@@ -297,10 +317,13 @@ fun SqlWorkspace(
                     ) {
                         EditorPane(
                             value = tfv,
+                            consoleId = consoleId,
                             dirty = editorDirty,
                             onValueChange = { v ->
                                 val textChanged = v.text != tfv.text
                                 tfv = v
+                                // 记录本控制台最后的光标/选区（点击、输入、选择都更新）
+                                caretMemory[consoleId] = v.selection
                                 // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
                                 // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
                                 if (textChanged) onTextChange(v.text)
@@ -807,6 +830,8 @@ private fun StarterPane(
 @Composable
 private fun EditorPane(
     value: TextFieldValue,
+    /** 所属控制台 id：仅用作 LaunchedEffect 键——切换控制台时把视口滚到恢复的光标行。 */
+    consoleId: String,
     dirty: Boolean,
     onValueChange: (TextFieldValue) -> Unit,
     onCtrlEnter: () -> Unit,
@@ -910,6 +935,20 @@ private fun EditorPane(
     val gutterTops = lineTops.map { textTopPx + it }
     val curLineIdx =
         if (caretActive && sel.collapsed && content.isNotEmpty()) content.take(sel.start).count { it == '\n' } else -1
+
+    // 切换控制台：把视口滚到恢复后的光标行（父层已在组合期恢复选区，此处 value 已是记忆位置）。
+    // 首帧（启动/首次进入编辑区）不滚，保持“从头看”的既有观感；之后正常编辑/点击不自动滚动。
+    var caretRestoredOnce by remember { mutableStateOf(false) }
+    LaunchedEffect(consoleId) {
+        if (!caretRestoredOnce) {
+            caretRestoredOnce = true
+            return@LaunchedEffect
+        }
+        val lay = textLayout ?: return@LaunchedEffect
+        val off = sel.start.coerceIn(0, content.length)
+        val top = lay.getLineTop(lay.getLineForOffset(off))
+        scroll.scrollTo((textTopPx + top - lineHpx).coerceAtLeast(0f).toInt())
+    }
 
     // 当前行背景（随 caret 行的文本一并滚动/换行）——仅叠加 background，不动语法色 span
     val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
