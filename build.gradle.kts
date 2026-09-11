@@ -149,13 +149,22 @@ compose.desktop {
 val appimagetoolProp: String? = (project.findProperty("appimagetool")?.toString()
     ?: System.getenv("APPIMAGETOOL"))?.takeIf { it.isNotBlank() }
 
+fun ensureExecutable(f: File): File {
+    if (!f.canExecute()) {
+        check(f.setExecutable(true, false)) {
+            "无法为 ${f.absolutePath} 添加可执行权限，请手动 chmod +x（或检查是否挂载在 noexec）"
+        }
+    }
+    return f
+}
+
 fun resolveAppimagetool(): File {
     appimagetoolProp?.let {
         val f = File(it)
         check(f.exists()) { "appimagetool 不存在：$it" }
-        return f
+        return ensureExecutable(f)
     }
-    project.file("tools/appimagetool-x86_64.AppImage").takeIf { it.exists() }?.let { return it }
+    project.file("tools/appimagetool-x86_64.AppImage").takeIf { it.exists() }?.let { return ensureExecutable(it) }
     System.getenv("PATH").orEmpty().split(File.pathSeparator)
         .map { File(it, "appimagetool") }
         .firstOrNull { it.canExecute() }
