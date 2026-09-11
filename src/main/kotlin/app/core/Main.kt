@@ -373,6 +373,13 @@ private fun AppBody(
     }
     val resolveDdlTargetState = rememberUpdatedState(resolveDdlTarget)
 
+    // 在指定数据源新建控制台（标签条「+」与树右键「打开控制台 → 新建控制台」共用）。
+    val createConsoleFor: (ConnectionProfile) -> Unit = { p ->
+        val name = suggestConsoleName(p)
+        consoleState.createConsole(p.id, name)
+        toastState.show("已新建控制台「$name」（绑定 ${p.name}）")
+    }
+
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
@@ -454,6 +461,10 @@ private fun AppBody(
                         onDeleteConnection = { p -> dialogState.confirm = ConfirmRequest.DeleteConnection(p.id, p.name) },
                         onRefresh = { treeState.refresh() },
                         onOpenConsoleForProfile = { p -> consoleState.activateForProfile(p.id) },
+                        consolesForProfile = { pid -> consoleState.profileConsoles(pid) },
+                        activeConsoleId = activeConsole?.id,
+                        onOpenConsoleRecord = { c -> consoleState.activate(c) },
+                        onCreateConsoleForProfile = createConsoleFor,
                         onPreviewObject = ::previewObject,
                         onViewObjectDef = { row ->
                             val p = row.profile
@@ -477,12 +488,7 @@ private fun AppBody(
                         activeConsole = activeConsole,
                         onSelectConsole = { c -> consoleState.activate(c) },
                         onCreateConsoleAt = { pid ->
-                            val p = profiles.firstOrNull { it.id == pid }
-                            if (p != null) {
-                                val name = suggestConsoleName(p)
-                                val c = consoleState.createConsole(p.id, name)
-                                toastState.show("已新建控制台「$name」（绑定 ${p.name}）")
-                            }
+                            profiles.firstOrNull { it.id == pid }?.let(createConsoleFor)
                         },
                         dirtyConsoleIds = consoleState.dirtyConsoleIds,
                         schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },

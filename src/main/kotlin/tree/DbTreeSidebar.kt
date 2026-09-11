@@ -1,9 +1,8 @@
 package tree
 
-import androidx.compose.foundation.ContextMenuArea
-import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,13 +34,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import app.ui.DbIcons
 import db.ConnectionProfile
+import db.ConsoleRecord
 import db.DbType
 import db.FolderRow
 import jdbc.model.ObjectKind
@@ -61,8 +76,16 @@ class RowActions(
     val onRefreshMetadata: () -> Unit = {},
     val onCopyName: () -> Unit = {},
     val onCopyQuery: () -> Unit = {},
-    /** CONNECTION 行：打开/激活该数据源的控制台。 */
+    /** CONNECTION 行：打开/激活该数据源的控制台（无控制台时直接建首个并打开）。 */
     val onOpenConsole: () -> Unit = {},
+    /** CONNECTION 行：该数据源的已有控制台（右键「打开控制台」级联子菜单用）。 */
+    val consoles: List<ConsoleRecord> = emptyList(),
+    /** 当前激活控制台 id（级联子菜单里标「✓」）。 */
+    val activeConsoleId: String? = null,
+    /** CONNECTION 行：激活某个已存在的控制台。 */
+    val onOpenConsoleRecord: (ConsoleRecord) -> Unit = {},
+    /** CONNECTION 行：为该数据源新建一个控制台。 */
+    val onCreateConsole: () -> Unit = {},
     /** DB_OBJECT 行：在控制台里预览（SELECT 前 200 行）。 */
     val onPreviewTable: () -> Unit = {},
     /** DB_OBJECT 行（表/视图/物化视图）：浮窗查看对象定义 DDL。 */
@@ -96,8 +119,16 @@ fun DbTreeSidebar(
     onEditConnection: (ConnectionProfile) -> Unit = {},
     onDeleteConnection: (ConnectionProfile) -> Unit = {},
     onRefresh: () -> Unit = {},
-    /** 连接行：打开/激活该数据源控制台。 */
+    /** 连接行：打开/激活该数据源控制台（无控制台时建首个）。 */
     onOpenConsoleForProfile: (ConnectionProfile) -> Unit = {},
+    /** 某数据源（connection id）已有的控制台列表（右键「打开控制台」级联子菜单）。 */
+    consolesForProfile: (String) -> List<ConsoleRecord> = { emptyList() },
+    /** 当前激活控制台 id（级联子菜单里标 ✓）。 */
+    activeConsoleId: String? = null,
+    /** 连接行：激活指定的已有控制台。 */
+    onOpenConsoleRecord: (ConsoleRecord) -> Unit = {},
+    /** 连接行：为该数据源新建控制台。 */
+    onCreateConsoleForProfile: (ConnectionProfile) -> Unit = {},
     /** DB_OBJECT（表/视图）：双击或菜单触发预览。 */
     onPreviewObject: (TreeRowInfo) -> Unit = {},
     /** DB_OBJECT（表/视图/物化视图）：浮窗查看定义 DDL（Ctrl+Q 同源）。 */
@@ -138,6 +169,14 @@ fun DbTreeSidebar(
                             onCopyName = { onCopyName(row) },
                             onCopyQuery = { onCopyQuery(row) },
                             onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
+                            consoles = if (row.kind == TreeRowKind.CONNECTION) {
+                                row.profile?.let { consolesForProfile(it.id) }.orEmpty()
+                            } else {
+                                emptyList()
+                            },
+                            activeConsoleId = activeConsoleId,
+                            onOpenConsoleRecord = onOpenConsoleRecord,
+                            onCreateConsole = { row.profile?.let(onCreateConsoleForProfile) },
                             onPreviewTable = { onPreviewObject(row) },
                             onViewDdl = { onViewObjectDef(row) },
                         ),
@@ -148,50 +187,228 @@ fun DbTreeSidebar(
     }
 }
 
-/** 行右键菜单；空则不弹。 */@Composable
-private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<ContextMenuItem> =
+// ---------------- 树右键菜单（自绘单弹层，支持向右级联子菜单） ----------------
+
+/** 树右键菜单项：普通动作 / 级联子菜单 / 分隔线。 */
+sealed interface TreeMenuItem {
+    class Action(
+        val label: String,
+        val enabled: Boolean = true,
+        val onClick: () -> Unit,
+    ) : TreeMenuItem
+
+    class Submenu(val label: String, val items: List<TreeMenuItem>) : TreeMenuItem
+
+    object Separator : TreeMenuItem
+}
+
+private val MENU_COL_W = 208.dp
+
+/** 行右键菜单；空则不弹。 */
+private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
     when (row.kind) {
         TreeRowKind.FOLDER -> listOf(
-            ContextMenuItem("在此新建连接") { actions.onAddConnectionAt() },
-            ContextMenuItem("重命名文件夹") { actions.onRenameFolder() },
-            ContextMenuItem("删除文件夹") { actions.onDeleteFolder() },
+            TreeMenuItem.Action("在此新建连接") { actions.onAddConnectionAt() },
+            TreeMenuItem.Action("重命名文件夹") { actions.onRenameFolder() },
+            TreeMenuItem.Action("删除文件夹") { actions.onDeleteFolder() },
         )
         TreeRowKind.CONNECTION -> {
             val items = buildList {
                 when (row.connStatus) {
-                    ConnUiStatus.DISCONNECTED -> add(ContextMenuItem("连接") { actions.onConnect() })
-                    ConnUiStatus.CONNECTING -> add(ContextMenuItem("连接中…", enabled = false) {})
-                    ConnUiStatus.ERROR -> add(ContextMenuItem("重新连接") { actions.onConnect() })
+                    ConnUiStatus.DISCONNECTED -> add(TreeMenuItem.Action("连接") { actions.onConnect() })
+                    ConnUiStatus.CONNECTING -> add(TreeMenuItem.Action("连接中…", enabled = false) {})
+                    ConnUiStatus.ERROR -> add(TreeMenuItem.Action("重新连接") { actions.onConnect() })
                     ConnUiStatus.CONNECTED -> {
-                        add(ContextMenuItem("断开连接") { actions.onDisconnect() })
-                        add(ContextMenuItem("刷新元数据缓存") { actions.onRefreshMetadata() })
+                        add(TreeMenuItem.Action("断开连接") { actions.onDisconnect() })
+                        add(TreeMenuItem.Action("刷新元数据缓存") { actions.onRefreshMetadata() })
                     }
                     null -> {}
                 }
             }
             items + listOf(
-                ContextMenuItem("打开控制台") { actions.onOpenConsole() },
-                ContextMenuItem("编辑连接") { actions.onEditConnection() },
-                ContextMenuItem("删除连接档案") { actions.onDeleteConnection() },
+                consoleMenuItem(actions),
+                TreeMenuItem.Action("编辑连接") { actions.onEditConnection() },
+                TreeMenuItem.Action("删除连接档案") { actions.onDeleteConnection() },
             )
         }
         TreeRowKind.DB_OBJECT -> {
             val obj = row.dbObject ?: return emptyList()
             val kind = obj.kind
             if (kind == ObjectKind.TRIGGER) {
-                return listOf(ContextMenuItem("复制触发器名") { actions.onCopyName() })
+                return listOf(TreeMenuItem.Action("复制触发器名") { actions.onCopyName() })
             }
             buildList {
-                add(ContextMenuItem("复制${kind.displayNoun}名") { actions.onCopyName() })
+                add(TreeMenuItem.Action("复制${kind.displayNoun}名") { actions.onCopyName() })
                 if (kind.isPreviewable()) {
-                    add(ContextMenuItem("预览（前 100 行）") { actions.onPreviewTable() })
-                    add(ContextMenuItem("复制查询（SELECT 预览）") { actions.onCopyQuery() })
-                    add(ContextMenuItem("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
+                    add(TreeMenuItem.Action("预览（前 100 行）") { actions.onPreviewTable() })
+                    add(TreeMenuItem.Action("复制查询（SELECT 预览）") { actions.onCopyQuery() })
+                    add(TreeMenuItem.Action("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
                 }
             }
         }
         else -> emptyList()
     }
+
+/** 「打开控制台」：无控制台时直接建首个并打开；否则给出向右级联（控制台列表 + 新建）。 */
+private fun consoleMenuItem(actions: RowActions): TreeMenuItem {
+    if (actions.consoles.isEmpty()) {
+        return TreeMenuItem.Action("打开控制台") { actions.onOpenConsole() }
+    }
+    return TreeMenuItem.Submenu(
+        "打开控制台",
+        buildList {
+            actions.consoles.forEach { c ->
+                val mark = if (c.id == actions.activeConsoleId) "  ✓" else ""
+                add(TreeMenuItem.Action(c.name + mark) { actions.onOpenConsoleRecord(c) })
+            }
+            add(TreeMenuItem.Separator)
+            add(TreeMenuItem.Action("新建控制台…") { actions.onCreateConsole() })
+        },
+    )
+}
+
+/**
+ * 自绘上下文菜单：单个 [Popup]，根列 + 向右展开的子列共用同一弹层。
+ * 不用嵌套 DropdownMenu —— 避免子弹层夺焦时父弹层被 dismiss（无法实测验证的环境下更稳）。
+ */
+@Composable
+private fun TreeContextMenu(
+    items: List<TreeMenuItem>,
+    clickOffset: Offset,
+    onDismiss: () -> Unit,
+) {
+    var openSub by remember { mutableStateOf<Int?>(null) }
+    val sub = openSub?.let { items.getOrNull(it) as? TreeMenuItem.Submenu }
+    val lineColor = MaterialTheme.colors.onSurface.copy(alpha = 0.1f)
+    Popup(
+        onDismissRequest = onDismiss,
+        popupPositionProvider = remember(clickOffset) {
+            object : PopupPositionProvider {
+                override fun calculatePosition(
+                    anchorBounds: IntRect,
+                    windowSize: IntSize,
+                    layoutDirection: LayoutDirection,
+                    popupContentSize: IntSize,
+                ): IntOffset {
+                    // 菜单左上角落在点击点；越界时贴窗口边
+                    val x = (anchorBounds.left + clickOffset.x.toInt())
+                        .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                    val y = (anchorBounds.top + clickOffset.y.toInt())
+                        .coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
+                    return IntOffset(x, y)
+                }
+            }
+        },
+        properties = PopupProperties(focusable = true),
+    ) {
+        Row(
+            modifier = Modifier
+                .shadow(8.dp, RoundedCornerShape(7.dp))
+                .clip(RoundedCornerShape(7.dp))
+                .background(MaterialTheme.colors.surface)
+                .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.22f), RoundedCornerShape(7.dp)),
+        ) {
+            MenuColumn(items, openSub, { openSub = it }, onDismiss)
+            if (sub != null) {
+                MenuColumn(
+                    items = sub.items,
+                    openSub = null,
+                    onOpenSub = {},
+                    onDismiss = onDismiss,
+                    modifier = Modifier.drawBehind {
+                        drawLine(lineColor, Offset(0f, 0f), Offset(0f, size.height), strokeWidth = 1f)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuColumn(
+    items: List<TreeMenuItem>,
+    openSub: Int?,
+    onOpenSub: (Int?) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.width(MENU_COL_W).padding(vertical = 4.dp)) {
+        items.forEachIndexed { i, item ->
+            when (item) {
+                is TreeMenuItem.Action -> MenuRow(
+                    label = item.label,
+                    enabled = item.enabled,
+                    arrow = false,
+                    highlight = false,
+                    onHover = { onOpenSub(null) },
+                    onClick = {
+                        onDismiss()
+                        item.onClick()
+                    },
+                )
+                is TreeMenuItem.Submenu -> MenuRow(
+                    label = item.label,
+                    enabled = true,
+                    arrow = true,
+                    highlight = openSub == i,
+                    onHover = { onOpenSub(i) },
+                    onClick = { onOpenSub(if (openSub == i) null else i) },
+                )
+                TreeMenuItem.Separator -> Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp)
+                        .height(1.dp)
+                        .background(MaterialTheme.colors.onSurface.copy(alpha = 0.1f)),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuRow(
+    label: String,
+    enabled: Boolean,
+    arrow: Boolean,
+    highlight: Boolean,
+    onHover: () -> Unit,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (highlight) MaterialTheme.colors.primary.copy(alpha = 0.16f) else Color.Transparent)
+            // hover 即展开子菜单（点击也能展开，兼容键盘/无 hover）
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        if (e.type == PointerEventType.Enter) onHover()
+                    }
+                }
+            }
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 12.5.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 0.85f else 0.35f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (arrow) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.size(15.dp),
+            )
+        }
+    }
+}
 
 @Composable
 private fun SidebarToolbar(
@@ -392,7 +609,29 @@ private fun TreeRowView(
     if (menu.isEmpty()) {
         Box(modifier = baseModifier) { content() }
     } else {
-        ContextMenuArea(items = { menu }) { Box(modifier = baseModifier) { content() } }
+        // 右键菜单：记录点击点，在行内弹单层自绘菜单（支持「打开控制台」向右级联）
+        var menuOpen by remember { mutableStateOf(false) }
+        var menuAt by remember { mutableStateOf(Offset.Zero) }
+        Box(
+            modifier = baseModifier.pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        // Initial pass：先于同链上的 clickable（Main）拿到右键，避免被它消费
+                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                        if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                            menuAt = e.changes.firstOrNull()?.position ?: Offset.Zero
+                            menuOpen = true
+                            e.changes.forEach { it.consume() }
+                        }
+                    }
+                }
+            },
+        ) {
+            content()
+            if (menuOpen) {
+                TreeContextMenu(items = menu, clickOffset = menuAt, onDismiss = { menuOpen = false })
+            }
+        }
     }
 }
 
