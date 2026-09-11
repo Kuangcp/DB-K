@@ -48,6 +48,15 @@
 - 状态：`Main.kt` 的 `var isDark`，**持久化**：启动读 `ThemePrefs.load()`（`<dataDir>/theme.properties`，key `dark`），
   切换时同步 `ThemePrefs.save(isDark)`。新增主题相关配置不得只存内存。
 
+### 设置窗口（顶栏齿轮）
+
+- 位置：`SqlWorkspace` 右上角主题切换**右侧**，`Icons.Filled.Settings` icon-only。
+- 窗口：`app/dialog/SettingsDialog.kt` 的独立 `DialogWindow`（自带 `MaterialTheme` + `LocalContentColor` 兜底，
+  不要依赖主窗口主题），左侧分区导航（当前仅「通用设置」）/ 右侧内容 / **左下角版本号** `v<NAME>-<COMMIT>`。
+- 配置项：编辑器字体族（系统字体名，空 = 默认等宽）+ 字号（8~24sp，带实时预览）。
+- 状态：`Main.kt` 的 `var editorSettings`，**持久化** `<dataDir>/editor.properties`（`EditorPrefs`/`EditorSettings`）；
+  保存后即时重排编辑器（行高按 `EditorSettings.lineHeightSp` 随字号等比）。版本号来自构建产生的 `app/build/Version.kt`。
+
 ## 会话日志（每次启动一个文件，按月分目录）★ 必读
 
 - 约定：`<dataDir>/logs/<yyyy-MM>/<yyyy-MM-dd>_<N>.log`（N=当天会话序号，同一天每启动一次 +1），
@@ -84,7 +93,7 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
    consoles（元数据 + 光标）/ sql_history / meta_cache。加字段 = `AppDatabase` 版本 +1 的迁移
    + repository 读写 + 模型字段（如 `ConsoleRecord`），删实体靠 FK 级联清理，别手写清理。
 2. **应用/窗口级全局偏好 → `<dataDir>/*.properties`（`app/settings/*Prefs`）**：theme、window、
-   tree-expand。都是标量、无查询/级联需求；新增同类项合并进已有文件，别每项开一个文件。
+   tree-expand、editor（编辑器字体/字号）。都是标量、无查询/级联需求；新增同类项合并进已有文件，别每项开一个文件。
 3. **大块正文 → 独立文件**，DB 只存路径（`consoles/<id>.sql`）。
 4. **纯瞬态 → 只放内存**：结果集（`runSlots`）、补全弹层、错误文案等，可随时重建，不落盘。
 

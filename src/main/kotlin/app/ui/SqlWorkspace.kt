@@ -54,6 +54,7 @@ import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -111,6 +112,7 @@ import androidx.compose.ui.unit.sp
 import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
 import app.state.StatementOutcome
+import app.settings.EditorSettings
 import app.dialog.CellViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
@@ -208,6 +210,9 @@ fun SqlWorkspace(
     onToggleResults: () -> Unit,
     isDark: Boolean,
     onToggleTheme: () -> Unit,
+    /** 编辑器外观设置（字体族 / 字号）。 */
+    editorSettings: EditorSettings,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showHistory by remember { mutableStateOf(false) }
@@ -268,6 +273,7 @@ fun SqlWorkspace(
             showHistoryButton = profile != null && activeConsole != null,
             historyOpen = showHistory,
             onToggleHistory = { showHistory = !showHistory },
+            onOpenSettings = onOpenSettings,
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -372,6 +378,7 @@ fun SqlWorkspace(
                         schemas = schemas.orEmpty(),
                         defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
                         profile = profile,
+                        editorSettings = editorSettings,
                         modifier = Modifier
                             .weight(if (resultsVisible) 1f - resultFrac else 1f)
                             .fillMaxWidth(),
@@ -441,6 +448,7 @@ private fun HeaderBar(
     showHistoryButton: Boolean,
     historyOpen: Boolean,
     onToggleHistory: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -463,6 +471,14 @@ private fun HeaderBar(
             Icon(
                 imageVector = if (isDark) DbIcons.Sun else DbIcons.Moon,
                 contentDescription = if (isDark) "切换浅色主题" else "切换深色主题",
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        IconButton(onClick = onOpenSettings, modifier = Modifier.size(28.dp)) {
+            Icon(
+                imageVector = Icons.Filled.Settings,
+                contentDescription = "设置",
                 tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
                 modifier = Modifier.size(17.dp),
             )
@@ -869,6 +885,7 @@ private fun EditorPane(
     schemas: List<SchemaMeta>,
     defaultSchema: SchemaMeta?,
     profile: ConnectionProfile?,
+    editorSettings: EditorSettings,
     modifier: Modifier = Modifier,
 ) {
     val isDark = MaterialTheme.colors.isLight.not()
@@ -921,11 +938,15 @@ private fun EditorPane(
     var boxH by remember { mutableStateOf(0) }
     val density = LocalDensity.current
     val editorStyle = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontSize = 13.sp,
-        lineHeight = 20.sp,
+        fontFamily = editorFontFamily(editorSettings.fontFamilyName),
+        fontSize = editorSettings.fontSizeSp.sp,
+        lineHeight = EditorSettings.lineHeightSp(editorSettings.fontSizeSp).sp,
         color = MaterialTheme.colors.onSurface,
     )
+    // 行号槽字号跟随编辑器字号（旧固定 11sp ≈ 13sp * 0.85）
+    val gutterFontFamily = editorStyle.fontFamily
+    val gutterFontSize = (editorSettings.fontSizeSp * 0.85f).sp
+    val gutterLineHeight = editorStyle.lineHeight
     val textMeasurer = rememberTextMeasurer()
 
     // ---- 补全派生状态：caret 词/限定符/星号 → 语句上下文（含 CTE/子查询）→ 候选 → 弹层 ----
@@ -1048,7 +1069,7 @@ private fun EditorPane(
     val textPadLPx = with(density) { 4.dp.toPx() }
     val textPadRPx = with(density) { 10.dp.toPx() }
     val textTopPx = with(density) { 8.dp.toPx() }
-    val lineHpx = with(density) { 20.dp.toPx() }
+    val lineHpx = with(density) { gutterLineHeight.toDp().toPx() }
     val textWpxInt = if (boxW > 0) (boxW - gutterWpx - textPadLPx - textPadRPx).toInt().coerceAtLeast(40) else 0
     val textLayout = if (textWpxInt > 40) {
         runCatching {
@@ -1154,9 +1175,9 @@ private fun EditorPane(
     val gutterColor = MaterialTheme.colors.onSurface.copy(alpha = 0.35f)
     val gutterCurColor = MaterialTheme.colors.onSurface.copy(alpha = 0.95f)
     val gutterCurBg = MaterialTheme.colors.primary.copy(alpha = 0.16f)
-    val numStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = gutterColor)
+    val numStyle = TextStyle(fontFamily = gutterFontFamily, fontSize = gutterFontSize, color = gutterColor)
     val numCurStyle = TextStyle(
-        fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = gutterCurColor,
+        fontFamily = gutterFontFamily, fontSize = gutterFontSize, color = gutterCurColor,
         fontWeight = FontWeight.Medium,
     )
 
@@ -1289,8 +1310,8 @@ private fun EditorPane(
                         if (value.text.isEmpty()) {
                             Text(
                                 "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）",
-                                fontSize = 12.sp,
-                                lineHeight = 20.sp,
+                                fontSize = editorStyle.fontSize,
+                                lineHeight = editorStyle.lineHeight,
                                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
                             )
                         }

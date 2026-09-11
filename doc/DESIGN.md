@@ -272,6 +272,11 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 全局键处理用 AWT `KeyEventDispatcher` 拦截（api-x 同款；X11 下修饰键+字母会额外派发字符事件，
 必须在事件进入 Compose 前整颗吃掉，见 `Main.kt` 注释），编辑器内快捷键在编辑器层拦截。
 
+设置窗口（非快捷键）：顶栏右上角 **设置** icon（齿轮，主题切换右侧）→ 独立 `DialogWindow`（与主窗口同款主题），
+左侧分区导航（当前仅「通用设置」），右侧配置**编辑器字体族 / 字号**（带实时预览），左下角显示版本号 `v<NAME>-<COMMIT>`；
+保存写 `<dataDir>/editor.properties` 并即时重排编辑器（字号变化时行高按 20/13 等比缩放，行号槽同步），取消不改。
+版本号由构建期 `generateVersion` 任务生成 `app/build/Version.kt`（含 git short hash）。
+
 ---
 
 ## 11. 里程碑（从空目录到可分发）

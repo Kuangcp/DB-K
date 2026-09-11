@@ -67,6 +67,47 @@ tasks.register<JavaExec>("smokeJdbc") {
     mainClass.set("jdbc.JdbcSmokeKt")
 }
 
+// 生成版本信息（含 git commit hash），设置窗口左下角展示（与 api-x 同源）
+val generatedVersionDir = layout.buildDirectory.dir("generated/version/kotlin")
+
+val generateVersion by tasks.registering {
+    val outputDir = generatedVersionDir.get()
+    outputs.cacheIf { true }
+    doLast {
+        outputDir.asFile.mkdirs()
+        val hash = try {
+            val proc = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                .directory(project.rootDir)
+                .start()
+            proc.inputStream.bufferedReader().readText().trim()
+        } catch (_: Exception) {
+            "unknown"
+        }
+
+        val file = outputDir.file("app/build/Version.kt").asFile
+        file.parentFile.mkdirs()
+        val content = """
+            |package app.build
+            |
+            |object Version {
+            |    const val COMMIT = "$hash"
+            |    const val NAME = "${project.version}"
+            |}
+        """.trimMargin()
+        if (!file.exists() || file.readText() != content) {
+            file.writeText(content)
+        }
+    }
+}
+
+kotlin.sourceSets.main {
+    kotlin.srcDir(generatedVersionDir)
+}
+
+tasks.matching { it.name == "compileKotlin" }.configureEach {
+    dependsOn(generateVersion)
+}
+
 compose.desktop {
     application {
         // WM_CLASS 由主类名决定（app.core.DbkMainKt → app-core-DbkMainKt），

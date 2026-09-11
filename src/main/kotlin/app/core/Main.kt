@@ -45,6 +45,8 @@ import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
 import app.dialog.DdlDialog
 import app.dialog.FolderNameDialog
+import app.dialog.SettingsDialog
+import app.settings.EditorPrefs
 import app.settings.ThemePrefs
 import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
@@ -176,6 +178,8 @@ private fun AppBody(
 ) {
     val scope = rememberCoroutineScope()
     var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
+    // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
+    var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
     var treeWidthDp by remember { mutableStateOf(280f) }
     // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
@@ -622,6 +626,8 @@ private fun AppBody(
                             isDark = !isDark
                             ThemePrefs.save(isDark)
                         },
+                        editorSettings = editorSettings,
+                        onOpenSettings = { dialogState.showSettings = true },
                     )
                 }
 
@@ -637,6 +643,17 @@ private fun AppBody(
                     },
                 )
                 ToastHost(toastState)
+                SettingsDialog(
+                    visible = dialogState.showSettings,
+                    isDark = isDark,
+                    initial = editorSettings,
+                    onDismiss = { dialogState.showSettings = false },
+                    onSave = { saved ->
+                        editorSettings = saved
+                        EditorPrefs.save(saved)
+                        dialogState.showSettings = false
+                    },
+                )
             }
         }
     }

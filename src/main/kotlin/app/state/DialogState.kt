@@ -44,4 +44,6 @@ class DialogState {
     var consoleRename by mutableStateOf<ConsoleRenameRequest?>(null)
     var tableDdl by mutableStateOf<TableDdlRequest?>(null)
     var confirm by mutableStateOf<ConfirmRequest?>(null)
+    /** 设置窗口显隐。 */
+    var showSettings by mutableStateOf(false)
 }
