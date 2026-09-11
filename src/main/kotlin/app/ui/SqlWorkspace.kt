@@ -2,8 +2,10 @@ package app.ui
 
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.rememberScrollbarAdapter
 import org.tinylog.Logger
@@ -69,6 +71,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -101,6 +104,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
+import app.state.StatementOutcome
 import app.dialog.CellViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
@@ -166,7 +170,6 @@ fun SqlWorkspace(
     onRun: (String?) -> Unit,
     /** 结果区多语句 Tab 切换（选中第 index 条语句结果）。 */
     onSelectOutcome: (Int) -> Unit,
-    onClear: () -> Unit,
     onExportCsv: () -> Unit,
     /** 取消当前执行（取消按钮 / Esc）。 */
     onCancelRun: () -> Unit,
@@ -333,55 +336,34 @@ fun SqlWorkspace(
                     .fillMaxHeight()
                     .onSizeChanged { paneH = it.height },
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // 上半块：编辑器（吃满剩余高）+ 执行条；下半块：分隔条 + 结果区。
-                    // 两块按 resultFrac 比例分剩余高，分隔条拖动即改比例。
-                    Column(
+                Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                    // 编辑器吃满剩余高，结果区按 resultFrac 分配；中间只隔一根 5dp 可拖细线，不留空隙。
+                    // 执行动作/状态/多语句 tabs 全部收在结果区顶部一条 28dp 工具条里（无结果时不显示）。
+                    EditorPane(
+                        value = tfv,
+                        consoleId = consoleId,
+                        dirty = editorDirty,
+                        onValueChange = { v ->
+                            val textChanged = v.text != tfv.text
+                            tfv = v
+                            // 记录本控制台最后的光标/选区（点击、输入、选择都更新；内存即时、防抖落库）
+                            onCaretChange(consoleId, v.selection.start, v.selection.end)
+                            // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
+                            // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
+                            if (textChanged) onTextChange(v.text)
+                        },
+                        onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
+                        completionIdentifiers = completionIdentifiers,
+                        completionTables = completionTables,
+                        completionFunctions = completionFunctions,
+                        columnCatalog = columnCatalog,
+                        schemas = schemas.orEmpty(),
+                        defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
+                        profile = profile,
                         modifier = Modifier
                             .weight(if (resultsVisible) 1f - resultFrac else 1f)
                             .fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        EditorPane(
-                            value = tfv,
-                            consoleId = consoleId,
-                            dirty = editorDirty,
-                            onValueChange = { v ->
-                                val textChanged = v.text != tfv.text
-                                tfv = v
-                                // 记录本控制台最后的光标/选区（点击、输入、选择都更新；内存即时、防抖落库）
-                                onCaretChange(consoleId, v.selection.start, v.selection.end)
-                                // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
-                                // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
-                                if (textChanged) onTextChange(v.text)
-                            },
-                            onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
-                            completionIdentifiers = completionIdentifiers,
-                            completionTables = completionTables,
-                            completionFunctions = completionFunctions,
-                            columnCatalog = columnCatalog,
-                            schemas = schemas.orEmpty(),
-                            defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
-                            profile = profile,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                        )
-                        ExecBar(
-                            executing = run.executing,
-                            result = run.result,
-                            error = run.error,
-                            transposed = transposed,
-                            onToggleTranspose = { transposed = !transposed },
-                            onCancel = onCancelRun,
-                            onClear = onClear,
-                            onExportCsv = onExportCsv,
-                            onExportAllCsv = onExportAllCsv,
-                            exportEnabled = exportEnabledFor(run),
-                            enabled = status != ConnUiStatus.CONNECTING,
-                        )
-                    }
+                    )
                     if (resultsVisible) {
                         // 拖动分隔条：像素差 / 可用高 → 比例增量；窗口缩放不改变已设比例。
                         ResultSplitter(
@@ -393,7 +375,13 @@ fun SqlWorkspace(
                         ResultTabs(
                             run = run,
                             transposed = transposed,
+                            exportEnabled = exportEnabledFor(run),
+                            enabled = status != ConnUiStatus.CONNECTING,
                             onSelectOutcome = onSelectOutcome,
+                            onToggleTranspose = { transposed = !transposed },
+                            onExportCsv = onExportCsv,
+                            onExportAllCsv = onExportAllCsv,
+                            onCancelRun = onCancelRun,
                             onCopyText = onCopyText,
                             modifier = Modifier.weight(resultFrac).fillMaxWidth(),
                         )
@@ -1445,74 +1433,158 @@ private fun completionKindColor(kind: CompletionKind): Color = when (kind) {
     CompletionKind.EXPAND -> Color(0xFF43A047)
 }
 
+/**
+ * 结果区顶部工具条（28dp）：左侧多语句结果 Tab，右侧状态文案 + 纯图标动作。
+ * 无结果（也未执行）时调用方不渲染此条，中间只剩 5dp 可拖细线。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ExecBar(
-    executing: Boolean,
-    result: QueryResult?,
-    error: String?,
+private fun ResultToolbar(
+    run: ConsoleRunUi,
     transposed: Boolean,
-    onToggleTranspose: () -> Unit,
-    onCancel: () -> Unit,
-    onClear: () -> Unit,
-    onExportCsv: () -> Unit,
-    onExportAllCsv: () -> Unit,
     exportEnabled: Boolean,
     enabled: Boolean,
+    onSelectOutcome: (Int) -> Unit,
+    onToggleTranspose: () -> Unit,
+    onExportCsv: () -> Unit,
+    onExportAllCsv: () -> Unit,
+    onCancelRun: () -> Unit,
 ) {
-    val canTranspose = result != null && result.isQuery && result.rowCount > 0
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        // 执行只走快捷键（Ctrl+Enter）；这里保留轻提示，不放大按钮
-        Text(
-            "Ctrl+Enter 运行选中（无选中不执行）",
-            fontSize = 11.sp,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
-        )
-        if (executing) {
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onCancel, enabled = enabled) {
-                Text("取消 (Esc)", fontSize = 12.sp, color = MaterialTheme.colors.error)
+    val result = run.result
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 4.dp),
+    ) {
+        // 左侧：多语句 Tab（单语句不占位，状态文案已能表达结果）
+        if (run.outcomes.size > 1) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            ) {
+                run.outcomes.forEachIndexed { i, outcome ->
+                    ResultChip(i, outcome, active = i == run.activeIndex, onClick = onSelectOutcome)
+                }
             }
+        } else {
+            Spacer(Modifier.weight(1f))
         }
-        Spacer(Modifier.width(8.dp))
-        TextButton(onClick = onClear, enabled = !executing) { Text("清空", fontSize = 12.sp) }
+        // 状态：执行中 / 列×行·耗时（错误时结果区已居中红字，不重复）
+        if (run.executing) {
+            CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
+            Text(" 执行中…", fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
+        } else if (run.error == null && result != null) {
+            Text(
+                metaText(result, transposed),
+                fontSize = 11.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                maxLines = 1,
+            )
+        }
         Spacer(Modifier.width(4.dp))
-        TextButton(onClick = onExportCsv, enabled = exportEnabled) {
-            Text("导出 CSV", fontSize = 12.sp)
-        }
-        // 结果被截断时提供全量导出（重新执行 SQL，不受 1000 行上限）
-        if (exportEnabled && result?.truncated == true) {
-            Spacer(Modifier.width(4.dp))
-            TextButton(onClick = onExportAllCsv, enabled = enabled) {
-                Text("导出全量 CSV", fontSize = 12.sp, color = MaterialTheme.colors.primary)
+        // 动作：纯图标 + 悬停 tooltip
+        if (run.executing) {
+            ResultIconButton(
+                icon = DbIcons.Stop,
+                description = "取消执行 (Esc)",
+                enabled = enabled,
+                danger = true,
+                onClick = onCancelRun,
+            )
+        } else {
+            if (canTranspose(run)) {
+                ResultIconButton(
+                    icon = DbIcons.Transpose,
+                    description = if (transposed) "还原行列 (Ctrl+T)" else "转置行列 (Ctrl+T)",
+                    active = transposed,
+                    onClick = onToggleTranspose,
+                )
             }
-        }
-        // 行列转置开关（Ctrl+T 等效）
-        if (!executing && canTranspose && error == null) {
-            Spacer(Modifier.width(4.dp))
-            TextButton(onClick = onToggleTranspose) {
-                Text(
-                    if (transposed) "还原布局 (Ctrl+T)" else "转置 (Ctrl+T)",
-                    fontSize = 12.sp,
-                    color = if (transposed) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+            ResultIconButton(
+                icon = DbIcons.Download,
+                description = "导出 CSV",
+                enabled = exportEnabled,
+                onClick = onExportCsv,
+            )
+            // 结果被截断时提供全量导出（重新执行 SQL，不受 1000 行上限）
+            if (exportEnabled && result?.truncated == true) {
+                ResultIconButton(
+                    icon = DbIcons.Database,
+                    description = "导出全量 CSV（重新执行，不受 1000 行上限）",
+                    onClick = onExportAllCsv,
                 )
             }
         }
-        Spacer(Modifier.weight(1f))
-        if (executing) {
-            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-            Text(
-                " 执行中…",
-                fontSize = 12.sp,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
-            )
-        } else if (error != null) {
-            Text("执行出错", fontSize = 12.sp, color = MaterialTheme.colors.error)
-        } else if (result != null) {
-            Text(
-                metaText(result, transposed),
-                fontSize = 12.sp,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
-            )
+    }
+}
+
+/** 多语句结果切换芯片：状态点 + 结果序号 + 行数/失败标记。 */
+@Composable
+private fun ResultChip(index: Int, outcome: StatementOutcome, active: Boolean, onClick: (Int) -> Unit) {
+    val dot = when {
+        outcome.error != null -> Color(0xFFE53935)
+        outcome.isQuery -> MaterialTheme.colors.primary
+        else -> Color(0xFF9E9E9E)
+    }
+    val suffix = when {
+        !outcome.ok -> " ✕"
+        outcome.isQuery -> " · ${outcome.result?.rowCount ?: 0} 行"
+        else -> " · ${outcome.result?.affectedRows ?: 0} 行"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(end = 4.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .clickable { onClick(index) }
+            .background(if (active) MaterialTheme.colors.primary.copy(alpha = 0.14f) else Color.Transparent)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(dot))
+        Spacer(Modifier.width(5.dp))
+        Text(
+            "结果 ${index + 1}",
+            fontSize = 11.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (active) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+        )
+        Text(suffix, fontSize = 10.5.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f))
+    }
+}
+
+/** 结果工具条图标按钮：24dp 热区、15dp 图标，悬停 500ms 显示 tooltip。 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ResultIconButton(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    active: Boolean = false,
+    danger: Boolean = false,
+) {
+    val tint = when {
+        !enabled -> MaterialTheme.colors.onSurface.copy(alpha = 0.25f)
+        danger -> MaterialTheme.colors.error
+        active -> MaterialTheme.colors.primary
+        else -> MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+    }
+    TooltipArea(
+        tooltip = {
+            Box(
+                modifier = Modifier
+                    .shadow(4.dp, RoundedCornerShape(5.dp))
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colors.surface)
+                    .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.15f), RoundedCornerShape(5.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Text(description, fontSize = 11.sp, color = MaterialTheme.colors.onSurface)
+            }
+        },
+        delayMillis = 500,
+    ) {
+        IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(24.dp)) {
+            Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(15.dp))
         }
     }
 }
@@ -1523,23 +1595,36 @@ private const val MAX_RESULT_FRAC = 0.85f
 
 /**
  * 编辑区/结果区分隔条：12dp 热区整条可上下拖动（悬停 N/S 双向箭头光标），
- * 中央一条浅色短线作视觉提示。拖动像素按内容区可用高换算成比例增量后由上层累加。
+ * 中央一条 1dp 浅色线作视觉提示（悬停/拖动时加粗高亮）。拖动像素按内容区可用高换算成比例增量后由上层累加。
  */
 @Composable
 private fun ResultSplitter(
     paneHeightPx: Int,
     onDragDeltaPx: (Float) -> Unit,
 ) {
-    // 固定开销：上下 padding 10+10、外侧 spacedBy 两处 8、本条高 12 —— 不算入比例换算基数
-    val chromePx = LocalDensity.current.run { 48.dp.toPx() }
+    // 固定开销：上下 padding 8+8、本条高 5 —— 不算入比例换算基数
+    val chromePx = LocalDensity.current.run { 21.dp.toPx() }
     val resizeCursor = remember {
         PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.N_RESIZE_CURSOR))
     }
+    var hovering by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(12.dp)
+            .height(5.dp)
             .pointerHoverIcon(resizeCursor)
+            // 悬停高亮：Enter/Exit 由独立 pointerInput 观察，不与拖动手势冲突
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        when (awaitPointerEvent().type) {
+                            PointerEventType.Enter -> hovering = true
+                            PointerEventType.Exit -> hovering = false
+                            else -> Unit
+                        }
+                    }
+                }
+            }
             .pointerInput(paneHeightPx) {
                 detectVerticalDragGestures { _, dragAmount ->
                     val free = (paneHeightPx - chromePx).coerceAtLeast(1f)
@@ -1551,10 +1636,12 @@ private fun ResultSplitter(
     ) {
         Box(
             modifier = Modifier
-                .width(64.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.15f)),
+                .fillMaxWidth()
+                .height(if (hovering) 3.dp else 1.dp)
+                .background(
+                    if (hovering) MaterialTheme.colors.primary.copy(alpha = 0.7f)
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.12f),
+                ),
         )
     }
 }
@@ -1586,18 +1673,34 @@ private fun dbScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
     hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
 )
 
-/** 结果区多语句 Tab 容器：单语句时不显示 Tab 条，直接渲染结果。 */
+/** 结果区：顶部一条 28dp 工具条（多语句 Tab + 状态 + 图标动作）+ 结果表格；无结果时不显示工具条。 */
 @Composable
 private fun ResultTabs(
     run: ConsoleRunUi,
     transposed: Boolean,
+    exportEnabled: Boolean,
+    enabled: Boolean,
     onSelectOutcome: (Int) -> Unit,
+    onToggleTranspose: () -> Unit,
+    onExportCsv: () -> Unit,
+    onExportAllCsv: () -> Unit,
+    onCancelRun: () -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        if (run.outcomes.size > 1) {
-            ResultTabBar(run = run, onSelectOutcome = onSelectOutcome)
+        if (run.outcomes.isNotEmpty() || run.executing) {
+            ResultToolbar(
+                run = run,
+                transposed = transposed,
+                exportEnabled = exportEnabled,
+                enabled = enabled,
+                onSelectOutcome = onSelectOutcome,
+                onToggleTranspose = onToggleTranspose,
+                onExportCsv = onExportCsv,
+                onExportAllCsv = onExportAllCsv,
+                onCancelRun = onCancelRun,
+            )
             Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         }
         ResultPane(
@@ -1607,52 +1710,6 @@ private fun ResultTabs(
             onCopyText = onCopyText,
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
-    }
-}
-
-/** 多语句结果的 Tab 条：每条语句一个 Tab，查询/更新/失败各有状态标记。 */
-@Composable
-private fun ResultTabBar(run: ConsoleRunUi, onSelectOutcome: (Int) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 4.dp),
-    ) {
-        run.outcomes.forEachIndexed { i, o ->
-            val active = i == run.activeIndex
-            val statusColor = when {
-                !o.ok -> MaterialTheme.colors.error
-                o.isQuery -> MaterialTheme.colors.primary
-                else -> MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(5.dp))
-                    .clickable { onSelectOutcome(i) }
-                    .background(
-                        if (active) MaterialTheme.colors.primary.copy(alpha = 0.14f)
-                        else Color.Transparent,
-                    )
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            ) {
-                Text(
-                    "结果 ${i + 1}",
-                    fontSize = 11.5.sp,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (active) MaterialTheme.colors.primary
-                    else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                )
-                Text(
-                    when {
-                        !o.ok -> " ✕"
-                        o.isQuery -> " · ${o.result?.rowCount ?: 0} 行"
-                        else -> " · ${o.result?.affectedRows ?: 0} 行"
-                    },
-                    fontSize = 10.5.sp,
-                    color = statusColor,
-                )
-            }
-        }
     }
 }
 

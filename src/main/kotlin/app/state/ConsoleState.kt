@@ -392,17 +392,6 @@ class ConsoleState(
 
     // ---------- 执行 ----------
 
-    fun clearRun(consoleId: String) {
-        runSlots[consoleId] = ConsoleRunUi()
-    }
-
-    /** 清空当前控制台编辑器 + 结果。 */
-    fun clearEditor(consoleId: String) {
-        setText(consoleId, "")
-        flushNow(consoleId)
-        clearRun(consoleId)
-    }
-
     /**
      * 解析控制台已设目标库/schema 的执行前导 SQL（USE / SET search_path…）。
      * 目标为空、方言不支持切换、或当前目录快照里找不到同名库/schema 时返回 null

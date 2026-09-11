@@ -59,4 +59,19 @@ object DbIcons {
             "M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z",
         )
     }
+
+    /** 行列转置（双向箭头）：结果区「转置 (Ctrl+T)」。 */
+    val Transpose: ImageVector by lazy {
+        vector("transpose", "M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z")
+    }
+
+    /** 下载（导出 CSV）：结果区导出当前结果。 */
+    val Download: ImageVector by lazy {
+        vector("download", "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z")
+    }
+
+    /** 停止（实心方块）：取消正在执行的查询。 */
+    val Stop: ImageVector by lazy {
+        vector("stop", "M6 6h12v12H6z")
+    }
 }

@@ -524,7 +524,7 @@ private fun AppBody(
                         onRun = ::runActiveConsole,
                         onSelectOutcome = { i ->
                             activeConsole?.let { consoleState.selectRunOutcome(it.id, i) }
-                        },                        onClear = { activeConsole?.let { consoleState.clearEditor(it.id) } },
+                        },
                         onExportCsv = {
                             val result = activeConsole?.let { consoleState.runStateOf(it.id).result }
                             if (result != null) {
