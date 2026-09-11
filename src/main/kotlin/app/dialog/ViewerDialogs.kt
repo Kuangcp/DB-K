@@ -40,6 +40,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.state.TableDdlRequest
+import app.ui.applySqlHighlightRules
+import app.ui.sqlHighlightKeywords
+import app.ui.sqlSyntaxPalette
+import com.neoutils.highlight.compose.remember.rememberAnnotatedString
+import com.neoutils.highlight.compose.remember.rememberHighlight
 import db.ConnectionProfile
 import jdbc.model.SchemaMeta
 
@@ -57,9 +62,12 @@ private fun viewerScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
     hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
 )
 
-/** 传统只读文本视图：自动换行、等宽字体、纵向滚动 + 右侧滚动条。 */
+/**
+ * 只读文本视图的共用外框：圆角底色 + 纵向滚动 + 右侧滚动条。
+ * [content] 放进内部可滚动列（自动换行）。
+ */
 @Composable
-private fun ViewerText(content: String, modifier: Modifier = Modifier) {
+private fun ViewerFrame(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val vScroll = rememberScrollState()
     Box(
         modifier = modifier
@@ -72,17 +80,48 @@ private fun ViewerText(content: String, modifier: Modifier = Modifier) {
                 .padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
                 .verticalScroll(vScroll),
         ) {
-            Text(
-                content,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
-            )
+            content()
         }
         VerticalScrollbar(
             adapter = rememberScrollbarAdapter(vScroll),
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
             style = viewerScrollbarStyle(),
+        )
+    }
+}
+
+/** 传统只读文本视图：自动换行、等宽字体、纵向滚动 + 右侧滚动条（不做语法着色）。 */
+@Composable
+private fun ViewerText(content: String, modifier: Modifier = Modifier) {
+    ViewerFrame(modifier) {
+        Text(
+            content,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+        )
+    }
+}
+
+/**
+ * 只读 SQL 代码视图：与编辑器共用 [applySqlHighlightRules] 语法高亮，等宽 + 主题色。
+ * 仅用于 DDL（表/视图等数据库对象定义）；任意单元格文本仍用 [ViewerText]，不按 SQL 误染。
+ */
+@Composable
+private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
+    val isDark = MaterialTheme.colors.isLight.not()
+    val keywords = remember { sqlHighlightKeywords().distinct() }
+    // isDark 作 key：主题切换时重建 Highlight（与 EditorPane 一致，否则旧色板不刷新）。
+    val highlight = rememberHighlight(isDark) {
+        applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
+    }
+    val annotated = highlight.rememberAnnotatedString(content)
+    ViewerFrame(modifier) {
+        Text(
+            annotated,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
         )
     }
 }
@@ -146,7 +185,7 @@ fun DdlDialog(
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text(" 正在读取定义…", style = MaterialTheme.typography.body2)
                 }
-                ddl != null -> ViewerText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
+                ddl != null -> SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
                 else -> Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     Text(
                         error ?: "未获取到定义。",

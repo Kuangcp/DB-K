@@ -1,6 +1,8 @@
 package app.ui
 
 import androidx.compose.ui.graphics.Color
+import com.neoutils.highlight.core.extension.textColor
+import com.neoutils.highlight.core.scope.HighlightScope
 import com.neoutils.highlight.core.util.UiColor
 
 /**
@@ -47,9 +49,38 @@ internal fun Color.toUiColor(): UiColor {
 }
 
 /**
- * 高亮规则（调用方在 `rememberHighlight { }` 作用域内逐个 textColor { … } 注册）：
- * 注释 → 字符串（单/双引号，含 '' 转义）→ 数字 → 关键字（大小写不敏感）。
- * 规则之间基本互斥；注释与字符串先注册，其内部关键字/数字不会误染。
+ * 向 [HighlightScope] 注册 SQL 高亮规则（编辑器与只读 DDL 查看器共用同一份，避免两边漂移）。
+ *
+ * 用**单次交替正则**（leftmost-first）分词，而非多条独立规则：字符串/注释排在关键字前，
+ * 一旦整段被消费就不再回扫，因此字符串/注释内的关键字不会被再染（`'select'` 全橙、
+ * `-- select` 全绿），同时 `-- don't` 的撇号不会误开字符串、`'-- x'` 的 `--` 不会误当注释。
+ * [keywords] 可在调用处 remember，避免每次重组重建词表。
+ */
+internal fun HighlightScope.applySqlHighlightRules(
+    pal: SqlSyntaxPalette,
+    keywords: List<String> = sqlHighlightKeywords(),
+) {
+    val pattern = buildString {
+        // 分组顺序即取色顺序（1..7），字符串/注释必须在关键字之前
+        append("('(?:[^']|'')*')") // 1 单引号字符串
+        append("|(\"(?:[^\"]|\"\")*\")") // 2 双引号字符串
+        append("|(--[^\n]*)") // 3 行注释
+        append("|(/\\*[\\s\\S]*?\\*/)") // 4 块注释
+        append("|(\\b\\d+(?:\\.\\d+)?\\b)") // 5 数字
+        append("|(\\b(?:${keywords.distinct().joinToString("|")})\\b)") // 6 关键字
+        append("|([(),;.])") // 7 标点
+    }
+    // 顺序与 pattern 内的分组一一对应（groups 按 1..n 取色）。
+    val colors = arrayOf(
+        pal.string.toUiColor(), pal.string.toUiColor(),
+        pal.comment.toUiColor(), pal.comment.toUiColor(),
+        pal.number.toUiColor(), pal.keyword.toUiColor(), pal.punctuation.toUiColor(),
+    )
+    textColor { Regex(pattern, RegexOption.IGNORE_CASE).groups(*colors) }
+}
+
+/**
+ * SQL 关键字词表（高亮与补全共用）。规则说明见 [applySqlHighlightRules]。
  */
 internal fun sqlHighlightKeywords(): List<String> = listOf(
     // 查询

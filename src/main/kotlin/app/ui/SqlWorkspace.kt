@@ -116,7 +116,6 @@ import app.settings.EditorSettings
 import app.dialog.CellViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
-import com.neoutils.highlight.core.extension.textColor
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
@@ -897,21 +896,10 @@ private fun EditorPane(
     modifier: Modifier = Modifier,
 ) {
     val isDark = MaterialTheme.colors.isLight.not()
-    val pal = sqlSyntaxPalette(isDark)
     val keywords = remember { sqlHighlightKeywords().distinct() }
-    val highlightedValue = rememberHighlight {
-        // 顺序：注释/字符串先注册（其内部关键字与数字不误染），再数字/关键字/标点。
-        textColor { "--[^\n]*".toRegex().fully(pal.comment.toUiColor()) }
-        textColor { "/\\*[\\s\\S]*?\\*/".toRegex().fully(pal.comment.toUiColor()) }
-        textColor { "'(?:[^']|'')*'".toRegex().fully(pal.string.toUiColor()) }
-        textColor { "\"(?:[^\"]|\"\")*\"".toRegex().fully(pal.string.toUiColor()) }
-        textColor { "\\b\\d+(?:\\.\\d+)?\\b".toRegex().fully(pal.number.toUiColor()) }
-        textColor {
-            "\\b(${keywords.joinToString("|")})\\b"
-                .toRegex(RegexOption.IGNORE_CASE)
-                .fully(pal.keyword.toUiColor())
-        }
-        textColor { "[(),;.]".toRegex().fully(pal.punctuation.toUiColor()) }
+    // isDark 作 key：主题切换时重建 Highlight，否则记住的旧色板不会刷新。
+    val highlightedValue = rememberHighlight(isDark) {
+        applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
     }.rememberTextFieldValue(value)
 
     val scroll = rememberScrollState()
