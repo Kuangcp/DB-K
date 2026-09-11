@@ -210,15 +210,22 @@ fun DdlDialog(
 }
 
 /**
- * 单元格大段文本查看器：结果表格单元格双击 / 右键「查看完整内容」打开。
- * 顶部显示字符/行数，正文定宽滚动 + 「复制全部」。同样用显式尺寸的 [DialogWindow]。
+ * 大段文本查看器：结果单元格双击 / 右键「查看完整内容」、执行历史双击均用它。
+ * 顶部显示副标题（默认字符/行数），正文定宽滚动 + 「复制全部」。[highlightSql] 为 true 时
+ * 与 Ctrl+Q 的 DDL 弹窗同款 SQL 语法高亮（历史 SQL）。同样用显式尺寸的 [DialogWindow]。
  */
 @Composable
-fun CellViewerDialog(
+fun TextViewerDialog(
     title: String,
     content: String,
     onDismiss: () -> Unit,
     onCopy: (String, String) -> Unit,
+    /** true = 按 SQL 语法高亮，false = 纯文本（任意单元格文本不该按 SQL 误染）。 */
+    highlightSql: Boolean = false,
+    /** 副标题；null 时回退为「N 字符 · M 行」。 */
+    subtitle: String? = null,
+    /** 复制成功后的 Toast 文案。 */
+    copyToast: String = "已复制全部内容",
 ) {
     val lineCount = content.count { it == '\n' } + 1
     DialogWindow(
@@ -235,18 +242,22 @@ fun CellViewerDialog(
                 .padding(12.dp),
         ) {
             Text(
-                "${content.length} 字符 · $lineCount 行",
+                subtitle ?: "${content.length} 字符 · $lineCount 行",
                 style = MaterialTheme.typography.caption,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                 modifier = Modifier.padding(bottom = 6.dp),
             )
-            ViewerText(content, Modifier.weight(1f).fillMaxWidth())
+            if (highlightSql) {
+                SqlCodeText(content, Modifier.weight(1f).fillMaxWidth())
+            } else {
+                ViewerText(content, Modifier.weight(1f).fillMaxWidth())
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { onCopy(content, "已复制单元格内容") }) { Text("复制全部") }
+                TextButton(onClick = { onCopy(content, copyToast) }) { Text("复制全部") }
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
         }

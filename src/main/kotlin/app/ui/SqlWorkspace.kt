@@ -113,7 +113,7 @@ import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
 import app.state.StatementOutcome
 import app.settings.EditorSettings
-import app.dialog.CellViewerDialog
+import app.dialog.TextViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
 import db.ConsoleRecord
@@ -192,7 +192,6 @@ fun SqlWorkspace(
     history: List<SqlHistoryRow>,
     onRefreshHistory: () -> Unit,
     onClearHistory: () -> Unit,
-    onFillHistory: (String) -> Unit,
     /** 编辑器补全用数据源对象名（表/视图，已加载）。 */
     completionIdentifiers: List<String>,
     /** 编辑器列补全用对象清单（表/视图名 + 所属 schema，与 [completionIdentifiers] 同源）。 */
@@ -215,6 +214,8 @@ fun SqlWorkspace(
     modifier: Modifier = Modifier,
 ) {
     var showHistory by remember { mutableStateOf(false) }
+    // 双击历史条目：弹窗查看完整 SQL（复用通用文本查看器，按 SQL 高亮）
+    var historyView by remember { mutableStateOf<SqlHistoryRow?>(null) }
     // 打开面板或切换数据源时刷新历史列表
     LaunchedEffect(showHistory, profile?.id) {
         if (showHistory) onRefreshHistory()
@@ -409,12 +410,23 @@ fun SqlWorkspace(
             if (showHistory) {
                 HistoryPanel(
                     entries = history,
-                    onFill = onFillHistory,
+                    onView = { historyView = it },
                     onClear = onClearHistory,
                     modifier = Modifier.width(256.dp).fillMaxHeight(),
                 )
             }
         }
+    }
+    historyView?.let { row ->
+        TextViewerDialog(
+            title = "历史 SQL",
+            content = row.sqlText,
+            onDismiss = { historyView = null },
+            onCopy = onCopyText,
+            highlightSql = true,
+            subtitle = historyEntryMeta(row),
+            copyToast = "已复制历史 SQL",
+        )
     }
 }
 
@@ -2033,11 +2045,12 @@ private fun ResultTable(
         }
     }
     viewer?.let { v ->
-        CellViewerDialog(
+        TextViewerDialog(
             title = v.title,
             content = v.content,
             onDismiss = { viewer = null },
             onCopy = onCopyText,
+            copyToast = "已复制单元格内容",
         )
     }
 }

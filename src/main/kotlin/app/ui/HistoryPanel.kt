@@ -37,13 +37,13 @@ import java.time.format.DateTimeFormatter
 
 /**
  * 执行历史侧栏：当前数据源最近执行的 SQL（成功/失败标记、时间、行数、耗时）。
- * 双击条目回填到当前控制台编辑器（只回填不自动执行）。
+ * 双击条目弹窗查看完整 SQL（可复制）——不再直接回填编辑器，避免意外覆盖草稿。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HistoryPanel(
     entries: List<SqlHistoryRow>,
-    onFill: (String) -> Unit,
+    onView: (SqlHistoryRow) -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -71,7 +71,7 @@ fun HistoryPanel(
             }
         }
         Text(
-            "双击条目回填到当前控制台",
+            "双击条目查看完整 SQL",
             fontSize = 10.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
             modifier = Modifier.padding(start = 12.dp, bottom = 6.dp),
@@ -88,7 +88,7 @@ fun HistoryPanel(
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(entries, key = { it.id }) { row ->
-                    HistoryEntry(row) { sql -> onFill(sql) }
+                    HistoryEntry(row) { onView(row) }
                     Divider(
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.05f),
                         modifier = Modifier.padding(start = 26.dp),
@@ -100,12 +100,12 @@ fun HistoryPanel(
 }
 
 @Composable
-private fun HistoryEntry(row: SqlHistoryRow, onFill: (String) -> Unit) {
+private fun HistoryEntry(row: SqlHistoryRow, onView: (SqlHistoryRow) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onDoubleClick = { onFill(row.sqlText) }, onClick = {})
+            .combinedClickable(onDoubleClick = { onView(row) }, onClick = {})
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         // 成功/失败语义色点（色块不算文字色）
@@ -126,7 +126,7 @@ private fun HistoryEntry(row: SqlHistoryRow, onFill: (String) -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                entryMeta(row),
+                historyEntryMeta(row),
                 fontSize = 10.sp,
                 color = if (row.ok) MaterialTheme.colors.onSurface.copy(alpha = 0.45f)
                 else MaterialTheme.colors.error.copy(alpha = 0.85f),
@@ -137,7 +137,8 @@ private fun HistoryEntry(row: SqlHistoryRow, onFill: (String) -> Unit) {
     }
 }
 
-private fun entryMeta(row: SqlHistoryRow): String {
+/** 条目副标题：时间 · 结果（失败/行数/完成） · 耗时 · 失败原因。 */
+internal fun historyEntryMeta(row: SqlHistoryRow): String {
     val t = runCatching {
         DateTimeFormatter.ofPattern("MM-dd HH:mm:ss").format(
             LocalDateTime.ofInstant(Instant.ofEpochMilli(row.executedAtMs), ZoneId.systemDefault()),

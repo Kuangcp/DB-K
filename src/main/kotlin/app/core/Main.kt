@@ -603,13 +603,6 @@ private fun AppBody(
                             activeProfile?.let { consoleState.clearHistory(it.id) }
                             toastState.show("已清空执行历史")
                         },
-                        onFillHistory = { sql ->
-                            val c = consoleState.activeConsole()
-                            if (c != null) {
-                                consoleState.setText(c.id, sql)
-                                toastState.show("已回填历史 SQL 到当前控制台")
-                            }
-                        },
                         completionIdentifiers = completionIdentifiers,
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
