@@ -58,6 +58,42 @@ class ConsoleStateTest {
     }
 
     @Test
+    fun `closeConsole hides from open list and reopens from data source`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c1 = state.createConsole(pid, "控制台 1")
+            val c2 = state.createConsole(pid, "控制台 2")
+            assertEquals(2, state.openConsoles(pid).size)
+
+            // 关闭当前激活的 c2 → 从标签条隐藏，切到同源另一已打开控制台
+            state.closeConsole(c2.id)
+            assertEquals(listOf(c1.id), state.openConsoles(pid).map { it.id })
+            assertTrue(state.profileConsoles(pid).first { it.id == c2.id }.closed)
+            assertEquals(c1.id, state.activeConsoleId)
+            // 关闭只是隐藏：.sql 文件仍在
+            assertTrue(Files.isRegularFile(Path.of(c2.filePath)))
+
+            // 全部关闭 → 无激活控制台（引导态）
+            state.closeConsole(c1.id)
+            assertTrue(state.openConsoles(pid).isEmpty())
+            assertNull(state.activeConsoleId)
+
+            // 双击数据源 → 重新打开最近改动的那个，不新建
+            val reopened = state.activateForProfile(pid)
+            assertNotNull(reopened)
+            assertEquals(1, state.openConsoles(pid).size)
+            assertEquals(2, state.profileConsoles(pid).size)
+
+            // 从数据源级联重新打开指定的已关闭控制台
+            state.closeConsole(reopened.id)
+            assertNotNull(state.reopenConsole(c2.id))
+            assertEquals(c2.id, state.activeConsoleId)
+            assertFalse(state.profileConsoles(pid).first { it.id == c2.id }.closed)
+        }
+    }
+
+    @Test
     fun `setText debounces autosave`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())

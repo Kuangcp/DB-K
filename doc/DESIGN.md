@@ -201,6 +201,7 @@ App 顶层 `remember { XxxState(...) }` 拆成独立状态类，组件纯参数 
 交互细节（按里程碑逐条落地）：
 - 树右键：数据源 → 连接/断开/刷新/编辑/删除 + **「打开控制台 ▸」向右级联**（列出该数据源全部控制台，标 ✓ 的为当前，尾随「新建控制台…」）；表/视图 → 预览 100 行 / 复制 `SELECT *` / 复制表名 / 查看定义 DDL；
   一个数据源可有多个控制台（每个 = `consoles` 一行 + 独立 `<dataDir>/consoles/<id>.sql`），脚本条「+」也能新建；树右键菜单为自绘单弹层（`Popup` + 根/子两列），不用嵌套 `DropdownMenu`（避免子弹层夺焦时父层 dismiss）；
+- 控制台标签条右键：重命名 / **关闭控制台** / 删除控制台。关闭 = 打 `consoles.closed` 标记（仅隐藏，保留行与 .sql），标签条只显示未关闭的；可从数据源右键级联重新打开；删除才真正删行+删文件；
 - 查看定义：`Ctrl+Q` 看**编辑器光标所在的表/视图**（裸表名/`schema.表名`/别名均可，最近动过编辑器时优先），
   否则看左侧树选中项（或右键「查看定义」）→ 浮窗取 DDL（见 §5），正文可滚动 + 「复制全部」；
 - 双击表：`SELECT * FROM t LIMIT 100` 注入编辑器并直接运行；
@@ -228,6 +229,10 @@ connections   (id TEXT PK, folder_id NULL REFERENCES folders ON DELETE SET NULL,
                name, db_type, host, port, database_name, user_name, password,
                extra_params, color, sort_order, created_at, updated_at)
 sql_history   (id TEXT PK, profile_id NULL, sql_text, executed_at_ms, duration_ms)
+consoles      (id TEXT PK, connection_id REFERENCES connections ON DELETE CASCADE, name, file_path,
+               sort_order, created_at, updated_at, target, caret_start, caret_end, closed)
+meta_cache    (profile_id TEXT PK, fingerprint, saved_at_ms, payload)          -- 目录元数据缓存
+column_cache  (profile_id, object_key, fingerprint, saved_at_ms, payload)      -- 列清单缓存
 saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 ```
 

@@ -105,6 +105,9 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 - **控制台结构**：一个数据源可多个控制台，每个控制台 = app.db `consoles` 行（元数据）
   + `<dataDir>/consoles/<id>.sql` 单文件（正文）。**rename 只改行不改文件名**（id 稳定）。
   删除连接时由 `ConnectionsRepository.deleteConnection` 级联删行+文件（smoke 已验证）。
+- **关闭 vs 删除**：`consoles.closed`（v8）= 从标签条隐藏但**保留行与 .sql**；标签条只显示
+  `openConsoles`，关闭当前激活则切到同源另一已打开（无则引导态），可从数据源右键「打开控制台」
+  级联 `reopenConsole` 重新打开。`rename`/`setConsoleClosed` 都**不动 `updated_at`**。
 - 编辑器文本：内存 buffer 为唯一权威；防抖 3s 自动写回 .sql 文件
   （`ConsoleState.setText` 内 scope.launch { delay(AUTOSAVE_MS); withContext(IO){ flushNow } }）。
   **必须落盘时机**：切控制台 / 执行前 / 退出（`onCloseRequest` 调 `flushAllSync`）。

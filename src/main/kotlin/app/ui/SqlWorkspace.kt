@@ -141,6 +141,8 @@ fun SqlWorkspace(
     onCreateConsoleAt: (String) -> Unit,
     onRenameConsole: (ConsoleRecord) -> Unit,
     onDeleteConsole: (ConsoleRecord) -> Unit,
+    /** 关闭控制台标签（仅隐藏，保留 .sql；可从数据源右键重新打开）。 */
+    onCloseConsole: (ConsoleRecord) -> Unit = {},
     /** 未落盘改动控制台 id 集合（标签 ●）。 */
     dirtyConsoleIds: Set<String>,
     /** 激活控制台数据源的库/schema 列表（目标切换菜单；null = 未连接/未加载）。 */
@@ -289,12 +291,12 @@ fun SqlWorkspace(
             onCreateConsoleAt = onCreateConsoleAt,
             onRenameConsole = onRenameConsole,
             onDeleteConsole = onDeleteConsole,
+            onCloseConsole = onCloseConsole,
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         if (activeConsole == null) {
             StarterPane(
                 profiles = profiles,
-                consoles = consoles,
                 onCreateConsoleAt = onCreateConsoleAt,
             )
             return
@@ -444,15 +446,7 @@ private fun HeaderBar(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp),
     ) {
-        Text("SQL 控制台", style = MaterialTheme.typography.subtitle2, color = MaterialTheme.colors.onSurface)
-        Text(
-            "每个数据源可建多个控制台，各绑定一个 .sql 文件",
-            fontSize = 11.sp,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
-            modifier = Modifier.padding(start = 10.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // 左侧留白：后续在此放更多工具 icon（标题文字已去掉）
         Spacer(Modifier.weight(1f))
         if (showHistoryButton) {
             IconButton(onClick = onToggleHistory, modifier = Modifier.size(28.dp)) {
@@ -676,6 +670,7 @@ private fun ConsoleTabBar(
     onCreateConsoleAt: (String) -> Unit,
     onRenameConsole: (ConsoleRecord) -> Unit,
     onDeleteConsole: (ConsoleRecord) -> Unit,
+    onCloseConsole: (ConsoleRecord) -> Unit,
 ) {
     var createMenuOpen by remember { mutableStateOf(false) }
     // 条内出现多个数据源时，标签额外显示所属数据源名，避免同类型两个库分不清
@@ -698,6 +693,7 @@ private fun ConsoleTabBar(
                     onSelect = { onSelectConsole(c) },
                     onRename = { onRenameConsole(c) },
                     onDelete = { onDeleteConsole(c) },
+                    onClose = { onCloseConsole(c) },
                 )
                 Spacer(Modifier.width(5.dp))
             }
@@ -746,9 +742,11 @@ private fun ConsoleChip(
     onSelect: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onClose: () -> Unit,
 ) {
     val menu = listOf(
         ContextMenuItem("重命名控制台") { onRename() },
+        ContextMenuItem("关闭控制台") { onClose() },
         ContextMenuItem("删除控制台") { onDelete() },
     )
     ContextMenuArea(items = { menu }) {
@@ -799,7 +797,6 @@ private fun ConsoleChip(
 @Composable
 private fun StarterPane(
     profiles: List<ConnectionProfile>,
-    consoles: List<ConsoleRecord>,
     onCreateConsoleAt: (String) -> Unit,
 ) {
     Column(
@@ -808,17 +805,14 @@ private fun StarterPane(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            if (consoles.isEmpty()) "还没有控制台" else "还没有打开的控制台",
+            "还没有打开的控制台",
             style = MaterialTheme.typography.subtitle1,
             color = MaterialTheme.colors.onSurface,
         )
         Text(
-            if (consoles.isEmpty())
-                "每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）。\n" +
-                    "点右上角「+」选择数据源新建，或在左侧树单击数据源连接。"
-            else
-                "每个 tab 就是一个控制台。点上方任一标签（徽章 = 所属数据源）即可打开，\n" +
-                    "或点「+」再新建一个；在左侧树单击数据源连接也可直接进入。",
+            "每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）。\n" +
+                "在左侧树右键数据源 →「打开控制台」可选择已有控制台并重新打开；\n" +
+                "也可点下面按钮/标签条「+」新建。",
             fontSize = 12.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
             textAlign = TextAlign.Center,

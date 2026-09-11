@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 7
+    private const val CURRENT_VERSION = 8
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -56,6 +56,10 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV7(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (7)").use { it.executeUpdate() }
         }
+        if (!applied.contains(8)) {
+            conn.createStatement().use { st -> migrateToV8(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (8)").use { it.executeUpdate() }
+        }
     }
 
     /**
@@ -75,6 +79,14 @@ object AppDatabase {
             )
             """.trimIndent(),
         )
+    }
+
+    /**
+     * v8：控制台可「关闭」——从标签条隐藏，但保留元数据行与 .sql 文件；
+     * 可从数据源右键「打开控制台」级联重新打开。同样不动 updated_at。
+     */
+    private fun migrateToV8(st: Statement) {
+        st.executeUpdate("ALTER TABLE consoles ADD COLUMN closed INTEGER NOT NULL DEFAULT 0")
     }
 
     /**

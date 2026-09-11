@@ -22,7 +22,7 @@ class AppDatabaseMigrationTest {
             c.createStatement().use { st ->
                 st.executeQuery("SELECT version FROM schema_migrations ORDER BY version").use { rs ->
                     val versions = buildList { while (rs.next()) add(rs.getInt(1)) }
-                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7), versions)
+                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8), versions)
                 }
             }
         }
@@ -94,6 +94,11 @@ class AppDatabaseMigrationTest {
                 st.executeQuery("SELECT COUNT(*) FROM column_cache").use { rs ->
                     rs.next()
                     assertEquals(0, rs.getInt(1))
+                }
+                // v8 旧控制台默认 closed=0（未关闭）
+                st.executeQuery("SELECT closed FROM consoles WHERE id='cc1'").use { rs ->
+                    rs.next()
+                    assertEquals(0, rs.getInt("closed"))
                 }
             }
         }

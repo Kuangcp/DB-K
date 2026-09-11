@@ -463,7 +463,7 @@ private fun AppBody(
                         onOpenConsoleForProfile = { p -> consoleState.activateForProfile(p.id) },
                         consolesForProfile = { pid -> consoleState.profileConsoles(pid) },
                         activeConsoleId = activeConsole?.id,
-                        onOpenConsoleRecord = { c -> consoleState.activate(c) },
+                        onOpenConsoleRecord = { c -> consoleState.reopenConsole(c.id) },
                         onCreateConsoleForProfile = createConsoleFor,
                         onPreviewObject = ::previewObject,
                         onViewObjectDef = { row ->
@@ -484,9 +484,10 @@ private fun AppBody(
                         statusMessage = connectionsState.statusMessageOf(activeProfile?.id.orEmpty()),
                         profiles = profiles,
                         onSelectProfile = { pid -> consoleState.activateForProfile(pid) },
-                        consoles = consoleState.allConsoles(profiles.map { it.id }),
+                        consoles = consoleState.allOpenConsoles(profiles.map { it.id }),
                         activeConsole = activeConsole,
                         onSelectConsole = { c -> consoleState.activate(c) },
+                        onCloseConsole = { c -> consoleState.closeConsole(c.id) },
                         onCreateConsoleAt = { pid ->
                             profiles.firstOrNull { it.id == pid }?.let(createConsoleFor)
                         },

@@ -120,12 +120,20 @@ class ConsoleState(
     fun profileConsoles(profileId: String): List<ConsoleRecord> =
         consolesByConnection.getOrPut(profileId) { repository.listConsoles(profileId) }
 
-    /** 工作台级全部控制台（按数据源顺序展平，跨数据源）；首次调用按档案惰性载入。 */
+    /** 该数据源「已打开」（未关闭）的控制台——标签条只显示这些。 */
+    fun openConsoles(profileId: String): List<ConsoleRecord> =
+        profileConsoles(profileId).filter { !it.closed }
+
+    /** 工作台级全部控制台（含已关闭；树右键「打开控制台」级联用）。 */
     fun allConsoles(profileIds: List<String>): List<ConsoleRecord> {
         val out = ArrayList<ConsoleRecord>()
         profileIds.forEach { pid -> out += profileConsoles(pid) }
         return out
     }
+
+    /** 工作台级「已打开」控制台（按数据源顺序展平，跨数据源）——标签条用。 */
+    fun allOpenConsoles(profileIds: List<String>): List<ConsoleRecord> =
+        profileIds.flatMap { openConsoles(it) }
 
     fun textOf(consoleId: String): String = buffers[consoleId] ?: ""
 
@@ -150,26 +158,34 @@ class ConsoleState(
         }
     }
 
-    /** 激活某数据源的控制台集合：无控制台则自动建「控制台 1」；选最后用的或最新改动的。 */
+    /** 激活某数据源的控制台集合：优先已打开的；全被关闭则重开最近改动的；一个都没有则自动建「控制台 1」。 */
     fun activateForProfile(profileId: String): ConsoleRecord? {
-        val list = profileConsoles(profileId)
-        val chosen = if (list.isEmpty()) {
-            createConsole(profileId, "控制台 1")
-        } else {
+        val open = openConsoles(profileId)
+        val chosen = if (open.isNotEmpty()) {
             val lastId = lastActivePerProfile[profileId]
-            list.firstOrNull { it.id == lastId }
-                ?: list.maxByOrNull { it.updatedAt }
-                ?: list.first()
+            open.firstOrNull { it.id == lastId }
+                ?: open.maxByOrNull { it.updatedAt }
+                ?: open.first()
+        } else {
+            // 全部已关闭：重开最近改动的那个（关闭只是隐藏，不丢内容）；从未建过则新建
+            val any = profileConsoles(profileId).maxByOrNull { it.updatedAt }
+            if (any != null) {
+                repository.setConsoleClosed(any.id, false)
+                setClosedFlag(any.id, false)
+                findConsole(any.id) ?: any
+            } else {
+                createConsole(profileId, "控制台 1")
+            }
         }
         activate(chosen)
         return chosen
     }
 
-    /** 启动回位：无激活控制台时回到最近改动的那个（跨数据源）；一个都没有则返回 null。 */
+    /** 启动回位：无激活控制台时回到最近改动的「已打开」控制台（跨数据源）；一个都没有则返回 null。 */
     fun activateMostRecent(profileIds: List<String>): ConsoleRecord? {
         if (activeConsoleId != null) return activeConsole()
         val best = profileIds.asSequence()
-            .flatMap { profileConsoles(it).asSequence() }
+            .flatMap { openConsoles(it).asSequence() }
             .maxByOrNull { it.updatedAt } ?: return null
         activate(best)
         return best
@@ -186,6 +202,48 @@ class ConsoleState(
         buffers[rec.id] = ""
         activate(rec)
         return rec
+    }
+
+    /**
+     * 关闭控制台：仅从标签条隐藏（保留元数据行与 .sql 文件，可从数据源右键重新打开）。
+     * 若关闭的是当前激活的控制台，则切到同源最后一个已打开控制台（无则停在引导态）。
+     */
+    fun closeConsole(consoleId: String) {
+        val rec = findConsole(consoleId) ?: return
+        if (rec.closed) return
+        repository.setConsoleClosed(consoleId, true)
+        setClosedFlag(consoleId, true)
+        if (activeConsoleId == consoleId) {
+            flushNow(consoleId)
+            flushCaretNow(consoleId)
+            activeConsoleId = null
+            val list = openConsoles(rec.connectionId)
+            val lastId = lastActivePerProfile[rec.connectionId]
+            val next = list.firstOrNull { it.id == lastId }
+                ?: list.maxByOrNull { it.updatedAt }
+                ?: list.firstOrNull()
+            if (next != null) activate(next)
+        }
+    }
+
+    /** 重新打开已关闭的控制台并激活（关闭只隐藏，内容仍在）。已打开则直接激活。 */
+    fun reopenConsole(consoleId: String): ConsoleRecord? {
+        val rec = findConsole(consoleId) ?: return null
+        if (rec.closed) {
+            repository.setConsoleClosed(consoleId, false)
+            setClosedFlag(consoleId, false)
+        }
+        val updated = findConsole(consoleId) ?: rec
+        activate(updated)
+        return updated
+    }
+
+    /** 只更新缓存里的 closed 标记（不动 updated_at，不重读库）。 */
+    private fun setClosedFlag(consoleId: String, closed: Boolean) {
+        val entry = consolesByConnection.entries.firstOrNull { (_, list) -> list.any { it.id == consoleId } } ?: return
+        consolesByConnection[entry.key] = entry.value.map {
+            if (it.id == consoleId) it.copy(closed = closed) else it
+        }
     }
 
     fun renameConsole(consoleId: String, newName: String) {
