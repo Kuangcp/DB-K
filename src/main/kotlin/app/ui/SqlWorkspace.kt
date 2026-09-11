@@ -598,74 +598,79 @@ private fun TargetSwitcher(
 ) {
     var open by remember { mutableStateOf(false) }
     val label = if (target.isBlank()) "默认" else target
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(RoundedCornerShape(5.dp))
-            .clickable(enabled = enabled) { open = true }
-            .padding(horizontal = 6.dp, vertical = 3.dp),
-    ) {
-        Text(
-            "目标",
-            fontSize = 10.5.sp,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
-        )
-        Text(
-            if (loading) "加载中…" else label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            color = if (enabled) MaterialTheme.colors.onSurface.copy(alpha = 0.75f)
-            else MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 5.dp).widthIn(max = 150.dp),
-        )
-        Icon(
-            Icons.Filled.ArrowDropDown, "切换执行目标库/Schema",
-            tint = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 0.5f else 0.25f),
-            modifier = Modifier.size(16.dp),
-        )
-    }
-    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-        DropdownMenuItem(onClick = {
-            open = false
-            if (target != "") onSelectTarget("")
-        }) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (target.isBlank()) "✓ " else "  ",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colors.primary,
-                )
-                Text(
-                    "默认（连接库/连接默认 schema）",
-                    fontSize = 13.sp,
-                    color = if (target.isBlank()) MaterialTheme.colors.primary
-                    else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
-                )
-            }
+    // DropdownMenu 的定位锤点是「与它同一父布局」的节点；本组件自身不产生布局节点，
+    // 若把锤点 Row 与 DropdownMenu 直接放进父 Row，弹层会按整行（全宽）换算 → 跑到左上角。
+    // 用 Box 把锤点与弹层包在一起，弹层即贴着「目标」按钮弹出。
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(5.dp))
+                .clickable(enabled = enabled) { open = true }
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+        ) {
+            Text(
+                "目标",
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+            )
+            Text(
+                if (loading) "加载中…" else label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (enabled) MaterialTheme.colors.onSurface.copy(alpha = 0.75f)
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 5.dp).widthIn(max = 150.dp),
+            )
+            Icon(
+                Icons.Filled.ArrowDropDown, "切换执行目标库/Schema",
+                tint = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 0.5f else 0.25f),
+                modifier = Modifier.size(16.dp),
+            )
         }
-        schemas.forEach { s ->
-            val name = s.displayName
-            val selected = name.equals(target, ignoreCase = true)
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(onClick = {
                 open = false
-                if (!selected) onSelectTarget(name)
+                if (target != "") onSelectTarget("")
             }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (selected) "✓ " else "  ",
+                        if (target.isBlank()) "✓ " else "  ",
                         fontSize = 12.sp,
                         color = MaterialTheme.colors.primary,
                     )
                     Text(
-                        name,
+                        "默认（连接库/连接默认 schema）",
                         fontSize = 13.sp,
-                        color = if (selected) MaterialTheme.colors.primary
-                        else MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        color = if (target.isBlank()) MaterialTheme.colors.primary
+                        else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
                     )
+                }
+            }
+            schemas.forEach { s ->
+                val name = s.displayName
+                val selected = name.equals(target, ignoreCase = true)
+                DropdownMenuItem(onClick = {
+                    open = false
+                    if (!selected) onSelectTarget(name)
+                }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (selected) "✓ " else "  ",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colors.primary,
+                        )
+                        Text(
+                            name,
+                            fontSize = 13.sp,
+                            color = if (selected) MaterialTheme.colors.primary
+                            else MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
@@ -715,32 +720,35 @@ private fun ConsoleTabBar(
             }
         }
         Spacer(Modifier.width(6.dp))
-        IconButton(
-            onClick = { createMenuOpen = true },
-            modifier = Modifier.size(24.dp),
-        ) {
-            Icon(
-                Icons.Filled.Add, "新建控制台…",
-                tint = MaterialTheme.colors.primary,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        DropdownMenu(expanded = createMenuOpen, onDismissRequest = { createMenuOpen = false }) {
-            profilesById.values.forEach { p ->
-                DropdownMenuItem(onClick = {
-                    createMenuOpen = false
-                    onCreateConsoleAt(p.id)
-                }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TypeBadge(p.dbType)
-                        Text(
-                            "在「${p.name}」新建控制台",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
-                            modifier = Modifier.padding(start = 8.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+        // 同上：IconButton 与 DropdownMenu 必须在同一 Box 内，否则弹层按整行定位。
+        Box {
+            IconButton(
+                onClick = { createMenuOpen = true },
+                modifier = Modifier.size(24.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Add, "新建控制台…",
+                    tint = MaterialTheme.colors.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(expanded = createMenuOpen, onDismissRequest = { createMenuOpen = false }) {
+                profilesById.values.forEach { p ->
+                    DropdownMenuItem(onClick = {
+                        createMenuOpen = false
+                        onCreateConsoleAt(p.id)
+                    }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TypeBadge(p.dbType)
+                            Text(
+                                "在「${p.name}」新建控制台",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                                modifier = Modifier.padding(start = 8.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
