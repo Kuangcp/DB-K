@@ -14,11 +14,30 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import app.state.ConfirmRequest
 import app.state.ConsoleRenameRequest
 import app.state.FolderDialogRequest
 import db.FolderRow
+
+/**
+ * 单行输入弹窗的 Enter 提交处理：Enter / 数字键盘 Enter 等同于点「确定」（空白时忽略）。
+ * 挂在输入框的 Modifier 上（onPreviewKeyEvent），保证单行 TextField 不吞掉回车。
+ */
+private fun submitOnEnter(enabled: Boolean, onConfirm: () -> Unit): (KeyEvent) -> Boolean = { e ->
+    if (enabled && e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.NumPadEnter)) {
+        onConfirm()
+        true
+    } else {
+        false
+    }
+}
 
 /** 控制台新建/重命名弹窗（新控制台名可任意起，内容绑定独立 .sql 文件）。 */
 @Composable
@@ -29,6 +48,7 @@ fun ConsoleNameDialog(
     onConfirm: (String) -> Unit,
 ) {
     var name by remember { mutableStateOf(initial) }
+    val confirm = { onConfirm(name.trim()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isCreate) "新建控制台" else "重命名控制台") },
@@ -44,12 +64,15 @@ fun ConsoleNameDialog(
                     onValueChange = { name = it },
                     label = { Text("名称") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .onPreviewKeyEvent(submitOnEnter(name.isNotBlank(), confirm)),
                 )
             }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = { onConfirm(name.trim()) }) { Text("确定") }
+            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text("确定") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
@@ -67,6 +90,7 @@ fun FolderNameDialog(
     val isCreate = request is FolderDialogRequest.Create
     val initial = (request as? FolderDialogRequest.Rename)?.folder?.name ?: ""
     var name by remember(request) { mutableStateOf(initial) }
+    val confirm = { onConfirm(name.trim()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -82,12 +106,15 @@ fun FolderNameDialog(
                     onValueChange = { name = it },
                     label = { Text("名称") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .onPreviewKeyEvent(submitOnEnter(name.isNotBlank(), confirm)),
                 )
             }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = { onConfirm(name.trim()) }) { Text("确定") }
+            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text("确定") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }

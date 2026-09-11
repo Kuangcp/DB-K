@@ -80,6 +80,11 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 ## UI 交互基线
 
 - 编辑器执行快捷键：`Ctrl+Enter`（`SqlWorkspace` 内 `onPreviewKeyEvent` 拦截）。
+- **单字段输入弹窗必须支持 Enter 提交**：新建/重命名文件夹、重命名/新建控制台等
+  「只有一个输入框 + 确定/取消」的弹窗，回车（含数字键盘回车）等同于点「确定」，
+  空输入时忽略。实现：输入框 Modifier 挂 `onPreviewKeyEvent(submitOnEnter(...))`
+  （见 `app/dialog/TextInputDialogs.kt`）——单行 `TextField` 会吞回车，必须用 preview 拦截。
+  新增同类弹窗照此办理，不要让用户只能用鼠标点。多字段表单（如连接编辑）不适用。
 - SQL 执行走 `app/state/ConsoleState.run` → 单线程 `LiveConnection` 执行器，
   禁止另起线程直连同一 `java.sql.Connection`（会并发冲突）。
 - 树操作回调由 `Main` 层 `rememberCoroutineScope` 调度，`app/state` 的 suspend 动作内部
