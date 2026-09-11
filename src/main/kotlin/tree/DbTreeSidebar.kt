@@ -571,18 +571,26 @@ private fun TreeRowView(
                 }
                 TreeRowKind.DB_OBJECT -> {
                     ObjectKindBadge(row.dbObject?.kind)
-                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f, fill = false), 12.5.sp)
-                    row.dbObject?.tableName?.let {
-                        Text(
-                            "on $it",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.38f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = 4.dp),
-                        )
+                    // 名称 + 「on <所属表>」（TRIGGER）放进同一个占满剩余宽度的内层 Row：
+                    // 名称 fill=false 短则自然宽、长则吃到「on …」之前的全部空间。
+                    // 旧写法是名称 weight(1f,fill=false) + 外层 Spacer(weight(1f))，两个加权子项
+                    // 平分空间 → 名称只到一半就省略号、右半边被隐形 Spacer 占着（看着像被阴影挡住）。
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        RowName(row.name, Modifier.padding(start = 5.dp).weight(1f, fill = false), 12.5.sp)
+                        row.dbObject?.tableName?.let {
+                            Text(
+                                "on $it",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.38f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
                     }
-                    Spacer(Modifier.weight(1f))
                 }
                 TreeRowKind.PLACEHOLDER -> {
                     when (row.placeholderKind) {
