@@ -216,6 +216,8 @@ fun SqlWorkspace(
     var showHistory by remember { mutableStateOf(false) }
     // 双击历史条目：弹窗查看完整 SQL（复用通用文本查看器，按 SQL 高亮）
     var historyView by remember { mutableStateOf<SqlHistoryRow?>(null) }
+    // 待插入的历史 SQL：在光标/选区处插入（不覆盖整段草稿），由激活控制台的编辑区消费
+    var historyInsert by remember { mutableStateOf<String?>(null) }
     // 打开面板或切换数据源时刷新历史列表
     LaunchedEffect(showHistory, profile?.id) {
         if (showHistory) onRefreshHistory()
@@ -347,6 +349,22 @@ fun SqlWorkspace(
                 onCaretChange(consoleId, v.selection.start, v.selection.end)
             }
         }
+        // 历史 SQL「插入到当前控制台」：在光标/选区处插入（有选区则替换之），不覆盖整段草稿；
+        // 光标落到插入内容之后。在此处做是因为 tfv 是编辑器的权威状态，直接改 tfv 再落盘可
+        // 避开「外部改文本 → LaunchedEffect(editorText) 把光标推到最后」。
+        LaunchedEffect(historyInsert) {
+            val snippet = historyInsert ?: return@LaunchedEffect
+            historyInsert = null
+            val (newText, caret) = insertSnippetAtCaret(
+                cur = tfv.text,
+                selStart = tfv.selection.start,
+                selEnd = tfv.selection.end,
+                snippet = snippet,
+            )
+            tfv = TextFieldValue(newText, TextRange(caret))
+            onCaretChange(consoleId, caret, caret)
+            onTextChange(newText)
+        }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Box(
                 modifier = Modifier
@@ -426,6 +444,12 @@ fun SqlWorkspace(
             highlightSql = true,
             subtitle = historyEntryMeta(row),
             copyToast = "已复制历史 SQL",
+            extraAction = if (activeConsole != null) {
+                "插入到当前控制台" to {
+                    historyInsert = row.sqlText
+                    historyView = null
+                }
+            } else null,
         )
     }
 }
@@ -439,6 +463,23 @@ private fun exportEnabledFor(run: ConsoleRunUi): Boolean {
 private fun canTranspose(run: ConsoleRunUi): Boolean {
     val res = run.result ?: return false
     return !run.executing && run.error == null && res.isQuery && res.rowCount > 0
+}
+
+/**
+ * 在 [cur] 的 [selStart]..[selEnd] 选区处插入 [snippet]（有选区则替换之，其余文本原样保留），
+ * 返回新文本与插入内容之后的光标位置。仅在行尾且紧跟非空白字符时补一个换行，避免与上句粘连。
+ * 历史 SQL「插入到当前控制台」用（注意：不覆盖整段草稿）。
+ */
+internal fun insertSnippetAtCaret(cur: String, selStart: Int, selEnd: Int, snippet: String): Pair<String, Int> {
+    val from = minOf(selStart, selEnd).coerceIn(0, cur.length)
+    val to = maxOf(selStart, selEnd).coerceIn(0, cur.length)
+    // 仅在「行尾」插入且紧邻非空白字符时补一个换行，避免与上一句粘连；行中插入保持原样
+    val prev = cur.getOrNull(from - 1)
+    val next = cur.getOrNull(to)
+    val atLineEnd = next == null || next == '\n'
+    val lead = if (prev != null && !prev.isWhitespace() && atLineEnd) "\n" else ""
+    val insert = lead + snippet
+    return (cur.substring(0, from) + insert + cur.substring(to)) to (from + insert.length)
 }
 
 /** 编辑器当前选中片段（去首尾空白）；无选中或选中空白 → null。 */

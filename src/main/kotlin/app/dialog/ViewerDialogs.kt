@@ -226,6 +226,8 @@ fun TextViewerDialog(
     subtitle: String? = null,
     /** 复制成功后的 Toast 文案。 */
     copyToast: String = "已复制全部内容",
+    /** 可选的额外动作按钮（如历史 SQL 的「插入到当前控制台」）；null 则不显示。 */
+    extraAction: Pair<String, () -> Unit>? = null,
 ) {
     val lineCount = content.count { it == '\n' } + 1
     DialogWindow(
@@ -257,6 +259,9 @@ fun TextViewerDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                extraAction?.let { (label, onClick) ->
+                    TextButton(onClick = onClick) { Text(label) }
+                }
                 TextButton(onClick = { onCopy(content, copyToast) }) { Text("复制全部") }
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
