@@ -887,15 +887,17 @@ private fun EditorPane(
 
     val scroll = rememberScrollState()
     // 补全活性判定：本机 Compose Desktop 中 CoreTextField 的焦点在内部节点，外层 onFocusChanged
-    // 收不到事件（实测输入时 focused 恒为 false）——改以 onValueChange（输入/光标移动/点击选区）
-    // 作为“正在编辑”证据 + 4s 空闲看门狗自动退出。
+    // 收不到事件（实测输入时 focused 恒为 false）。且 BasicTextField 在纯鼠标点击/移动光标时
+    // 也会以新选区上报 onValueChange——因此**只有文本真正变化**（敲字/删除/粘贴）才激活补全，
+    // 点击与光标移动立即关闭；再用 4s 空闲看门狗收尾。
     var editing by remember { mutableStateOf(false) }
     var lastEdit by remember { mutableStateOf(0L) }
-    // 显式 Ctrl+Space 唤起：允许空前缀（列出上下文列/表），任意编辑/移动光标后复位
+    // 显式 Ctrl+Space 唤起：允许空前缀（列出上下文列/表）；任意编辑/移动光标后复位
     var forceComplete by remember { mutableStateOf(false) }
     fun commitEdit(v: TextFieldValue) {
+        val typed = v.text != value.text
         lastEdit = System.currentTimeMillis()
-        if (!editing) editing = true
+        editing = typed
         forceComplete = false
         onValueChange(v)
     }
@@ -996,7 +998,7 @@ private fun EditorPane(
             aliases = aliasItems,
             functions = functionItems,
             objects = objectItems,
-            includeKeywords = qualified == null && !forceComplete,
+            includeKeywords = qualified == null && (!forceComplete || word.text.isNotEmpty()),
         )
         else -> emptyList()
     }
@@ -1010,6 +1012,8 @@ private fun EditorPane(
         val insert = item.insertText ?: item.text
         val newText = value.text.replaceRange(w.start, w.end, insert)
         commitEdit(value.copy(text = newText, selection = TextRange(w.start + insert.length)))
+        // 接受后不自动重开（避免刚上屏又弹下一批候选），等下一次敲键或 Ctrl+Space
+        editing = false
     }
 
     // 元数据未命中则异步拉取（回填快照 → 重组合出候选）；键变化即取消旧请求。
@@ -1175,8 +1179,9 @@ private fun EditorPane(
                         }
                         // Ctrl+Space：显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
                         if (e.isCtrlPressed && e.key == Key.Spacebar) {
-                            // 显式唤起：允许空前缀（列/表）；未敲字也行，顺便标记“正在编辑”
+                            // 显式唤起：允许空前缀（列/表）；未敲字也行，顺便标记“正在编辑”并续期看门狗
                             editing = true
+                            lastEdit = System.currentTimeMillis()
                             forceComplete = true
                             dismissed = false
                             return@onPreviewKeyEvent true

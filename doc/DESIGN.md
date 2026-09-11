@@ -237,7 +237,7 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 |---|---|
 | Ctrl+Enter | 运行（编辑器内） |
 | Ctrl+Q | 查看表/视图定义 DDL（浮窗）：优取编辑器光标下的表名（含 `schema.表`/别名），其次左侧树选中项 |
-| Ctrl+Space | 编辑器手动触发补全（空前缀列全部；`SELECT *` 展开为列） |
+| Ctrl+Space | 编辑器主动召唤补全（按光标处前缀/限定符给候选；空前缀列上下文列/表；`SELECT *` 展开为列） |
 | Alt+D | 显示/隐藏结果区 |
 | Ctrl+B | 收起/展开左侧树 |
 | Ctrl+1..9 | 切结果 Tab |
