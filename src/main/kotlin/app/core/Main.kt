@@ -129,7 +129,7 @@ private fun AppRoot(onExit: () -> Unit) {
     }
 
     Window(
-        title = "db-k",
+        title = "DB-K",
         state = windowState,
         onCloseRequest = {
             consoleState.flushAllSync()
