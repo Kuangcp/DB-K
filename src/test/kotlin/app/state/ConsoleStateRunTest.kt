@@ -1,5 +1,6 @@
 package app.state
 
+import db.ColumnCache
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.DbType
@@ -42,7 +43,7 @@ class ConsoleStateRunTest {
     }
 
     private fun newState(repo: ConnectionsRepository, dbPath: Path): Pair<ConnectionsState, ConsoleState> {
-        val cs = ConnectionsState(MetaCache(dbPath))
+        val cs = ConnectionsState(MetaCache(dbPath), ColumnCache(dbPath))
         val state = ConsoleState(
             repository = repo,
             connectionsState = cs,

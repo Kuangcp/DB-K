@@ -65,6 +65,8 @@ class RowActions(
     val onOpenConsole: () -> Unit = {},
     /** DB_OBJECT 行：在控制台里预览（SELECT 前 200 行）。 */
     val onPreviewTable: () -> Unit = {},
+    /** DB_OBJECT 行（表/视图/物化视图）：浮窗查看对象定义 DDL。 */
+    val onViewDdl: () -> Unit = {},
 )
 
 /**
@@ -98,6 +100,8 @@ fun DbTreeSidebar(
     onOpenConsoleForProfile: (ConnectionProfile) -> Unit = {},
     /** DB_OBJECT（表/视图）：双击或菜单触发预览。 */
     onPreviewObject: (TreeRowInfo) -> Unit = {},
+    /** DB_OBJECT（表/视图/物化视图）：浮窗查看定义 DDL（Ctrl+Q 同源）。 */
+    onViewObjectDef: (TreeRowInfo) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
@@ -135,6 +139,7 @@ fun DbTreeSidebar(
                             onCopyQuery = { onCopyQuery(row) },
                             onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
                             onPreviewTable = { onPreviewObject(row) },
+                            onViewDdl = { onViewObjectDef(row) },
                         ),
                     )
                 }
@@ -181,6 +186,7 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<ContextMenuItem
                 if (kind.isPreviewable()) {
                     add(ContextMenuItem("预览（前 100 行）") { actions.onPreviewTable() })
                     add(ContextMenuItem("复制查询（SELECT 预览）") { actions.onCopyQuery() })
+                    add(ContextMenuItem("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
                 }
             }
         }

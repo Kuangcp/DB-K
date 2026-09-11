@@ -1,5 +1,6 @@
 package app.state
 
+import db.ColumnCache
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.DbType
@@ -38,7 +39,7 @@ class ConsoleStateTest {
     /** 用 TestScope 作为协程作用域、Unconfined 调度器作为 IO 调度器，保证防抖可确定性推进。 */
     private fun TestScope.newState(repo: ConnectionsRepository) = ConsoleState(
         repository = repo,
-        connectionsState = ConnectionsState(MetaCache(dbPath)),
+        connectionsState = ConnectionsState(MetaCache(dbPath), ColumnCache(dbPath)),
         scope = this,
         ioDispatcher = UnconfinedTestDispatcher(testScheduler),
     )

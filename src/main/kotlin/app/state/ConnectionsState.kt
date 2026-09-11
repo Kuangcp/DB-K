@@ -4,9 +4,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import db.ColumnCache
 import db.ConnectionProfile
 import db.MetaCache
+import jdbc.DialectRegistry
 import jdbc.LiveConnection
+import jdbc.model.ColumnMeta
 import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
 import kotlinx.coroutines.Dispatchers
@@ -44,10 +47,13 @@ internal fun friendlySqlError(t: Throwable?): String {
  */
 class ConnectionsState(
     private val metaCache: MetaCache = MetaCache(),
+    private val columnCache: ColumnCache = ColumnCache(),
 ) : ConnectionRuntimeView {
 
     private class ConnRuntime(val profile: ConnectionProfile) {
         val live = LiveConnection(profile)
+        /** 编辑器列补全专用的独立元数据连接（懒建；不排队在执行线程后，也不受 sessionContextSql 影响）。 */
+        var metaLive: LiveConnection? = null
         // 仅 ConnectionsState（外层）修改；对外只经 ConnectionRuntimeView 只读暴露
         var status by mutableStateOf(ConnUiStatus.DISCONNECTED)
         var statusMessage by mutableStateOf<String?>(null)
@@ -60,6 +66,8 @@ class ConnectionsState(
 
         fun reset() {
             live.close()
+            metaLive?.close()
+            metaLive = null
             status = ConnUiStatus.DISCONNECTED
             statusMessage = null
             schemas = null
@@ -71,6 +79,12 @@ class ConnectionsState(
     }
 
     private val runtimes = mutableMapOf<String, ConnRuntime>()
+
+    /** 列元数据会话缓存（快照状态；补全读取，异步回填；带磁盘缓存，离线可用）。 */
+    val columns = ColumnCatalog(
+        loader = { profile, schema, table -> fetchColumns(profile, schema, table) },
+        store = columnCache,
+    )
 
     private fun runtime(profile: ConnectionProfile): ConnRuntime =
         runtimes.getOrPut(profile.id) { ConnRuntime(profile) }
@@ -152,6 +166,7 @@ class ConnectionsState(
     suspend fun refreshMetadata(profile: ConnectionProfile): Boolean {
         val rt = runtimes[profile.id] ?: return false
         if (rt.status != ConnUiStatus.CONNECTED) return false
+        columns.invalidate(profile.id)
         rt.schemas = null
         rt.objects.clear()
         rt.objectsLoading.clear()
@@ -223,14 +238,19 @@ class ConnectionsState(
             }
     }
 
-    /** 主动断开：只放连接与内存运行时，磁盘缓存保留（下次连接直接命中，零元数据查询）。 */
+    /** 主动断开：只放连接与会话内存，磁盘缓存保留（下次连接/离线仍可用）。 */
     fun disconnect(profile: ConnectionProfile) {
+        columns.evict(profile.id)
         runtime(profile).reset()
     }
 
     /** 档案被编辑（URL 可能变）：断开并丢弃运行缓存；指纹失配的旧缓存行自动作废。 */
     fun invalidate(profileId: String) {
-        runtimes.remove(profileId)?.live?.close()
+        columns.invalidate(profileId)
+        runtimes.remove(profileId)?.let { rt ->
+            rt.live.close()
+            rt.metaLive?.close()
+        }
     }
 
     /** 供查询执行引擎取连接句柄（连接必须在 CONNECTED 才非空）。 */
@@ -248,8 +268,56 @@ class ConnectionsState(
 
     /** 应用退出清理。 */
     fun disposeAll() {
-        runtimes.values.forEach { it.live.close() }
+        columns.clear()
+        runtimes.values.forEach { it.live.close(); it.metaLive?.close() }
         runtimes.clear()
+    }
+
+    // ---------- 列元数据（编辑器补全） ----------
+
+    /**
+     * 探测单表列（阻塞部分经 IO）。用独立的「元数据连接」：不排队在执行线程后，
+     * 也不受执行前 sessionContextSql 切换 schema 的影响（schema 全部显式传入）。
+     * 失败直接抛出，由 [ColumnCatalog.ensure] 吞掉并回落。
+     */
+    suspend fun fetchColumns(
+        profile: ConnectionProfile,
+        schema: SchemaMeta?,
+        table: String,
+    ): List<ColumnMeta> = withContext(Dispatchers.IO) {
+        val rt = runtime(profile)
+        val live = rt.metaLive ?: LiveConnection(profile).also { rt.metaLive = it }
+        if (!live.isOpen) live.open()
+        live.onConnection { conn -> DialectRegistry.forProfile(profile).loadColumns(conn, schema, table) }
+    }
+
+    /**
+     * 取对象定义 DDL（Ctrl+Q 浮窗）。同样走独立元数据连接（不占执行连接、不受 sessionContextSql 影响）。
+     * 失败不抛：以 [Result.failure] 返回可读原因（供浮窗展示）。
+     */
+    suspend fun fetchDdl(
+        profile: ConnectionProfile,
+        schema: SchemaMeta?,
+        name: String,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val rt = runtime(profile)
+            val live = rt.metaLive ?: LiveConnection(profile).also { rt.metaLive = it }
+            if (!live.isOpen) live.open()
+            live.onConnection { conn -> DialectRegistry.forProfile(profile).tableDdl(conn, schema, name) }
+        }.fold(
+            onSuccess = { ddl ->
+                if (ddl.isNullOrBlank()) {
+                    Result.failure(IllegalStateException("未获取到定义（对象可能不存在，或当前账号无权限）"))
+                } else {
+                    Result.success(ddl)
+                }
+            },
+            onFailure = { t ->
+                Logger.warn(t, "fetchDdl failed {} {}", profile.name, name)
+                Result.failure(IllegalStateException(friendlySqlError(t), t))
+            },
+        )
     }
 
     // ---------- 内部 ----------

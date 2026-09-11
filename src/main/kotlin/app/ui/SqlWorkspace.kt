@@ -10,6 +10,7 @@ import org.tinylog.Logger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -91,7 +93,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
+import app.dialog.CellViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
 import com.neoutils.highlight.core.extension.textColor
@@ -163,6 +167,12 @@ fun SqlWorkspace(
     onFillHistory: (String) -> Unit,
     /** 编辑器补全用数据源对象名（表/视图，已加载）。 */
     completionIdentifiers: List<String>,
+    /** 编辑器列补全用对象清单（表/视图名 + 所属 schema，与 [completionIdentifiers] 同源）。 */
+    completionTables: List<CompletionTable> = emptyList(),
+    /** 编辑器补全用函数/过程/聚合名（PG 等能探测到的数据源；其余为空）。 */
+    completionFunctions: List<String> = emptyList(),
+    /** 列元数据会话缓存（异步回填；null = 不做列补全）。 */
+    columnCatalog: ColumnCatalog? = null,
     /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
     onCopyText: (String, String) -> Unit,
     onDisconnect: () -> Unit,
@@ -338,6 +348,12 @@ fun SqlWorkspace(
                             },
                             onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
                             completionIdentifiers = completionIdentifiers,
+                            completionTables = completionTables,
+                            completionFunctions = completionFunctions,
+                            columnCatalog = columnCatalog,
+                            schemas = schemas.orEmpty(),
+                            defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
+                            profile = profile,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                         )
                         ExecBar(
@@ -843,6 +859,12 @@ private fun EditorPane(
     onValueChange: (TextFieldValue) -> Unit,
     onCtrlEnter: () -> Unit,
     completionIdentifiers: List<String>,
+    completionTables: List<CompletionTable>,
+    completionFunctions: List<String>,
+    columnCatalog: ColumnCatalog?,
+    schemas: List<SchemaMeta>,
+    defaultSchema: SchemaMeta?,
+    profile: ConnectionProfile?,
     modifier: Modifier = Modifier,
 ) {
     val isDark = MaterialTheme.colors.isLight.not()
@@ -869,9 +891,12 @@ private fun EditorPane(
     // 作为“正在编辑”证据 + 4s 空闲看门狗自动退出。
     var editing by remember { mutableStateOf(false) }
     var lastEdit by remember { mutableStateOf(0L) }
+    // 显式 Ctrl+Space 唤起：允许空前缀（列出上下文列/表），任意编辑/移动光标后复位
+    var forceComplete by remember { mutableStateOf(false) }
     fun commitEdit(v: TextFieldValue) {
         lastEdit = System.currentTimeMillis()
         if (!editing) editing = true
+        forceComplete = false
         onValueChange(v)
     }
     LaunchedEffect(Unit) {
@@ -891,20 +916,111 @@ private fun EditorPane(
     )
     val textMeasurer = rememberTextMeasurer()
 
-    // ---- 补全派生状态：caret 词 → 候选 → 弹层 ----
+    // ---- 补全派生状态：caret 词/限定符/星号 → 语句上下文（含 CTE/子查询）→ 候选 → 弹层 ----
     val sel = value.selection
     val caretActive = editing
-    val word = if (!caretActive || !sel.collapsed) null else sqlCompletionWord(value.text, sel.start)
-    val candidates = word?.let { completionCandidates(it.text, completionIdentifiers) }.orEmpty()
+    val canComplete = caretActive && sel.collapsed
+    val qualified = if (canComplete) sqlQualifiedPrefix(value.text, sel.start) else null
+    // 解析 caret 所在语句（只看括号深度 0；只取已写完的表名，避免边敲边查元数据）
+    val prepared = if (canComplete) buildPreparedScope(value.text, sel.start) else null
+    val cteColumns = prepared?.scope?.cteColumns.orEmpty()
+    val allRefs: List<Pair<TableRef, SchemaMeta?>> = prepared?.let { p ->
+        p.scope.tables
+            .filter { it.isComplete(p.stmt.length, p.caretInStmt) }
+            .map { ref ->
+                ref to if (ref.derived || ref.cte) null
+                else resolveTableRef(ref, completionTables, schemas, defaultSchema)
+            }
+    }.orEmpty()
+    // select-list 的 `*` 可展开为 FROM 表列（仅 Ctrl+Space 显式唤起：避免自动弹层劫持 Enter）
+    val starPos = if (canComplete && qualified == null && forceComplete) {
+        selectStarBeforeCaret(value.text, sel.start)
+    } else {
+        null
+    }
+    val word: CompletionWord? = when {
+        qualified != null -> CompletionWord(qualified.wordStart, qualified.wordEnd, qualified.wordText)
+        starPos != null -> CompletionWord(starPos, sel.start, "*")
+        canComplete -> sqlCompletionWord(value.text, sel.start)
+            ?: if (forceComplete && sqlCompletionAllowed(value.text, sel.start)) {
+                CompletionWord(sel.start, sel.start, "")
+            } else null
+        else -> null
+    }
+    // 限定符模式只取匹配该限定符（别名/表名/schema.表）的列；非限定模式取全部 FROM 表列
+    val neededRefs = if (qualified != null) {
+        allRefs.filter { (ref, _) -> ref.matchesQualifier(qualified.qualifier) }
+    } else {
+        allRefs
+    }
+    val columnItems = neededRefs.flatMap { (ref, sch) ->
+        when {
+            ref.derived -> emptyList()
+            ref.cte -> cteColumns[ref.table.lowercase()].orEmpty()
+                .map { CompletionItem(it, "CTE", CompletionKind.COLUMN) }
+            else -> columnCatalog?.peek(profile?.id.orEmpty(), sch, ref.table).orEmpty()
+                .map { CompletionItem(it.name, it.typeName, CompletionKind.COLUMN) }
+        }
+    }
+    val aliasItems = if (qualified != null) emptyList() else allRefs.mapNotNull { (ref, _) ->
+        ref.alias?.let { CompletionItem(it, if (ref.derived) "子查询" else ref.table, CompletionKind.ALIAS) }
+    }
+    val functionItems = if (qualified != null) emptyList() else completionFunctions.map {
+        CompletionItem(it, "函数", CompletionKind.FUNCTION)
+    }
+    val objectItems = if (qualified != null) emptyList() else completionIdentifiers.map { name ->
+        CompletionItem(
+            name,
+            completionTables.firstOrNull { it.name == name }?.schema?.displayName,
+            CompletionKind.TABLE,
+        )
+    }
+    // `*` 展开：仅星号场景生效，单个候选项，上屏写列清单
+    val expandItems = if (starPos != null && columnItems.isNotEmpty()) {
+        listOf(
+            CompletionItem(
+                text = "*",
+                detail = "展开为 ${columnItems.size} 列",
+                kind = CompletionKind.EXPAND,
+                insertText = columnItems.joinToString(", ") { it.text },
+            ),
+        )
+    } else {
+        emptyList()
+    }
+    val candidates = when {
+        starPos != null -> expandItems
+        word != null -> completionItems(
+            word = word.text,
+            columns = columnItems,
+            aliases = aliasItems,
+            functions = functionItems,
+            objects = objectItems,
+            includeKeywords = qualified == null && !forceComplete,
+        )
+        else -> emptyList()
+    }
     val shown = candidates.take(MAX_COMPLETIONS)
     var selIdx by remember(shown) { mutableStateOf(0) }
     var dismissed by remember(word?.start, word?.end, shown.size) { mutableStateOf(false) }
     val popupOpen = shown.isNotEmpty() && !dismissed
 
-    fun accept(c: String) {
+    fun accept(item: CompletionItem) {
         val w = word ?: return
-        val newText = value.text.replaceRange(w.start, w.end, c)
-        commitEdit(value.copy(text = newText, selection = TextRange(w.start + c.length)))
+        val insert = item.insertText ?: item.text
+        val newText = value.text.replaceRange(w.start, w.end, insert)
+        commitEdit(value.copy(text = newText, selection = TextRange(w.start + insert.length)))
+    }
+
+    // 元数据未命中则异步拉取（回填快照 → 重组合出候选）；键变化即取消旧请求。
+    // 真实表才拉列（派生表/CTE 不查库）；表名写完即预取，不要求 caret 在 SELECT 列表。
+    val fetchRefs = allRefs.filter { (ref, _) -> !ref.derived && !ref.cte }
+    val prefetchKey = fetchRefs.joinToString("|") { (r, s) -> "${s?.key ?: ""}#${r.table.lowercase()}" }
+    LaunchedEffect(consoleId, profile?.id, prefetchKey) {
+        val p = profile ?: return@LaunchedEffect
+        val catalog = columnCatalog ?: return@LaunchedEffect
+        if (fetchRefs.isEmpty()) return@LaunchedEffect
+        catalog.ensure(p, fetchRefs.map { (r, s) -> ColumnCatalog.ColumnRef(s, r.table) })
     }
 
     // 弹窗高度自适配：不超出编辑器可视高度（避免被下方执行条/结果区遮挡），至少 64dp
@@ -1057,8 +1173,11 @@ private fun EditorPane(
                             onCtrlEnter()
                             return@onPreviewKeyEvent true
                         }
-                        // Ctrl+Space：显式唤起补全（Esc 关闭后可重新呼出）
+                        // Ctrl+Space：显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
                         if (e.isCtrlPressed && e.key == Key.Spacebar) {
+                            // 显式唤起：允许空前缀（列/表）；未敲字也行，顺便标记“正在编辑”
+                            editing = true
+                            forceComplete = true
                             dismissed = false
                             return@onPreviewKeyEvent true
                         }
@@ -1159,10 +1278,10 @@ private val COMPLETION_W = 300.dp
 private val COMPLETION_H = 176.dp
 private const val MAX_COMPLETIONS = 60
 
-/** 补全候选弹层：主题化小面板，键盘选中的高亮 + 鼠标点击上屏。 */
+/** 补全候选弹层：主题化小面板，左侧类别色点 + 右侧详情（列类型/别名指向）；键盘选中高亮 + 鼠标点击上屏。 */
 @Composable
 private fun CompletionPopup(
-    items: List<String>,
+    items: List<CompletionItem>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -1201,18 +1320,46 @@ private fun CompletionPopup(
                         )
                         .padding(horizontal = 10.dp, vertical = 2.dp),
                 ) {
+                    Box(
+                        Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(completionKindColor(item.kind)),
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        item,
+                        item.text,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+                        modifier = Modifier.weight(1f),
                     )
+                    if (item.detail != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            item.detail,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+/** 补全类别语义点色（只做色点，文字仍走主题色）。 */
+private fun completionKindColor(kind: CompletionKind): Color = when (kind) {
+    CompletionKind.COLUMN -> Color(0xFF5586E4)
+    CompletionKind.ALIAS -> Color(0xFF9E9E9E)
+    CompletionKind.FUNCTION -> Color(0xFF7E57C2)
+    CompletionKind.TABLE -> Color(0xFF26A69A)
+    CompletionKind.KEYWORD -> Color(0xFFFFB300)
+    CompletionKind.EXPAND -> Color(0xFF43A047)
 }
 
 @Composable
@@ -1512,6 +1659,8 @@ private fun ResultTable(
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 单元格大段文本查看器（双击 / 右键「查看完整内容」）
+    var viewer by remember { mutableStateOf<CellView?>(null) }
     val view = if (transposed) transposeResult(result) else result
     val cols = view.columns
     val widths = IntArray(cols.size) { c ->
@@ -1566,15 +1715,20 @@ private fun ResultTable(
                             DataCell("${index + 1}", 44, mono = false, muted = true)
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
+                                val cellView = v?.let { CellView("$colName · 第 ${index + 1} 行", it) }
                                 DataCell(
                                     value = v,
                                     width = widths[c],
+                                    onDoubleClick = cellView?.let { cv -> { viewer = cv } },
                                     menuItems = buildList {
                                         add(
                                             ContextMenuItem("复制单元格值") {
                                                 copyCellValue(onCopyText, v, colName)
                                             },
                                         )
+                                        if (cellView != null) {
+                                            add(ContextMenuItem("查看完整内容") { viewer = cellView })
+                                        }
                                         if (insertSql != null) {
                                             add(
                                                 ContextMenuItem("复制本行 → INSERT") {
@@ -1608,7 +1762,18 @@ private fun ResultTable(
             )
         }
     }
+    viewer?.let { v ->
+        CellViewerDialog(
+            title = v.title,
+            content = v.content,
+            onDismiss = { viewer = null },
+            onCopy = onCopyText,
+        )
+    }
 }
+
+/** 单元格大段文本查看器请求（"列名 · 第 N 行" + 原文）。 */
+private data class CellView(val title: String, val content: String)
 
 /** 复制单元格值：NULL 复制为空串（与 CSV 导出规则一致），Toast 文案带预览。 */
 private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colName: String) {
@@ -1644,6 +1809,7 @@ private fun DataCell(
     width: Int,
     mono: Boolean = true,
     muted: Boolean = false,
+    onDoubleClick: (() -> Unit)? = null,
     menuItems: List<ContextMenuItem> = emptyList(),
 ) {
     val content: @Composable () -> Unit = {
@@ -1670,7 +1836,18 @@ private fun DataCell(
             )
         }
     }
-    val base = Modifier.width(width.dp).height(26.dp)
+    val base = Modifier
+        .width(width.dp)
+        .height(26.dp)
+        .then(
+            if (onDoubleClick != null) {
+                Modifier.pointerInput(onDoubleClick) {
+                    detectTapGestures(onDoubleTap = { onDoubleClick() })
+                }
+            } else {
+                Modifier
+            },
+        )
     if (menuItems.isEmpty()) {
         Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
     } else {

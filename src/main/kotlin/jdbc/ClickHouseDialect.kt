@@ -1,8 +1,10 @@
 package jdbc
 
 import db.DbType
+import jdbc.model.ColumnMeta
 import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
+import org.tinylog.Logger
 import java.sql.Connection
 
 /**
@@ -53,5 +55,54 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
             }
         }
         return SchemaObjects.simple(tables.sorted(), views.sorted())
+    }
+
+    /** 精确 DDL：SHOW CREATE TABLE（CH 返回单列 statement）。 */
+    override fun tableDdl(conn: Connection, schema: SchemaMeta?, name: String): String? {
+        val db = schema?.catalog
+        val qualified = if (db != null) "${quoteIdent(db)}.${quoteIdent(name)}" else quoteIdent(name)
+        val ddl = runCatching {
+            conn.createStatement().use { st ->
+                st.executeQuery("SHOW CREATE TABLE $qualified").use { rs ->
+                    if (rs.next()) rs.getString(1) else null
+                }
+            }
+        }.onFailure { Logger.warn(it, "clickhouse tableDdl failed {}", name) }.getOrNull()
+        return ddl ?: super.tableDdl(conn, schema, name)
+    }
+
+    /**
+     * ClickHouse 列探测走 system.columns（快且稳）；失败/为空回落通用实现。
+     * 库优先用 [SchemaMeta.catalog]；`Nullable(...)` 类型据此识别可空。
+     */
+    override fun loadColumns(conn: Connection, schema: SchemaMeta?, table: String): List<ColumnMeta> {
+        val db = schema?.catalog
+        val sql = buildString {
+            append("SELECT name, type, position FROM system.columns WHERE ")
+            if (db != null) append("database = ? AND ")
+            append("table = ? ORDER BY position")
+        }
+        val cols = runCatching {
+            conn.prepareStatement(sql).use { ps ->
+                var idx = 1
+                if (db != null) ps.setString(idx++, db)
+                ps.setString(idx, table)
+                ps.executeQuery().use { rs ->
+                    val out = mutableListOf<ColumnMeta>()
+                    while (rs.next()) {
+                        val type = rs.getString(2)
+                        out += ColumnMeta(
+                            name = rs.getString(1) ?: continue,
+                            typeName = type,
+                            nullable = type?.startsWith("Nullable", ignoreCase = true) == true,
+                            ordinal = rs.getInt(3),
+                        )
+                    }
+                    out
+                }
+            }
+        }.onFailure { Logger.warn(it, "clickhouse loadColumns failed {}", table) }
+            .getOrDefault(emptyList())
+        return if (cols.isNotEmpty()) cols else queryTableColumns(conn, schema, table)
     }
 }

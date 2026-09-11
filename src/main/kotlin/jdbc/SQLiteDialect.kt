@@ -20,6 +20,19 @@ object SQLiteDialect : GenericDialect(DbType.SQLITE, "org.sqlite.JDBC") {
     override fun loadSchemas(conn: Connection): List<SchemaMeta> =
         listOf(SchemaMeta(catalog = null, schema = "main"))
 
+    /** 精确 DDL：sqlite_master.sql 即建表/建视图原始语句（保留用户书写格式）。 */
+    override fun tableDdl(conn: Connection, schema: SchemaMeta?, name: String): String? {
+        val sql = runCatching {
+            conn.prepareStatement(
+                "SELECT sql FROM sqlite_master WHERE name = ? AND type IN ('table','view') LIMIT 1"
+            ).use { ps ->
+                ps.setString(1, name)
+                ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+            }
+        }.getOrNull()
+        return sql ?: super.tableDdl(conn, schema, name)
+    }
+
     override fun loadObjects(conn: Connection, schema: SchemaMeta): SchemaObjects {
         val tables = mutableListOf<String>()
         val views = mutableListOf<String>()

@@ -3,10 +3,6 @@
 > 零散即时事项。核心分阶段发展计划见 `Roadmap.md`；设计依据见 `doc/DESIGN.md`。
 > 完成一项即删除对应条目（不再保留"已完成"占位）。
 
-**编辑区域**
-
-- 列名级自动补全：现有关键字 + 表/视图/物化视图名补全已实现（P2/P3）；列名候选需先在元数据层缓存列（数据模型落地后补）
-
 **数据源支持**
 
 - SQL Server / Oracle：需要外部驱动加载机制（Oracle 驱动有 license 不能进内置 classpath）→ `<dataDir>/drivers` 目录放 jar，启动时用独立 classloader 注册进 DriverManager，再加方言（Generic 兜底先跑通，再按需覆写）

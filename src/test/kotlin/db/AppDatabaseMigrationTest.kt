@@ -22,7 +22,7 @@ class AppDatabaseMigrationTest {
             c.createStatement().use { st ->
                 st.executeQuery("SELECT version FROM schema_migrations ORDER BY version").use { rs ->
                     val versions = buildList { while (rs.next()) add(rs.getInt(1)) }
-                    assertEquals(listOf(1, 2, 3, 4, 5, 6), versions)
+                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7), versions)
                 }
             }
         }
@@ -87,6 +87,11 @@ class AppDatabaseMigrationTest {
                 }
                 // v5 meta_cache 表存在且为空
                 st.executeQuery("SELECT COUNT(*) FROM meta_cache").use { rs ->
+                    rs.next()
+                    assertEquals(0, rs.getInt(1))
+                }
+                // v7 column_cache 表存在且为空
+                st.executeQuery("SELECT COUNT(*) FROM column_cache").use { rs ->
                     rs.next()
                     assertEquals(0, rs.getInt(1))
                 }

@@ -2,9 +2,12 @@ package jdbc
 
 import db.ConnectionProfile
 import db.DbType
+import jdbc.model.ColumnMeta
 import jdbc.model.SchemaObjects
 import jdbc.model.SchemaMeta
 import java.sql.Connection
+import java.sql.DatabaseMetaData
+import java.sql.ResultSet
 
 /**
  * 目标库方言：封装“建连、库探测、对象探测、标识符引用、语句拼装”的差异。
@@ -23,8 +26,30 @@ interface DbDialect {
     /** 探测某 schema 下的表/视图/触发器。 */
     fun loadObjects(conn: Connection, schema: SchemaMeta): SchemaObjects
 
+    /**
+     * 探测单表列清单（编辑器列补全）。默认走 JDBC [DatabaseMetaData.getColumns]。
+     * **必须传精确表名**（绝不 `%`），否则大库上是全库扫描。
+     * schema 语义与 [loadSchemas] 一致：[SchemaMeta.catalog] 供 MySQL 形态，
+     * [SchemaMeta.schema] 供 PG/H2 形态；SQLite 伪 schema "main" 需转 null。
+     * 大小写兜底：精确名取不到时再试大写/小写（H2 折大写、PG 折小写）。
+     */
+    fun loadColumns(conn: Connection, schema: SchemaMeta?, table: String): List<ColumnMeta> =
+        queryTableColumns(conn, schema, table)
+
     /** 标识符（表/列/schema 名）加引号。 */
     fun quoteIdent(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
+
+    /**
+     * 取对象定义 DDL（Ctrl+Q 浮窗）。
+     * 默认：由 [loadColumns] 近似重建 `CREATE TABLE`（仅列名/类型/NOT NULL，不含索引与约束）。
+     * 能给出精确 DDL 的方言（SQLite/MySQL/MariaDB/ClickHouse）覆写；PostgreSQL 用 pg_catalog 重建。
+     * 返回 null = 取不到（无列/权限不足），由调用方显示空态。
+     */
+    fun tableDdl(conn: Connection, schema: SchemaMeta?, name: String): String? {
+        val cols = runCatching { loadColumns(conn, schema, name) }.getOrDefault(emptyList())
+        if (cols.isEmpty()) return null
+        return reconstructDdl(schema, name, cols) { quoteIdent(it) }
+    }
 
     /** 生成整表预览 SQL（M3 编辑器中执行用；M2 供右键复制）。 */
     fun previewSelect(schema: SchemaMeta?, name: String): String {
@@ -47,6 +72,72 @@ interface DbDialect {
 
     /** 是否支持在控制台内选择执行目标库/schema（SQLite 单文件无意义）。 */
     val supportsTargetSwitch: Boolean get() = true
+}
+
+/**
+ * 通用列探测（JDBC [DatabaseMetaData.getColumns]）：精确表名（绝不 `%`）+ 大小写兜底。
+ * 供 [DbDialect.loadColumns] 默认实现与各方言覆写的回落路径复用。
+ */
+internal fun queryTableColumns(conn: Connection, schema: SchemaMeta?, table: String): List<ColumnMeta> {
+    val md = conn.metaData
+    val catalog = schema?.catalog
+    val schemaPattern = schema?.schema?.takeIf { it != "main" }
+    var cols = queryColumns(md, catalog, schemaPattern, table)
+    if (cols.isEmpty() && table.uppercase() != table) {
+        cols = queryColumns(md, catalog, schemaPattern, table.uppercase())
+    }
+    if (cols.isEmpty() && table.lowercase() != table) {
+        cols = queryColumns(md, catalog, schemaPattern, table.lowercase())
+    }
+    return cols.sortedBy { it.ordinal }
+}
+
+private fun queryColumns(
+    md: DatabaseMetaData,
+    catalog: String?,
+    schemaPattern: String?,
+    table: String,
+): List<ColumnMeta> = md.getColumns(catalog, schemaPattern, table, null).use { rs -> readColumnRows(rs) }
+
+/** 从 JDBC 元数据列结果集读 [ColumnMeta]（结果列名按 JDBC 规范）。 */
+internal fun readColumnRows(rs: ResultSet): List<ColumnMeta> {
+    val out = mutableListOf<ColumnMeta>()
+    while (rs.next()) {
+        val name = rs.getString("COLUMN_NAME") ?: continue
+        out += ColumnMeta(
+            name = name,
+            typeName = runCatching { rs.getString("TYPE_NAME") }.getOrNull(),
+            nullable = runCatching { rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls }
+                .getOrDefault(true),
+            ordinal = runCatching { rs.getInt("ORDINAL_POSITION") }.getOrDefault(0),
+        )
+    }
+    return out
+}
+
+/**
+ * 由列元数据近似重建 `CREATE TABLE`（[DbDialect.tableDdl] 的默认/回落路径）。
+ * 只保证列名 + 类型 + NOT NULL；主键、索引、默认值、注释需方言精确实现。
+ */
+internal fun reconstructDdl(
+    schema: SchemaMeta?,
+    name: String,
+    columns: List<ColumnMeta>,
+    quote: (String) -> String,
+): String {
+    val prefix = buildString {
+        schema?.let {
+            when {
+                it.schema != null && it.schema != "main" -> append(quote(it.schema)).append('.')
+                it.catalog != null -> append(quote(it.catalog)).append('.')
+            }
+        }
+    }
+    val body = columns.joinToString(",\n") { c ->
+        val type = c.typeName?.takeIf { it.isNotBlank() } ?: "?"
+        "  ${quote(c.name)} $type" + if (!c.nullable) " NOT NULL" else ""
+    }
+    return "CREATE TABLE $prefix${quote(name)} (\n$body\n);"
 }
 
 /** 方言注册表：dbType -> 单例方言（无状态，可共享）。 */

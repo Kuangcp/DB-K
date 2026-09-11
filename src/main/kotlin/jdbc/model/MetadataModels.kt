@@ -49,6 +49,18 @@ val ObjectKind.displayNoun: String
         ObjectKind.OPERATOR_FAMILY -> "操作符族"
     }
 
+/**
+ * 单列元数据（编辑器列补全 / 展示用）。
+ * [typeName] 为驱动给出的类型名，可能为 null；[ordinal] 用于稳定排序。
+ */
+@Serializable
+data class ColumnMeta(
+    val name: String,
+    val typeName: String? = null,
+    val nullable: Boolean = true,
+    val ordinal: Int = 0,
+)
+
 /** 表 / 视图 / 序列……对象节点。TRIGGER 时 tableName 为其所属表名。 */
 @Serializable
 data class DbObjectMeta(

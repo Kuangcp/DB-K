@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 6
+    private const val CURRENT_VERSION = 7
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -52,6 +52,29 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV6(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (6)").use { it.executeUpdate() }
         }
+        if (!applied.contains(7)) {
+            conn.createStatement().use { st -> migrateToV7(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (7)").use { it.executeUpdate() }
+        }
+    }
+
+    /**
+     * v7：单表列清单磁盘缓存（编辑器列补全；离线/重启可用）。一行 = 一表，
+     * 指纹 = 连接档案 URL 身份，指纹失配按未命中。删除/编辑档案时按 profile_id 清理。
+     */
+    private fun migrateToV7(st: Statement) {
+        st.executeUpdate(
+            """
+            CREATE TABLE IF NOT EXISTS column_cache (
+                profile_id TEXT NOT NULL,
+                object_key TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                saved_at_ms INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (profile_id, object_key)
+            )
+            """.trimIndent(),
+        )
     }
 
     /**

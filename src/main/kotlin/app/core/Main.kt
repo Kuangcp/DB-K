@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.compose.ui.window.rememberWindowState
 import app.dialog.ConfirmDialog
 import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
+import app.dialog.DdlDialog
 import app.dialog.FolderNameDialog
 import app.settings.ThemePrefs
 import app.settings.TreeExpandPrefs
@@ -54,8 +56,10 @@ import app.state.ConsoleState
 import app.state.ConsoleRunUi
 import app.state.DialogState
 import app.state.FolderDialogRequest
+import app.state.TableDdlRequest
 import app.state.TreeState
 import app.state.ToastState
+import app.ui.CompletionTable
 import app.ui.SqlWorkspace
 import app.ui.appMaterialColors
 import db.AppPaths
@@ -64,6 +68,8 @@ import db.ConnectionsRepository
 import db.ConsoleRecord
 import jdbc.DialectRegistry
 import jdbc.QueryExecutor
+import jdbc.model.ObjectKind
+import jdbc.model.displayNoun
 import jdbc.model.isPreviewable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -242,14 +248,25 @@ private fun AppBody(
         }
     }
 
-    // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名。
+    // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名 + 所属 schema。
     // 元数据（库列表 + 对象）已由 ConnectionsState 在连接建立时整体预取并读缓存（见 ensureConnectionReady），
     // 数据来自数据源目录元信息；树是否展开不影响候选完整性。
-    val completionIdentifiers: List<String> = activeProfile?.let { p ->
+    val completionTables: List<CompletionTable> = activeProfile?.let { p ->
         connectionsState.schemasOf(p.id).orEmpty()
             .flatMap { s ->
                 connectionsState.objectsOf(p.id, s.key)
                     ?.let { o -> o.tables + o.views + o.materializedViews }.orEmpty()
+                    .map { name -> CompletionTable(name, s) }
+            }
+    }.orEmpty()
+    val completionIdentifiers: List<String> = completionTables.map { it.name }.distinct().sorted()
+    // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
+    val completionFunctions: List<String> = activeProfile?.let { p ->
+        connectionsState.schemasOf(p.id).orEmpty()
+            .flatMap { s ->
+                connectionsState.objectsOf(p.id, s.key)?.let { o ->
+                    (o.forKind(ObjectKind.ROUTINE) + o.forKind(ObjectKind.AGGREGATE)).map { it.name }
+                }.orEmpty()
             }
             .distinct()
             .sorted()
@@ -306,15 +323,27 @@ private fun AppBody(
     // 不再依赖此处 keyed effect —— 旧的实现会在 CONNECTED 但库列表尚未加载完的窗口期提前
     // return，库列表就绪后又没有重触发，导致双击连接后补全一直为空。
 
+    // Ctrl+Q 查看定义：目标 = 左侧当前选中的表/视图/物化视图（无选中则提示）。
+    val ddlTarget: TableDdlRequest? = rows.firstOrNull { it.key == treeState.selectedRowKey }?.let { row ->
+        val p = row.profile
+        val obj = row.dbObject
+        if (row.kind == TreeRowKind.DB_OBJECT && p != null && obj != null && obj.kind.isPreviewable()) {
+            TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
+        } else {
+            null
+        }
+    }
+    val ddlTargetState = rememberUpdatedState(ddlTarget)
+
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
-            // Alt+D 显示/隐藏结果区必须用 AWT 级 KeyEventDispatcher 拦截：
-            // Linux/X11 实测，Alt+字母除 KEY_PRESSED 外还会派发一次字符事件
-            // （Compose 侧表现为 key=Unknown、utf16CodePoint=98），该事件绕过 KeyDown 的
-            // 消费直接进入编辑器的文本输入会话（编辑器失焦时平台会话仍绑定它，故
-            // “焦点在哪都会漏 b”）。AWT 派发器在事件进入 Compose 之前把整颗按键
+            // Alt+D 显示/隐藏结果区、Ctrl+Q 查看定义必须用 AWT 级 KeyEventDispatcher 拦截：
+            // Linux/X11 实测，修饰键+字母除 KEY_PRESSED 外还会派发一次字符事件
+            // （Alt+字母：key=Unknown、utf16CodePoint=98；Ctrl+字母：控制字符），该事件绕过
+            // KeyDown 的消费直接进入编辑器的文本输入会话（编辑器失焦时平台会话仍绑定它，
+            // 故“焦点在哪都会漏 b”/漏控制字符）。AWT 派发器在事件进入 Compose 之前把整颗按键
             // （KEY_PRESSED + KEY_TYPED）吃掉，两条通道都收不到。
             DisposableEffect(Unit) {
                 val dispatcher = java.awt.KeyEventDispatcher { e ->
@@ -322,6 +351,21 @@ private fun AppBody(
                         // 只在首次按下时切换，忽略自动重复（KEY_RELEASED/KEY_TYPED 只吞不切）
                         if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
                             resultsVisible = !resultsVisible
+                        }
+                        true
+                    } else if (e.isControlDown && (
+                            e.keyCode == java.awt.event.KeyEvent.VK_Q ||
+                                e.keyChar == 'q' || e.keyChar == '\u0011'
+                            )
+                    ) {
+                        // Ctrl+Q：只在首次按下时取值（控制字符 KEY_TYPED 只吞不重复触发）
+                        if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                            val target = ddlTargetState.value
+                            if (target != null) {
+                                dialogState.tableDdl = target
+                            } else {
+                                toastState.show("请先在左侧选中表/视图，再按 Ctrl+Q")
+                            }
                         }
                         true
                     } else {
@@ -373,6 +417,13 @@ private fun AppBody(
                         onRefresh = { treeState.refresh() },
                         onOpenConsoleForProfile = { p -> consoleState.activateForProfile(p.id) },
                         onPreviewObject = ::previewObject,
+                        onViewObjectDef = { row ->
+                            val p = row.profile
+                            val obj = row.dbObject
+                            if (p != null && obj != null) {
+                                dialogState.tableDdl = TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
+                            }
+                        },
                     )
                     TreeSplitter { delta -> treeWidthDp = (treeWidthDp + delta).coerceIn(180f, 680f) }
                     val runState = activeConsole?.let { consoleState.runStateOf(it.id) } ?: ConsoleRunUi()
@@ -505,6 +556,9 @@ private fun AppBody(
                             }
                         },
                         completionIdentifiers = completionIdentifiers,
+                        completionTables = completionTables,
+                        completionFunctions = completionFunctions,
+                        columnCatalog = connectionsState.columns,
                         onCopyText = { text, label ->
                             writeClipboardText(text)
                             toastState.show(label)
@@ -526,6 +580,10 @@ private fun AppBody(
                     connectionsState = connectionsState,
                     consoleState = consoleState,
                     profiles = profiles,
+                    onCopyText = { text, label ->
+                        writeClipboardText(text)
+                        toastState.show(label)
+                    },
                 )
                 ToastHost(toastState)
             }
@@ -549,7 +607,16 @@ private fun DialogHost(
     connectionsState: ConnectionsState,
     consoleState: ConsoleState,
     profiles: List<ConnectionProfile>,
+    onCopyText: (String, String) -> Unit = { _, _ -> },
 ) {
+    dialogState.tableDdl?.let { request ->
+        DdlDialog(
+            request = request,
+            loadDdl = connectionsState::fetchDdl,
+            onDismiss = { dialogState.tableDdl = null },
+            onCopy = onCopyText,
+        )
+    }
     dialogState.folderDialog?.let { request ->
         FolderNameDialog(
             request = request,

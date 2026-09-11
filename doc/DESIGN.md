@@ -130,6 +130,8 @@ interface DbDialect {
     fun loadSchemas(conn: Connection): List<SchemaMeta>          // PG 返回 schema 列表
     fun loadObjects(conn: Connection, s: SchemaMeta): ObjectsMeta// 该库的表/视图/触发器
     fun quoteIdent(name: String): String                          // PG/H2 用 "x"，MySQL 用 `x`
+    fun loadColumns(conn: Connection, s: SchemaMeta?, table: String): List<ColumnMeta>  // 列补全用（精确表名）
+    fun tableDdl(conn: Connection, s: SchemaMeta?, name: String): String?                // 对象定义 DDL（Ctrl+Q）
     fun limitSql(sql: String, n: Int): String                     // 预览 LIMIT；SQL Server 用 TOP
     fun listCatalogs(conn: Connection): List<String>              // MySQL: catalog==database
 }
@@ -140,6 +142,13 @@ object DialectRegistry { fun forType(t: DbType): DbDialect }
 - `GenericDialect` 用 `java.sql.DatabaseMetaData` 兜底（getTables/getColumns/getTriggers），新库可零代码接入；
 - PG 实现：过滤 `pg_catalog`/`information_schema`；SQLite：无 catalog 概念，只有 `main`，走 `sqlite_master`；MySQL/MariaDB：catalog 即库，schema 层合一；
 - 双击表「预览 100 行」= `limitSql("SELECT * FROM schema.table", 100)`，标识符统一 `quoteIdent`。
+- 对象定义（Ctrl+Q）：能精确给出的方言覆写 `tableDdl`——SQLite（`sqlite_master.sql`）、
+  MySQL/MariaDB/ClickHouse（`SHOW CREATE TABLE`）；PostgreSQL 无此语句，用 `pg_catalog` 重建
+  （列名/类型/默认值/NOT NULL + 主键，不含索引/外键/注释）；其余库回落「由列元数据重建」。
+  读取走独立元数据连接（不占执行连接），浮窗内定宽滚动展示 + 「复制全部」，见 `app/dialog/ViewerDialogs.kt`。
+  ⚠ 查看器一律用**显式尺寸的 `DialogWindow`**（`rememberDialogState(size = …)`），不可用 `AlertDialog`：
+  AlertDialog 的窗口会 pack-to-content，`verticalScroll`/`LazyColumn` 在 pack 测量时把窗口撑成内容全高，
+  滚动后内容整体移出窗口（实测：大片留白/内容消失）。
 
 ---
 
@@ -190,10 +199,12 @@ App 顶层 `remember { XxxState(...) }` 拆成独立状态类，组件纯参数 
 ```
 
 交互细节（按里程碑逐条落地）：
-- 树右键：数据源 → 连接/断开/刷新/编辑/删除；表 → 预览 100 行 / 生成 `SELECT *` / 复制表名（生成 DDL 后置）；
+- 树右键：数据源 → 连接/断开/刷新/编辑/删除；表/视图 → 预览 100 行 / 复制 `SELECT *` / 复制表名 / 查看定义 DDL；
+- 查看定义：树里选中表/视图/物化视图后 `Ctrl+Q`（或右键「查看定义」）→ 浮窗取 DDL（见 §5），正文可滚动 + 「复制全部」；
 - 双击表：`SELECT * FROM t LIMIT 100` 注入编辑器并直接运行；
 - 结果支持多语句一次执行（`;` 切分或整段提交），每个结果集一个 Tab，消息 Tab 收错误/update 行数，错误不弹窗刷屏；
-- 列宽：首版「内容估算 + 双击表头自动适配」即可，拖动列宽后置；
+- 单元格大段文本（如 `SHOW CREATE TABLE`）：**双击单元格**或右键「查看完整内容」→ 浮窗等宽显示全文（字符/行数、定高滚动 + 右侧滚动条、可整体复制）；
+- 列宽：首版「内容估算 + 双击表头自动适配」即可，拖动列宽后置（大文本改走单元格查看器）；
 - 深/浅主题 + 窗口几何/树展开/分割比持久化（api-x 同款 prefs）。
 
 ---
@@ -224,13 +235,17 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 | 键 | 动作 |
 |---|---|
 | Ctrl+Enter | 运行（编辑器内） |
+| Ctrl+Q | 查看左侧选中表/视图/物化视图的定义 DDL（浮窗） |
+| Ctrl+Space | 编辑器手动触发补全（空前缀列全部；`SELECT *` 展开为列） |
+| Alt+D | 显示/隐藏结果区 |
 | Ctrl+B | 收起/展开左侧树 |
 | Ctrl+1..9 | 切结果 Tab |
 | F5 | 刷新当前连接 schema |
 | Esc | 取消当前执行 |
 | Ctrl+↑ / Ctrl+↓ | 翻 SQL 历史（后置） |
 
-全局键处理用 Window `onPreviewKeyEvent`（api-x 同款），编辑器内快捷键在编辑器层拦截。
+全局键处理用 AWT `KeyEventDispatcher` 拦截（api-x 同款；X11 下修饰键+字母会额外派发字符事件，
+必须在事件进入 Compose 前整颗吃掉，见 `Main.kt` 注释），编辑器内快捷键在编辑器层拦截。
 
 ---
 

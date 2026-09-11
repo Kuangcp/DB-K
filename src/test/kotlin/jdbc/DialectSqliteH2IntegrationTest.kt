@@ -40,6 +40,18 @@ class DialectSqliteH2IntegrationTest {
                 setOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.TRIGGER),
                 objects.objects.keys,
             )
+
+            // 列探测：单表精确查询，含类型与顺序
+            val columns = SQLiteDialect.loadColumns(conn, schemas.first(), "users")
+            assertEquals(listOf("id", "name"), columns.map { it.name })
+            assertTrue(columns.all { it.ordinal > 0 })
+
+            // 对象定义（Ctrl+Q）：sqlite_master.sql 即原始建表/建视图语句
+            assertEquals(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+                SQLiteDialect.tableDdl(conn, schemas.first(), "users"),
+            )
+            assertTrue(SQLiteDialect.tableDdl(conn, schemas.first(), "rich")!!.contains("CREATE VIEW"))
         }
     }
 
@@ -60,6 +72,16 @@ class DialectSqliteH2IntegrationTest {
             val objects = H2Dialect.loadObjects(conn, schemas.first { it.displayName == "PUBLIC" })
             assertTrue(objects.tables.any { it.equals("account", ignoreCase = true) })
             assertTrue(objects.views.any { it.equals("v_account", ignoreCase = true) })
+
+            // 列探测：经 PUBLIC schema；小写表名应能命中原大写表（大小写兜底）
+            val columns = H2Dialect.loadColumns(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
+            assertEquals(listOf("id"), columns.map { it.name.lowercase() })
+
+            // 对象定义：H2 无内置 SHOW CREATE，走通用重建（列名/类型/NOT NULL）
+            val ddl = H2Dialect.tableDdl(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
+            assertTrue(ddl != null && ddl.contains("CREATE TABLE"))
+            assertTrue(ddl.contains("ID", ignoreCase = true))
+            assertTrue(ddl.contains("NOT NULL", ignoreCase = true))
         }
     }
 }

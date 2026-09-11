@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import db.ConnectionProfile
 import db.FolderRow
+import jdbc.model.SchemaMeta
 
 /** 连接档案编辑弹窗请求。 */
 sealed interface ConnectionEditorRequest {
@@ -21,6 +22,15 @@ sealed interface FolderDialogRequest {
 /** 控制台重命名弹窗请求。 */
 data class ConsoleRenameRequest(val consoleId: String, val currentName: String)
 
+/** 对象定义（DDL）浮窗请求（Ctrl+Q / 树右键）。 */
+data class TableDdlRequest(
+    val profile: ConnectionProfile,
+    val schema: SchemaMeta?,
+    val objectName: String,
+    /** 中文名词（表/视图/物化视图），用于标题。 */
+    val noun: String,
+)
+
 /** 危险操作确认弹窗请求（删除类）。 */
 sealed interface ConfirmRequest {
     data class DeleteFolder(val id: String, val name: String, val movingConnections: Int) : ConfirmRequest
@@ -32,5 +42,6 @@ class DialogState {
     var connectionEditor by mutableStateOf<ConnectionEditorRequest?>(null)
     var folderDialog by mutableStateOf<FolderDialogRequest?>(null)
     var consoleRename by mutableStateOf<ConsoleRenameRequest?>(null)
+    var tableDdl by mutableStateOf<TableDdlRequest?>(null)
     var confirm by mutableStateOf<ConfirmRequest?>(null)
 }

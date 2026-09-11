@@ -3,10 +3,18 @@ package jdbc
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.DbType
+import app.ui.CompletionTable
 import app.ui.completionCandidates
+import app.ui.completionItems
 import app.ui.extractTableName
+import app.ui.isComplete
+import app.ui.matchesQualifier
+import app.ui.parseTableRefs
+import app.ui.resolveTableRef
 import app.ui.rowToInsertSql
 import app.ui.sqlCompletionWord
+import app.ui.sqlQualifiedPrefix
+import app.ui.statementRangeAt
 import app.ui.transposeResult
 import org.tinylog.Logger
 import jdbc.model.ObjectKind
@@ -40,7 +48,8 @@ fun main() {
     check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
 
     smokeEditorUtils()
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils PASS (ClickHouse driver load OK)")
+    smokeColumnCompletion()
+    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion PASS (ClickHouse driver load OK)")
 }
 
 /** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */
@@ -78,6 +87,56 @@ private fun smokeEditorUtils() {
     Logger.info("[editor-utils] completion/transpose/insert PASS", "PASS")
 }
 
+/** 列补全上下文解析自检（SqlEditing.kt 纯逻辑，不依赖数据库）。 */
+private fun smokeColumnCompletion() {
+    val sql = "SELECT u.id, u. FROM public.users u JOIN orders o ON o.uid = u.id"
+    val range = statementRangeAt(sql, 9)!!
+    check(sql.substring(range.first, range.last + 1).trimStart().startsWith("SELECT u.id"))
+    val scope = parseTableRefs(sql)
+    check(scope.tables.map { it.table } == listOf("users", "orders"))
+    check(scope.tables[0].schema == "public" && scope.tables[0].alias == "u")
+    check(scope.tables[1].alias == "o" && !scope.complex)
+    // 派生表（有别名）不再整体 complex，且内层 FROM 不计入；无别名派生表才 complex
+    val derived = parseTableRefs("SELECT * FROM (SELECT 1 AS a) s")
+    check(!derived.complex && derived.tables.single().derived)
+    check(parseTableRefs("SELECT (SELECT max(x) FROM t2) AS m FROM t1").tables.map { it.table } == listOf("t1"))
+
+    // CTE：显式列名可静态得知；`*` 展开只在 select 列表
+    val cte = parseTableRefs("WITH c(a, b) AS (SELECT 1, 2) SELECT c.a FROM c")
+    check(cte.cteColumns["c"] == listOf("a", "b") && cte.tables.single().cte)
+    check(app.ui.selectStarBeforeCaret("SELECT *", 8) == 7)
+    check(app.ui.selectStarBeforeCaret("SELECT count(*", 14) == null)
+
+    val q = sqlQualifiedPrefix("SELECT u.na FROM users u", 11)!!
+    check(q.qualifier == "u" && q.wordText == "na")
+    check(sqlQualifiedPrefix("SELECT 1.5", 10) == null)
+
+    val publicSchema = jdbc.model.SchemaMeta(catalog = null, schema = "public")
+    check(scope.tables[0].matchesQualifier("u"))
+    check(scope.tables[0].matchesQualifier("public.users"))
+    check(resolveTableRef(scope.tables[1], listOf(CompletionTable("orders", publicSchema)), listOf(publicSchema), null) == publicSchema)
+
+    check(completionCandidates("na", listOf("users"), listOf("name", "nick"), includeKeywords = false) == listOf("name"))
+    check(completionCandidates("", emptyList(), listOf("id", "name"), includeKeywords = false) == listOf("id", "name"))
+
+    // 表名写完判定：边敲不查，写完才查
+    val typing = "SELECT * FROM use"
+    check(!parseTableRefs(typing).tables.single().isComplete(typing.length, typing.length))
+    val done = "SELECT * FROM users WHERE 1=1"
+    check(parseTableRefs(done).tables.single().isComplete(done.length, 9))
+
+    // 富候选：列详情 + 类别排序
+    val items = completionItems(
+        word = "",
+        columns = listOf(app.ui.CompletionItem("id", "INTEGER", app.ui.CompletionKind.COLUMN)),
+        aliases = listOf(app.ui.CompletionItem("u", "users", app.ui.CompletionKind.ALIAS)),
+        objects = listOf(app.ui.CompletionItem("users", "public", app.ui.CompletionKind.TABLE)),
+        includeKeywords = false,
+    )
+    check(items.map { it.text } == listOf("id", "u", "users"))
+    Logger.info("[column-completion] parse/qualifier/resolve PASS", "PASS")
+}
+
 private fun smokeSqlite(dir: Path) {
     val dbFile = dir.resolve("demo.db")
     DriverManager.getConnection("jdbc:sqlite:$dbFile").use { c ->
@@ -109,6 +168,16 @@ private fun smokeSqlite(dir: Path) {
         check(objects.forKind(ObjectKind.TABLE).size == objects.tables.size)
         check(objects.total == objects.tables.size + objects.views.size + objects.triggers.size)
         Logger.info("[SQLite] previewSql: {}", dialect.previewSelect(schemas.first(), "users"))
+        val cols = dialect.loadColumns(conn, schemas.first(), "orders")
+        Logger.info("[SQLite] columns={}", cols.map { "${it.name}:${it.typeName}" })
+        check(cols.map { it.name } == listOf("id", "user_id", "amount"))
+
+        // 对象定义（Ctrl+Q）：SQLite 直接取 sqlite_master.sql（精确原文）
+        val tableDdl = dialect.tableDdl(conn, schemas.first(), "orders")
+        Logger.info("[SQLite] tableDdl: {}", tableDdl)
+        check(tableDdl != null && tableDdl.contains("CREATE TABLE") && tableDdl.contains("amount"))
+        val viewDdl = dialect.tableDdl(conn, schemas.first(), "rich_orders")
+        check(viewDdl != null && viewDdl.contains("CREATE VIEW", ignoreCase = true))
 
         // QueryExecutor：SELECT 读行、非查询 update 影响行数
         val q1 = QueryExecutor.execute(conn, "SELECT id, name FROM users ORDER BY id")
@@ -154,6 +223,13 @@ private fun smokeH2(dir: Path) {
         check(objects.views.any { it.equals("big_balances", ignoreCase = true) })
         check(objects.objects.keys == setOf(ObjectKind.TABLE, ObjectKind.VIEW))
         Logger.info("[H2] previewSql: {}", H2Dialect.previewSelect(schemas.first(), "account"))
+        val cols = H2Dialect.loadColumns(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
+        Logger.info("[H2] columns={}", cols.map { "${it.name}:${it.typeName}" })
+        check(cols.map { it.name.lowercase() } == listOf("id", "balance"))
+        // 对象定义：H2 无内置 SHOW CREATE，走通用重建（列名/类型/NOT NULL）
+        val h2Ddl = H2Dialect.tableDdl(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
+        Logger.info("[H2] tableDdl: {}", h2Ddl)
+        check(h2Ddl != null && h2Ddl.contains("CREATE TABLE") && h2Ddl.contains("ID", ignoreCase = true))
     }
 }
 
@@ -328,6 +404,20 @@ private fun smokeDbStore(dir: Path) {
         // URL 身份变了 → 指纹失配，视为未命中（不喂错库的数据）
         check(mc.load(cacheProfile.copy(host = "other-host")) == null) { "URL 变化应失配" }
         Logger.info("[db-store] v5 meta_cache 迁移/读写 PASS", "PASS")
+
+        // v7 列缓存：按表增量读写、指纹失配、按 profile 清理
+        val cc = db.ColumnCache(dbFile)
+        val ckey = db.columnObjectKey(schemas[0], "accounts")
+        val ccols = listOf(
+            jdbc.model.ColumnMeta("id", "INTEGER", nullable = false, ordinal = 1),
+            jdbc.model.ColumnMeta("name", "TEXT", nullable = true, ordinal = 2),
+        )
+        cc.save(cacheProfile, ckey, ccols)
+        check(cc.load(cacheProfile, ckey)?.columns == ccols) { "列缓存读写回环失败" }
+        check(cc.load(cacheProfile.copy(host = "other-host"), ckey) == null) { "列缓存 URL 变化应失配" }
+        cc.delete(cacheProfile.id)
+        check(cc.load(cacheProfile, ckey) == null) { "列缓存应可按 profile 清理" }
+        Logger.info("[db-store] v7 column_cache 迁移/读写 PASS", "PASS")
 
         // 删除连接档案 → 级联清掉缓存行
         mc.save(cacheProfile, schemas, objects)
