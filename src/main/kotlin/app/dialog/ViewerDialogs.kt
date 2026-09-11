@@ -45,11 +45,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.state.TableDdlRequest
+import app.ui.applyJsonHighlightRules
 import app.ui.applySqlHighlightRules
 import app.ui.decodeBase64Bytes
 import app.ui.humanSize
 import app.ui.imageFormatName
+import app.ui.jsonSyntaxPalette
+import app.ui.looksLikeJson
 import app.ui.md5Hex
+import app.ui.parseJsonDocument
 import app.ui.sqlHighlightKeywords
 import app.ui.sqlSyntaxPalette
 import com.neoutils.highlight.compose.remember.rememberAnnotatedString
@@ -59,6 +63,7 @@ import jdbc.model.SchemaMeta
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
 
 /** 查看器窗口的初始尺寸（显式指定，绝不能留 Unspecified——见文件末注释）。 */
 private val VIEWER_WINDOW_SIZE = DpSize(780.dp, 580.dp)
@@ -68,7 +73,7 @@ private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
 /** 与结果表格一致的滚动条样式（主题色半透明，深浅色下都可见）。 */
 @Composable
-private fun viewerScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
+internal fun viewerScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
     minimalHeight = 24.dp,
     thickness = 10.dp,
     shape = RoundedCornerShape(5.dp),
@@ -130,6 +135,27 @@ private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
     val highlight = rememberHighlight(isDark) {
         applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
     }
+    val annotated = highlight.rememberAnnotatedString(content)
+    ViewerFrame(modifier) {
+        Text(
+            annotated,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+        )
+    }
+}
+
+/**
+ * 只读 JSON 代码视图：与树视图共用 [jsonSyntaxPalette] 色板，按 JSON 语法高亮（原文模式）。
+ * 仅在单元格内容被识别为 JSON 时使用，避免任意文本误染。
+ */
+@Composable
+private fun JsonCodeText(content: String, modifier: Modifier = Modifier) {
+    val isDark = MaterialTheme.colors.isLight.not()
+    val palette = remember(isDark) { jsonSyntaxPalette(isDark) }
+    // isDark 作 key：主题切换时重建 Highlight（与 SqlCodeText 一致）。
+    val highlight = rememberHighlight(isDark) { applyJsonHighlightRules(palette) }
     val annotated = highlight.rememberAnnotatedString(content)
     ViewerFrame(modifier) {
         Text(
@@ -311,6 +337,22 @@ fun CellViewerDialog(
     var imageBusy by remember(content) { mutableStateOf(false) }
     var imageError by remember(content) { mutableStateOf<String?>(null) }
 
+    // JSON 识别：初筛通过后后台解析；成功则默认进入树视图（可切回原文，原文按 JSON 高亮）
+    val looksJson = remember(content) { looksLikeJson(content) }
+    var jsonRoot by remember(content) { mutableStateOf<JsonElement?>(null) }
+    var jsonBusy by remember(content) { mutableStateOf(false) }
+    var jsonMode by remember(content) { mutableStateOf(true) }
+    val jsonTreeState = remember(content) { JsonTreeState() }
+
+    LaunchedEffect(content) {
+        jsonRoot = null
+        if (!looksJson) return@LaunchedEffect
+        jsonBusy = true
+        // 大 JSON 解析开销 O(n)，放后台线程，避免卡住弹窗
+        jsonRoot = withContext(Dispatchers.Default) { parseJsonDocument(content) }.getOrNull()
+        jsonBusy = false
+    }
+
     fun computeMd5() {
         md5Busy = true
         scope.launch {
@@ -359,11 +401,34 @@ fun CellViewerDialog(
             // 副标题（左）+ 工具（右）
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${content.length} 字符 · $lineCount 行",
+                    buildString {
+                        append("${content.length} 字符 · $lineCount 行")
+                        if (jsonRoot != null) append(" · JSON")
+                    },
                     style = MaterialTheme.typography.caption,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                     modifier = Modifier.weight(1f),
                 )
+                if (looksJson) {
+                    TextButton(
+                        enabled = !jsonBusy && jsonRoot != null,
+                        onClick = { jsonMode = !jsonMode },
+                    ) {
+                        Text(
+                            when {
+                                jsonBusy -> "JSON…"
+                                jsonRoot == null -> "非 JSON"
+                                jsonMode -> "原文"
+                                else -> "JSON 树"
+                            },
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                if (jsonRoot != null && jsonMode && !showImage) {
+                    TextButton(onClick = { jsonTreeState.expandAll() }) { Text("展开全部", fontSize = 12.sp) }
+                    TextButton(onClick = { jsonTreeState.collapseAll() }) { Text("收起全部", fontSize = 12.sp) }
+                }
                 TextButton(
                     enabled = !md5Busy,
                     onClick = { if (md5 != null) md5 = null else computeMd5() },
@@ -452,7 +517,13 @@ fun CellViewerDialog(
                     }
                 }
             } else {
-                ViewerText(content, Modifier.weight(1f).fillMaxWidth())
+                val root = jsonRoot
+                when {
+                    root != null && jsonMode ->
+                        JsonTreeView(root, jsonTreeState, Modifier.weight(1f).fillMaxWidth())
+                    root != null -> JsonCodeText(content, Modifier.weight(1f).fillMaxWidth())
+                    else -> ViewerText(content, Modifier.weight(1f).fillMaxWidth())
+                }
             }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
