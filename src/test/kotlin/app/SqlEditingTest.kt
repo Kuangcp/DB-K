@@ -278,4 +278,51 @@ class SqlEditingTest {
         check(ref.matchesQualifier("public.users"))
         check(!ref.matchesQualifier("o"))
     }
+
+    // ---- tableAtCaret（Ctrl+Q 定位光标下的表） ----
+
+    private val publicS = SchemaMeta(catalog = null, schema = "public")
+    private val archiveS = SchemaMeta(catalog = null, schema = "archive")
+    private val known = listOf(
+        CompletionTable("users", publicS),
+        CompletionTable("orders", publicS),
+        CompletionTable("users", archiveS),
+    )
+
+    @Test
+    fun `tableAtCaret resolves bare table and alias`() {
+        // 光标在 `users` 中间（FROM users）
+        val sql = "SELECT * FROM users WHERE id = 1"
+        assertEquals(TableAtCaret("users", publicS), tableAtCaret(sql, 17, known, listOf(publicS, archiveS), publicS))
+        // 别名 u → 其表
+        val aliased = "SELECT u.id FROM users u"
+        assertEquals(TableAtCaret("users", publicS), tableAtCaret(aliased, 23, known, listOf(publicS, archiveS), publicS))
+        // `u.id` 的列 id：限定符 u → users
+        assertEquals(TableAtCaret("users", publicS), tableAtCaret(aliased, 10, known, listOf(publicS, archiveS), publicS))
+    }
+
+    @Test
+    fun `tableAtCaret resolves schema qualified and honors default schema`() {
+        val sql = "SELECT * FROM archive.users"
+        assertEquals(
+            TableAtCaret("users", archiveS),
+            tableAtCaret(sql, 22, known, listOf(publicS, archiveS), publicS),
+        )
+        // 同名跨 schema：裸名优先 defaultSchema
+        val bare = "SELECT * FROM users"
+        assertEquals(
+            TableAtCaret("users", archiveS),
+            tableAtCaret(bare, 17, known, listOf(publicS, archiveS), archiveS),
+        )
+    }
+
+    @Test
+    fun `tableAtCaret returns null for columns keywords and cte`() {
+        val sql = "SELECT name FROM orders"
+        assertNull(tableAtCaret(sql, 9, known, listOf(publicS), publicS)) // name 不是表
+        assertNull(tableAtCaret("SELECT * FROM t", 5, known, listOf(publicS), publicS)) // 关键字 SELECT
+        val cte = "WITH c AS (SELECT 1) SELECT * FROM c"
+        assertNull(tableAtCaret(cte, cte.length - 1, known, listOf(publicS), publicS)) // CTE 无 DDL
+        assertNull(tableAtCaret("SELECT 'users'", 11, known, listOf(publicS), publicS)) // 字符串内
+    }
 }

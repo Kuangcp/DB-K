@@ -62,6 +62,7 @@ import app.state.ToastState
 import app.ui.CompletionTable
 import app.ui.SqlWorkspace
 import app.ui.appMaterialColors
+import app.ui.tableAtCaret
 import db.AppPaths
 import db.ConnectionProfile
 import db.ConnectionsRepository
@@ -69,6 +70,7 @@ import db.ConsoleRecord
 import jdbc.DialectRegistry
 import jdbc.QueryExecutor
 import jdbc.model.ObjectKind
+import jdbc.model.SchemaMeta
 import jdbc.model.displayNoun
 import jdbc.model.isPreviewable
 import kotlinx.coroutines.Dispatchers
@@ -323,17 +325,53 @@ private fun AppBody(
     // 不再依赖此处 keyed effect —— 旧的实现会在 CONNECTED 但库列表尚未加载完的窗口期提前
     // return，库列表就绪后又没有重触发，导致双击连接后补全一直为空。
 
-    // Ctrl+Q 查看定义：目标 = 左侧当前选中的表/视图/物化视图（无选中则提示）。
-    val ddlTarget: TableDdlRequest? = rows.firstOrNull { it.key == treeState.selectedRowKey }?.let { row ->
-        val p = row.profile
-        val obj = row.dbObject
-        if (row.kind == TreeRowKind.DB_OBJECT && p != null && obj != null && obj.kind.isPreviewable()) {
-            TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
-        } else {
-            null
+    // Ctrl+Q 查看定义：优先取「编辑器光标所在表名」（最近 4s 内动过编辑器），其次取左侧树选中项。
+    // 编辑器与树都没指向可看定义的表时提示。用 rememberUpdatedState 把最新 Lambda 交给 AWT 派发器。
+    val lastEditorActivity = remember { java.util.concurrent.atomic.AtomicLong(0L) }
+
+    fun ddlNoun(profileId: String, schema: SchemaMeta?, name: String): String {
+        val s = schema ?: return "对象"
+        val objs = connectionsState.objectsOf(profileId, s.key) ?: return "对象"
+        for (kind in listOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW)) {
+            if (objs.forKind(kind).any { it.name.equals(name, ignoreCase = true) }) return kind.displayNoun
+        }
+        return "对象"
+    }
+
+    val resolveDdlTarget: () -> TableDdlRequest? = {
+        val treeTarget = rows.firstOrNull { it.key == treeState.selectedRowKey }?.let { row ->
+            val p = row.profile
+            val obj = row.dbObject
+            if (row.kind == TreeRowKind.DB_OBJECT && p != null && obj != null && obj.kind.isPreviewable()) {
+                TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
+            } else {
+                null
+            }
+        }
+        val editorTarget = run {
+            val c = consoleState.activeConsole() ?: return@run null
+            val p = profiles.firstOrNull { it.id == c.connectionId } ?: return@run null
+            val text = consoleState.textOf(c.id)
+            if (text.isBlank()) return@run null
+            val (selStart, _) = consoleState.caretOf(c.id)
+            val sch = connectionsState.schemasOf(p.id).orEmpty()
+            val at = tableAtCaret(
+                text = text,
+                caret = selStart,
+                knownTables = completionTables,
+                schemas = sch,
+                defaultSchema = sch.firstOrNull { it.displayName == c.target.orEmpty() },
+            ) ?: return@run null
+            TableDdlRequest(p, at.schema, at.name, ddlNoun(p.id, at.schema, at.name))
+        }
+        val recentEditor = System.currentTimeMillis() - lastEditorActivity.get() < 4000
+        when {
+            recentEditor && editorTarget != null -> editorTarget
+            treeTarget != null -> treeTarget
+            else -> editorTarget
         }
     }
-    val ddlTargetState = rememberUpdatedState(ddlTarget)
+    val resolveDdlTargetState = rememberUpdatedState(resolveDdlTarget)
 
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
@@ -360,11 +398,11 @@ private fun AppBody(
                     ) {
                         // Ctrl+Q：只在首次按下时取值（控制字符 KEY_TYPED 只吞不重复触发）
                         if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
-                            val target = ddlTargetState.value
+                            val target = resolveDdlTargetState.value()
                             if (target != null) {
                                 dialogState.tableDdl = target
                             } else {
-                                toastState.show("请先在左侧选中表/视图，再按 Ctrl+Q")
+                                toastState.show("请把编辑器光标放到表名上，或在左侧选中表/视图，再按 Ctrl+Q")
                             }
                         }
                         true
@@ -465,9 +503,15 @@ private fun AppBody(
                         },
                         editorText = activeConsole?.let { consoleState.textOf(it.id) }.orEmpty(),
                         editorDirty = activeConsole?.let { consoleState.isDirty(it.id) } == true,
-                        onTextChange = { t -> activeConsole?.let { consoleState.setText(it.id, t) } },
+                        onTextChange = { t ->
+                            activeConsole?.let { consoleState.setText(it.id, t) }
+                            lastEditorActivity.set(System.currentTimeMillis())
+                        },
                         caretOf = consoleState::caretOf,
-                        onCaretChange = { id, s, e -> consoleState.setCaret(id, s, e) },
+                        onCaretChange = { id, s, e ->
+                            consoleState.setCaret(id, s, e)
+                            lastEditorActivity.set(System.currentTimeMillis())
+                        },
                         onSaveNow = { consoleState.activeConsole()?.let { consoleState.saveNow(it.id) } },
                         run = activeRun,
                         onRun = ::runActiveConsole,

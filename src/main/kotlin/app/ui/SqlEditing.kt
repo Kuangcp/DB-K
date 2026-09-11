@@ -502,6 +502,63 @@ fun TableRef.matchesQualifier(qualifier: String): Boolean {
         (schema != null && "${schema.lowercase()}.${table.lowercase()}" == q)
 }
 
+/** 光标处标识符解析出的表/视图（Ctrl+Q 查看定义）。 */
+data class TableAtCaret(val name: String, val schema: SchemaMeta?)
+
+/** 光标处标识符的完整区间（左右各扩展到标识符边界）；不在标识符上返回 null。 */
+private fun identRangeAt(text: String, caret: Int): IntRange? {
+    val pos = caret.coerceIn(0, text.length)
+    if (isInsideCommentOrString(text.substring(0, pos))) return null
+    var s = pos
+    var e = pos
+    while (s > 0 && isIdentChar(text[s - 1])) s--
+    while (e < text.length && isIdentChar(text[e])) e++
+    return if (s == e) null else s until e
+}
+
+/**
+ * 光标所在标识符若指向表/视图则解析出来（列名/关键字/CTE/派生表返回 null）。用于 Ctrl+Q：
+ * - 别名（含 `u.id` 里的 `u`）→ 该别名指向的表；
+ * - 表名（裸名，或作为 `users.id` 的限定符）→ 该表；
+ * - `schema.表名` → 该 schema 下的表。
+ * 同名跨 schema 时优先 [defaultSchema]；查不到则返回 null。
+ */
+fun tableAtCaret(
+    text: String,
+    caret: Int,
+    knownTables: List<CompletionTable>,
+    schemas: List<SchemaMeta>,
+    defaultSchema: SchemaMeta?,
+): TableAtCaret? {
+    val range = identRangeAt(text, caret) ?: return null
+    val token = text.substring(range.first, range.last + 1)
+    if (token.all { it.isDigit() }) return null
+    // 点前缀：`schema.` 或 `表/别名.`
+    val before = text.substring(0, range.first)
+    val qualifier = if (before.endsWith('.')) {
+        var j = before.length - 1
+        var k = j
+        while (k > 0 && isIdentChar(before[k - 1])) k--
+        before.substring(k, j).takeIf { it.isNotEmpty() }
+    } else {
+        null
+    }
+    // 1) 当前语句内的表引用（别名 / 表名 / 限定符；CTE、派生表无定义可看）
+    buildPreparedScope(text, caret)?.scope?.tables?.let { refs ->
+        val asRef = qualifier ?: token
+        refs.firstOrNull { !it.derived && !it.cte && it.matchesQualifier(asRef) }?.let { ref ->
+            return TableAtCaret(ref.table, resolveTableRef(ref, knownTables, schemas, defaultSchema))
+        }
+    }
+    // 2) 已缓存对象清单（裸表名 / schema.表名）
+    val candidates = knownTables.filter { t ->
+        t.name.equals(token, ignoreCase = true) && (qualifier == null || t.schema.matchesName(qualifier))
+    }
+    if (candidates.isEmpty()) return null
+    val chosen = candidates.firstOrNull { it.schema.key == defaultSchema?.key } ?: candidates.first()
+    return TableAtCaret(chosen.name, chosen.schema)
+}
+
 /**
  * 结果集行列转制（仅展示视图）：原列 → 新表行，首列标签为原列名，另起一列“行 N”作表头。
  * 转制基于已读出的行（截断后仍只含 MAX_ROWS 内的行）。
