@@ -113,6 +113,7 @@ import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
 import app.state.StatementOutcome
 import app.settings.EditorSettings
+import app.dialog.CellViewerDialog
 import app.dialog.TextViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
@@ -2086,12 +2087,11 @@ private fun ResultTable(
         }
     }
     viewer?.let { v ->
-        TextViewerDialog(
+        CellViewerDialog(
             title = v.title,
             content = v.content,
             onDismiss = { viewer = null },
             onCopy = onCopyText,
-            copyToast = "已复制单元格内容",
         )
     }
 }
