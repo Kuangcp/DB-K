@@ -1,6 +1,8 @@
 package tree
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,6 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
@@ -92,6 +98,22 @@ class RowActions(
     val onViewDdl: () -> Unit = {},
 )
 
+/** 每层缩进宽度（dp）与行首/行尾内边距。
+ *  层级最深 4（文件夹→连接→库→组→对象），旧值 16dp 把对象名挤到右侧；12dp 更紧凑。 */
+private const val INDENT_PER_DEPTH_DP = 12
+private const val ROW_START_PAD_DP = 6
+
+/** 树右侧滚动条样式：主题色半透明，深/浅色下都可见（与结果表格/查看器一致）。 */
+@Composable
+private fun treeScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
+    minimalHeight = 24.dp,
+    thickness = 8.dp,
+    shape = RoundedCornerShape(4.dp),
+    hoverDurationMillis = 300,
+    unhoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.20f),
+    hoverColor = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+)
+
 /**
  * 左侧树：文件夹 → 连接 → 库(schema) → 对象组 → 表/视图/触发器。
  * 扁平化渲染：每行一个 [TreeRowInfo]，缩进按 depth。
@@ -140,48 +162,58 @@ fun DbTreeSidebar(
         if (rows.isEmpty()) {
             EmptyTreeHint(onAddFolder, { onAddConnectionAt(null) })
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(vertical = 4.dp),
-            ) {
-                items(rows, key = { it.key }) { row ->
-                    TreeRowView(
-                        row = row,
-                        selected = row.key == selectedKey,
-                        canExpand = when (row.kind) {
-                            TreeRowKind.FOLDER -> row.childCount > 0
-                            TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
-                            TreeRowKind.SCHEMA -> true
-                            TreeRowKind.OBJECT_GROUP -> row.childCount > 0
-                            else -> false
-                        },
-                        onSelect = { onSelectRow(row.key) },
-                        onToggle = { onToggleExpand(row) },
-                        actions = RowActions(
-                            onConnect = { onToggleExpand(row) },
-                            onAddConnectionAt = { onAddConnectionAt(row.folderId) },
-                            onRenameFolder = { onRenameFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
-                            onDeleteFolder = { onDeleteFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
-                            onEditConnection = { row.profile?.let(onEditConnection) },
-                            onDeleteConnection = { row.profile?.let(onDeleteConnection) },
-                            onDisconnect = { row.profile?.let(onDisconnectConnection) },
-                            onRefreshMetadata = { row.profile?.let(onRefreshMetadata) },
-                            onCopyName = { onCopyName(row) },
-                            onCopyQuery = { onCopyQuery(row) },
-                            onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
-                            consoles = if (row.kind == TreeRowKind.CONNECTION) {
-                                row.profile?.let { consolesForProfile(it.id) }.orEmpty()
-                            } else {
-                                emptyList()
+            val listState = rememberLazyListState()
+            // 右侧挂常驻滚动条（上千张表必需）；列表预留出滚动条宽度，避免行内容/选中底色压到条下
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().padding(end = 8.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                ) {
+                    items(rows, key = { it.key }) { row ->
+                        TreeRowView(
+                            row = row,
+                            selected = row.key == selectedKey,
+                            canExpand = when (row.kind) {
+                                TreeRowKind.FOLDER -> row.childCount > 0
+                                TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
+                                TreeRowKind.SCHEMA -> true
+                                TreeRowKind.OBJECT_GROUP -> row.childCount > 0
+                                else -> false
                             },
-                            activeConsoleId = activeConsoleId,
-                            onOpenConsoleRecord = onOpenConsoleRecord,
-                            onCreateConsole = { row.profile?.let(onCreateConsoleForProfile) },
-                            onPreviewTable = { onPreviewObject(row) },
-                            onViewDdl = { onViewObjectDef(row) },
-                        ),
-                    )
+                            onSelect = { onSelectRow(row.key) },
+                            onToggle = { onToggleExpand(row) },
+                            actions = RowActions(
+                                onConnect = { onToggleExpand(row) },
+                                onAddConnectionAt = { onAddConnectionAt(row.folderId) },
+                                onRenameFolder = { onRenameFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
+                                onDeleteFolder = { onDeleteFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
+                                onEditConnection = { row.profile?.let(onEditConnection) },
+                                onDeleteConnection = { row.profile?.let(onDeleteConnection) },
+                                onDisconnect = { row.profile?.let(onDisconnectConnection) },
+                                onRefreshMetadata = { row.profile?.let(onRefreshMetadata) },
+                                onCopyName = { onCopyName(row) },
+                                onCopyQuery = { onCopyQuery(row) },
+                                onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
+                                consoles = if (row.kind == TreeRowKind.CONNECTION) {
+                                    row.profile?.let { consolesForProfile(it.id) }.orEmpty()
+                                } else {
+                                    emptyList()
+                                },
+                                activeConsoleId = activeConsoleId,
+                                onOpenConsoleRecord = onOpenConsoleRecord,
+                                onCreateConsole = { row.profile?.let(onCreateConsoleForProfile) },
+                                onPreviewTable = { onPreviewObject(row) },
+                                onViewDdl = { onViewObjectDef(row) },
+                            ),
+                        )
+                    }
                 }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(listState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                    style = treeScrollbarStyle(),
+                )
             }
         }
     }
@@ -518,7 +550,7 @@ private fun TreeRowView(
                 else -> onSelect()
             }
         }
-        .padding(start = 6.dp + (row.depth * 16).dp, end = 6.dp)
+        .padding(start = (ROW_START_PAD_DP + row.depth * INDENT_PER_DEPTH_DP).dp, end = 6.dp)
         .padding(vertical = if (row.kind == TreeRowKind.OBJECT_GROUP) 1.dp else 3.dp)
 
     val content: @Composable () -> Unit = {
