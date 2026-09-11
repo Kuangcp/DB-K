@@ -9,6 +9,7 @@ import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.rememberScrollbarAdapter
 import org.tinylog.Logger
+import kotlinx.coroutines.launch
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +18,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +61,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +69,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -74,6 +79,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -124,6 +130,12 @@ private fun estWidth(chars: Int): Int = (chars * 7 + 20).coerceIn(64, 320)
 /** 手动拖动列宽的上下限（dp）。 */
 private const val MIN_COL_WIDTH = 40
 private const val MAX_COL_WIDTH = 1600
+
+/** 结果表行号 gutter 宽（dp，表头与数据行共用）。 */
+private const val RESULT_GUTTER_DP = 44
+
+/** 单列结果 / 转置后只剩一个值列时，值列自适应加宽的上限（dp，避免超长字段把列撑成巨宽）。 */
+private const val MAX_FLEX_COL_WIDTH = 600
 
 /**
  * 右侧 SQL 工作台（控制台主导）。
@@ -1792,6 +1804,9 @@ private fun CenteredHint(text: String, isError: Boolean) {
  * [transposed]=true 时仅展示行列转制视图（复制交互随之作用于转置后的网格；
  * “本行 → INSERT”在转置视图下无意义故隐藏）。
  */
+/** 结果表内单元格坐标（行列均基于当前展示视图：转置后为转置坐标）。 */
+private data class CellSel(val row: Int, val col: Int)
+
 @Composable
 private fun ResultTable(
     result: QueryResult,
@@ -1803,48 +1818,121 @@ private fun ResultTable(
     var viewer by remember { mutableStateOf<CellView?>(null) }
     val view = if (transposed) transposeResult(result) else result
     val cols = view.columns
-    // 列宽：默认按内容采样估算；用户拖表头分隔线可覆盖（列数/内容/布局变化时重建）。
-    // 用轻量键避免每次重组合都对整表行做深比较（拖动时会高频重组合）。
-    val widths = remember(result.sql, result.columns, result.rows.size, transposed) {
-        mutableStateListOf<Int>().apply {
-            addAll(
-                IntArray(cols.size) { c ->
-                    var w = cols[c].name.length
-                    val sample = minOf(view.rows.size, 300)
-                    for (r in 0 until sample) {
-                        val len = view.rows[r][c]?.length ?: 5 // (NULL)
-                        if (len > w) w = len
-                    }
-                    estWidth(w)
-                }.toList(),
-            )
-        }
-    }
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     // 横向滚动用共享 ScrollState + horizontalScroll（表头与每一行都读同一偏移）——
     // 不能用多个 LazyRow 共享 LazyListState：虚拟化列表各自测量，滚动条驱动时只有
     // 最近测量那一个响应，会出现“只有内容滚、表头不动”的错位。
     val hScroll = rememberScrollState()
     val vScroll = rememberLazyListState()
+    // 结果表格滚动条：列多/行多时可见可拖，横向条与表头/各行同步
+    val scrollbarStyle = dbScrollbarStyle()
+    // 列宽：默认按内容采样估算；用户拖表头分隔线可覆盖（列数/内容/布局变化时重建）。
+    // 用轻量键避免每次重组合都对整表行做深比较（拖动时会高频重组合）。
+    val baseWidths = remember(result.sql, result.columns, result.rows.size, transposed) {
+        List(cols.size) { c ->
+            var w = cols[c].name.length
+            val sample = minOf(view.rows.size, 300)
+            for (r in 0 until sample) {
+                val len = view.rows[r][c]?.length ?: 5 // (NULL)
+                if (len > w) w = len
+            }
+            estWidth(w)
+        }
+    }
+    val widths = remember(result.sql, result.columns, result.rows.size, transposed) {
+        mutableStateListOf<Int>().apply { addAll(baseWidths) }
+    }
+    // 单列结果 / 转置后只剩一个值列（列名 + 行 1）时，让该值列自适应吃掉右侧空白（有上限）。
+    val widenCol = when {
+        transposed && cols.size == 2 -> 1
+        !transposed && cols.size == 1 -> 0
+        else -> -1
+    }
+    // 用户手动拖过列宽后不再自动加宽（按列记忆）
+    val manualCols = remember(result.sql, result.rows.size, transposed) {
+        mutableStateListOf<Boolean>().apply { repeat(cols.size) { add(false) } }
+    }
+    var tableWidthPx by remember { mutableStateOf(0) }
+    val scrollbarDp = scrollbarStyle.thickness.value
+    val availDp = with(density) { tableWidthPx.toDp().value }
+    LaunchedEffect(availDp, widenCol, result.sql, transposed) {
+        if (widenCol in cols.indices && availDp > 0f && !manualCols[widenCol]) {
+            val others = cols.indices.filter { it != widenCol }.sumOf { widths[it] }
+            val slack = availDp - RESULT_GUTTER_DP - scrollbarDp - others
+            widths[widenCol] = slack
+                .coerceIn(baseWidths[widenCol].toFloat(), MAX_FLEX_COL_WIDTH.toFloat())
+                .toInt()
+        }
+    }
+    // 点选 / 方向键选中的单元格（换结果或转置即清空）
+    val sel = remember(result.sql, result.rows.size, transposed) { mutableStateOf<CellSel?>(null) }
+    val focusRequester = remember { FocusRequester() }
+    val onMove = { dr: Int, dc: Int ->
+        if (view.rows.isNotEmpty() && cols.isNotEmpty()) {
+            val cur = sel.value ?: CellSel(0, 0)
+            val nr = (cur.row + dr).coerceIn(0, view.rows.size - 1)
+            val nc = (cur.col + dc).coerceIn(0, cols.size - 1)
+            sel.value = CellSel(nr, nc)
+            scope.launch {
+                // 垂直：目标行不在可视区才滚（避免每次移动都跳回顶部）
+                if (vScroll.layoutInfo.visibleItemsInfo.none { it.index == nr }) {
+                    vScroll.animateScrollToItem(nr)
+                }
+                // 水平：把目标列滚进视口
+                val x0 = with(density) { (RESULT_GUTTER_DP + widths.take(nc).sum()).dp.toPx() }
+                val x1 = x0 + with(density) { widths[nc].dp.toPx() }
+                val vp = hScroll.viewportSize
+                when {
+                    x0 < hScroll.value -> hScroll.animateScrollTo(x0.toInt())
+                    x1 > hScroll.value + vp -> hScroll.animateScrollTo((x1 - vp).toInt())
+                }
+            }
+        }
+    }
+    val onKey: (KeyEvent) -> Boolean = { e ->
+        if (e.type != KeyEventType.KeyDown) {
+            false
+        } else {
+            when {
+                e.isCtrlPressed && e.key == Key.C -> {
+                    sel.value?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
+                    true
+                }
+                e.key == Key.DirectionUp -> { onMove(-1, 0); true }
+                e.key == Key.DirectionDown -> { onMove(1, 0); true }
+                e.key == Key.DirectionLeft -> { onMove(0, -1); true }
+                e.key == Key.DirectionRight -> { onMove(0, 1); true }
+                else -> false
+            }
+        }
+    }
     // 每行可生成的 INSERT（仅原布局；复杂查询/无法定表时 null）
     val tableName = extractTableName(result.sql)
     val insertSqls: List<String?> = if (transposed) view.rows.map { null }
     else result.rows.map { row -> rowToInsertSql(result.sql, result.columns.map { it.name }, row) }
-    // 结果表格滚动条：列多/行多时可见可拖，横向条与表头/各行同步
-    val scrollbarStyle = dbScrollbarStyle()
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .onSizeChanged { tableWidthPx = it.width }
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent(onKey),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
                 .horizontalScroll(hScroll),
         ) {
-            RowHeaderCell("", 44)
+            RowHeaderCell("", RESULT_GUTTER_DP)
             cols.forEachIndexed { c, col ->
                 // 表头单元格 + 右缘拖拽把手（覆盖式，不占布局宽，保证与数据行水平对齐）
                 Box {
-                    RowHeaderCell(col.name, widths[c])
+                    RowHeaderCell(col.name, widths[c], highlighted = sel.value?.col == c)
                     ColumnResizeHandle(
                         modifier = Modifier.align(Alignment.CenterEnd),
+                        onDragStart = { manualCols[c] = true },
                         onDrag = { deltaDp ->
                             widths[c] = (widths[c] + deltaDp.toInt()).coerceIn(MIN_COL_WIDTH, MAX_COL_WIDTH)
                         },
@@ -1859,22 +1947,31 @@ private fun ResultTable(
                 LazyColumn(state = vScroll, modifier = Modifier.weight(1f).fillMaxWidth()) {
                     itemsIndexed(view.rows) { index, row ->
                         val insertSql = insertSqls.getOrNull(index)
+                        val rowSelected = sel.value?.row == index
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
-                                    if (index % 2 == 1) MaterialTheme.colors.onSurface.copy(alpha = 0.025f)
-                                    else Color.Transparent,
+                                    when {
+                                        rowSelected -> MaterialTheme.colors.primary.copy(alpha = 0.10f)
+                                        index % 2 == 1 -> MaterialTheme.colors.onSurface.copy(alpha = 0.025f)
+                                        else -> Color.Transparent
+                                    },
                                 )
                                 .horizontalScroll(hScroll),
                         ) {
-                            DataCell("${index + 1}", 44, mono = false, muted = true)
+                            RowHeaderCell("${index + 1}", RESULT_GUTTER_DP, highlighted = rowSelected)
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
                                 val cellView = v?.let { CellView("$colName · 第 ${index + 1} 行", it) }
                                 DataCell(
                                     value = v,
                                     width = widths[c],
+                                    selected = sel.value == CellSel(index, c),
+                                    onSelect = {
+                                        sel.value = CellSel(index, c)
+                                        focusRequester.requestFocus()
+                                    },
                                     onDoubleClick = cellView?.let { cv -> { viewer = cv } },
                                     menuItems = buildList {
                                         add(
@@ -1901,7 +1998,7 @@ private fun ResultTable(
                         }
                         Divider(
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.05f),
-                            modifier = Modifier.padding(start = 44.dp),
+                            modifier = Modifier.padding(start = RESULT_GUTTER_DP.dp),
                         )
                     }
                 }
@@ -1939,6 +2036,7 @@ private data class CellView(val title: String, val content: String)
 private fun ColumnResizeHandle(
     onDrag: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    onDragStart: () -> Unit = {},
 ) {
     val resizeCursor = remember {
         PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.E_RESIZE_CURSOR))
@@ -1947,6 +2045,7 @@ private fun ColumnResizeHandle(
     // 手势协程只捕获一次 lambda，需经 rememberUpdatedState 拿最新值
     // （结果/列变化时 widths 会被重建，旧引用会写到已废弃的列表上）
     val currentOnDrag = rememberUpdatedState(onDrag)
+    val currentOnDragStart = rememberUpdatedState(onDragStart)
     var active by remember { mutableStateOf(false) }
     // 子 dp 拖拽累积：hidpi 下单次事件可能不足 1dp，先攒够整 dp 再上报，避免小拖无反应
     var acc by remember { mutableStateOf(0f) }
@@ -1957,7 +2056,11 @@ private fun ColumnResizeHandle(
             .pointerHoverIcon(resizeCursor)
             .pointerInput(density) {
                 detectDragGestures(
-                    onDragStart = { active = true; acc = 0f },
+                    onDragStart = {
+                        active = true
+                        acc = 0f
+                        currentOnDragStart.value()
+                    },
                     onDragEnd = { active = false },
                     onDragCancel = { active = false },
                 ) { change, dragAmount ->
@@ -1995,16 +2098,20 @@ private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colN
 }
 
 @Composable
-private fun RowHeaderCell(text: String, width: Int) {
+private fun RowHeaderCell(text: String, width: Int, highlighted: Boolean = false) {
     Box(
-        modifier = Modifier.width(width.dp).height(30.dp),
+        modifier = Modifier
+            .width(width.dp)
+            .height(30.dp)
+            .background(if (highlighted) MaterialTheme.colors.primary.copy(alpha = 0.12f) else Color.Transparent),
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(
             text,
             fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+            fontWeight = if (highlighted) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (highlighted) MaterialTheme.colors.primary
+            else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 8.dp),
@@ -2016,6 +2123,8 @@ private fun RowHeaderCell(text: String, width: Int) {
 private fun DataCell(
     value: String?,
     width: Int,
+    selected: Boolean = false,
+    onSelect: () -> Unit = {},
     mono: Boolean = true,
     muted: Boolean = false,
     onDoubleClick: (() -> Unit)? = null,
@@ -2045,18 +2154,24 @@ private fun DataCell(
             )
         }
     }
+    // 手势块只捕获一次 lambda：经 rememberUpdatedState 取最新回调，避免每次重组合重启手势
+    val currentSelect = rememberUpdatedState(onSelect)
+    val currentDoubleClick = rememberUpdatedState(onDoubleClick)
     val base = Modifier
         .width(width.dp)
         .height(26.dp)
+        .background(if (selected) MaterialTheme.colors.primary.copy(alpha = 0.18f) else Color.Transparent)
         .then(
-            if (onDoubleClick != null) {
-                Modifier.pointerInput(onDoubleClick) {
-                    detectTapGestures(onDoubleTap = { onDoubleClick() })
-                }
-            } else {
-                Modifier
-            },
+            if (selected) Modifier.border(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.85f))
+            else Modifier,
         )
+        // 单击按下即选中（不等双击判定）；双击开大字段查看器（无内容时不动作）
+        .pointerInput(Unit) {
+            detectTapGestures(
+                onPress = { currentSelect.value() },
+                onDoubleTap = { currentDoubleClick.value?.invoke() },
+            )
+        }
     if (menuItems.isEmpty()) {
         Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
     } else {
