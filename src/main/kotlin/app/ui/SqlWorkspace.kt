@@ -74,7 +74,10 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.type
@@ -893,6 +896,12 @@ private fun EditorPane(
     }.rememberTextFieldValue(value)
 
     val scroll = rememberScrollState()
+    // 拖拽选区自动滚动：指针停在上/下边缘时持续滚动并同步延伸选区（多行大块选择必需）。
+    // 编辑器是「BasicTextField + 外层 verticalScroll」结构，BasicTextField 不知道外层滚动，
+    // 不会自己滚；所以在父 Box 上旁路观察指针（Final pass，不干涉文本域自身选区逻辑）。
+    var dragActive by remember { mutableStateOf(false) }
+    var dragPointer by remember { mutableStateOf<Offset?>(null) }
+    var scrollAnchor by remember { mutableStateOf<Int?>(null) }
     // 补全活性判定：本机 Compose Desktop 中 CoreTextField 的焦点在内部节点，外层 onFocusChanged
     // 收不到事件（实测输入时 focused 恒为 false）。且 BasicTextField 在纯鼠标点击/移动光标时
     // 也会以新选区上报 onValueChange——因此**只有文本真正变化**（敲字/删除/粘贴）才激活补全，
@@ -1085,6 +1094,43 @@ private fun EditorPane(
         scroll.scrollTo(target.toInt())
     }
 
+    // 拖拽选区自动滚动循环：指针在边缘区时持续滚动，并把选区焦点移到边缘所在文本位置
+    // （固定端 = 开始拖拽时远离指针的那一端，锁在 scrollAnchor 里）。
+    val currentValue = rememberUpdatedState(value)
+    val edgeZonePx = with(density) { 30.dp.toPx() }
+    val scrollDir = when {
+        !dragActive || dragPointer == null -> 0
+        dragPointer!!.y < textTopPx + edgeZonePx -> -1
+        dragPointer!!.y > boxH - textTopPx - edgeZonePx -> 1
+        else -> 0
+    }
+    LaunchedEffect(scrollDir, dragActive) {
+        if (!dragActive || scrollDir == 0) return@LaunchedEffect
+        while (true) {
+            val p = dragPointer ?: break
+            // 越靠边滚得越快：基础 8px/帧 + 越界量的一部分，上限 48px/帧
+            val overshoot = if (scrollDir < 0) {
+                (textTopPx + edgeZonePx - p.y).coerceAtLeast(0f)
+            } else {
+                (p.y - (boxH - textTopPx - edgeZonePx)).coerceAtLeast(0f)
+            }
+            scroll.dispatchRawDelta(scrollDir * (8f + overshoot * 0.6f).coerceAtMost(48f))
+            val lay = textLayout ?: break
+            // 指针 y → 文本排版坐标（加滚动偏移）；夹在可视区内，避免滚出后坐标失控
+            val clampedY = p.y.coerceIn(textTopPx, (boxH - textTopPx).coerceAtLeast(textTopPx + 1f))
+            val textY = (clampedY - textTopPx + scroll.value)
+                .coerceIn(0f, lay.size.height.toFloat())
+            val textX = (p.x - gutterWpx - textPadLPx).coerceIn(0f, textWpxInt.toFloat())
+            val focusOff = lay.getOffsetForPosition(Offset(textX, textY))
+            val curSel = currentValue.value.selection
+            val anchor = scrollAnchor ?: (if (scrollDir < 0) curSel.max else curSel.min)
+            scrollAnchor = anchor
+            val ns = TextRange(minOf(anchor, focusOff), maxOf(anchor, focusOff))
+            if (ns != curSel) onValueChange(currentValue.value.copy(selection = ns))
+            kotlinx.coroutines.delay(16)
+        }
+    }
+
     // 当前行背景（随 caret 行的文本一并滚动/换行）——仅叠加 background，不动语法色 span
     val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
     val displayValue: TextFieldValue =
@@ -1127,7 +1173,38 @@ private fun EditorPane(
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colors.surface)
                 .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
-                .onSizeChanged { boxW = it.width; boxH = it.height },
+                .onSizeChanged { boxW = it.width; boxH = it.height }
+                .pointerInput(Unit) {
+                    // 旁路观察拖拽指针（Final pass：文本域已在本 pass 前处理完选区，仅读取不消费）
+                    awaitPointerEventScope {
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Final)
+                            when (e.type) {
+                                PointerEventType.Press -> if (e.buttons.isPrimaryPressed) {
+                                    dragActive = true
+                                    scrollAnchor = null
+                                    dragPointer = e.changes.firstOrNull()?.position
+                                }
+                                PointerEventType.Move -> if (dragActive) {
+                                    if (e.buttons.isPrimaryPressed) {
+                                        dragPointer = e.changes.firstOrNull()?.position
+                                    } else {
+                                        // 兜底：在窗口外松开时 Release 可能丢失，用无按键 Move 复位
+                                        dragActive = false
+                                        dragPointer = null
+                                        scrollAnchor = null
+                                    }
+                                }
+                                PointerEventType.Release -> {
+                                    dragActive = false
+                                    dragPointer = null
+                                    scrollAnchor = null
+                                }
+                                else -> {}
+                            }
+                        }
+                    }
+                },
         ) {
             Row(modifier = Modifier.fillMaxSize()) {
                 // 行号槽：Canvas 只绘可视行，滚动时仅重绘（scroll.value 在 draw 内读取）
