@@ -78,7 +78,6 @@
 ### P5 工程收敛与发布
 范围：
 - 单测起步：urlPreview / quoteIdent / isSystemSchemaName / 树行派生（jdbc、tree、db 层均可测）
-- 清理：RightPane.kt 死代码（TODO 已列）
 - M5 打包：首次 `gradle createDistributable`/Deb，干净环境安装自检（jlink 补 java.sql 等模块、图标、启动即出窗口）
 验收：CI 习惯可跑 `compileKotlin + smokeJdbc + test`；Deb 安装后 demo 连接（SQLite）可开可查。
 
