@@ -10,6 +10,7 @@ import org.tinylog.Logger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -52,8 +53,10 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,6 +113,10 @@ import tree.TypeBadge
 
 /** 每个单元格最窄 64dp / 最宽 320dp（字符数 → dp 估算，12sp monospace 约 0.6em/字符）。 */
 private fun estWidth(chars: Int): Int = (chars * 7 + 20).coerceIn(64, 320)
+
+/** 手动拖动列宽的上下限（dp）。 */
+private const val MIN_COL_WIDTH = 40
+private const val MAX_COL_WIDTH = 1600
 
 /**
  * 右侧 SQL 工作台（控制台主导）。
@@ -1668,15 +1675,22 @@ private fun ResultTable(
     var viewer by remember { mutableStateOf<CellView?>(null) }
     val view = if (transposed) transposeResult(result) else result
     val cols = view.columns
-    val widths = IntArray(cols.size) { c ->
-        var w = cols[c].name.length
-        val sample = minOf(view.rows.size, 300)
-        for (r in 0 until sample) {
-            val cell = view.rows[r][c]
-            val len = cell?.length ?: 5 // (NULL)
-            if (len > w) w = len
+    // 列宽：默认按内容采样估算；用户拖表头分隔线可覆盖（列数/内容/布局变化时重建）。
+    // 用轻量键避免每次重组合都对整表行做深比较（拖动时会高频重组合）。
+    val widths = remember(result.sql, result.columns, result.rows.size, transposed) {
+        mutableStateListOf<Int>().apply {
+            addAll(
+                IntArray(cols.size) { c ->
+                    var w = cols[c].name.length
+                    val sample = minOf(view.rows.size, 300)
+                    for (r in 0 until sample) {
+                        val len = view.rows[r][c]?.length ?: 5 // (NULL)
+                        if (len > w) w = len
+                    }
+                    estWidth(w)
+                }.toList(),
+            )
         }
-        estWidth(w)
     }
     // 横向滚动用共享 ScrollState + horizontalScroll（表头与每一行都读同一偏移）——
     // 不能用多个 LazyRow 共享 LazyListState：虚拟化列表各自测量，滚动条驱动时只有
@@ -1698,7 +1712,16 @@ private fun ResultTable(
         ) {
             RowHeaderCell("", 44)
             cols.forEachIndexed { c, col ->
-                RowHeaderCell(col.name, widths[c])
+                // 表头单元格 + 右缘拖拽把手（覆盖式，不占布局宽，保证与数据行水平对齐）
+                Box {
+                    RowHeaderCell(col.name, widths[c])
+                    ColumnResizeHandle(
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                        onDrag = { deltaDp ->
+                            widths[c] = (widths[c] + deltaDp.toInt()).coerceIn(MIN_COL_WIDTH, MAX_COL_WIDTH)
+                        },
+                    )
+                }
             }
         }
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f))
@@ -1779,6 +1802,59 @@ private fun ResultTable(
 
 /** 单元格大段文本查看器请求（"列名 · 第 N 行" + 原文）。 */
 private data class CellView(val title: String, val content: String)
+
+/**
+ * 结果表头的列宽拖拽把手：覆盖在表头单元格右缘（不占布局宽，避免与数据行错位）。
+ * 水平拖动改列宽（dp），拖动中握把加粗高亮；鼠标悬停显示水平缩放光标。
+ */
+@Composable
+private fun ColumnResizeHandle(
+    onDrag: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val resizeCursor = remember {
+        PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.E_RESIZE_CURSOR))
+    }
+    val density = LocalDensity.current
+    // 手势协程只捕获一次 lambda，需经 rememberUpdatedState 拿最新值
+    // （结果/列变化时 widths 会被重建，旧引用会写到已废弃的列表上）
+    val currentOnDrag = rememberUpdatedState(onDrag)
+    var active by remember { mutableStateOf(false) }
+    // 子 dp 拖拽累积：hidpi 下单次事件可能不足 1dp，先攒够整 dp 再上报，避免小拖无反应
+    var acc by remember { mutableStateOf(0f) }
+    Box(
+        modifier = modifier
+            .width(9.dp)
+            .height(30.dp)
+            .pointerHoverIcon(resizeCursor)
+            .pointerInput(density) {
+                detectDragGestures(
+                    onDragStart = { active = true; acc = 0f },
+                    onDragEnd = { active = false },
+                    onDragCancel = { active = false },
+                ) { change, dragAmount ->
+                    change.consume()
+                    acc += dragAmount.x / density.density
+                    val whole = acc.toInt()
+                    if (whole != 0) {
+                        currentOnDrag.value(whole.toFloat())
+                        acc -= whole
+                    }
+                }
+            },
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (active) 2.dp else 1.dp)
+                .background(
+                    if (active) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.18f),
+                ),
+        )
+    }
+}
 
 /** 复制单元格值：NULL 复制为空串（与 CSV 导出规则一致），Toast 文案带预览。 */
 private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colName: String) {
