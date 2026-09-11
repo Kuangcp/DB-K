@@ -1,46 +1,112 @@
 # db-k
 
-轻量级 JDBC 数据库客户端（Compose Desktop），架构对齐 [api-x](https://github.com/kuangcp/api-x) 的四层最佳实践。
+<img src="icon/db-k-256.png" width="96" alt="db-k">
 
-技术栈：JDK 25 JBR + Gradle 9.4.1 + Kotlin 2.4.0 + Compose 1.12.0（不依赖 wrapper，见下方工具链）。
+轻量级跨库 JDBC 数据库客户端（Kotlin + Compose Desktop），架构对齐 [api-x](https://github.com/kuangcp/api-x) 的分层最佳实践。
 
-## 工具链
+单窗口完成「连接 → 编辑 → 执行 → 看结果」主闭环；连接档案、控制台、SQL 历史全部落在本机 SQLite，不依赖任何服务端。
+
+技术栈：JDK 25（JBR）+ Gradle 9.4.1 + Kotlin 2.4.0 + Compose Desktop 1.12.0（**项目不引入 wrapper**，统一用系统 Gradle）。
+
+## 特性
+
+- **对象树**：文件夹 → 连接（状态点 / 懒加载）→ schema → 对象按类型分组计数。PostgreSQL 细分 11 类对象（表 / 物化视图 / 视图 / 触发器 / 序列 / 函数与过程 / 聚合 / 操作符 / 类型 / 操作符类 / 操作符族），其余库只产出自己支持的类型。展开状态持久化；双击连接即连、双击表 / 视图预览。
+- **SQL 编辑**：语法高亮、行号、当前行高亮、关键字 / 表视图 / 列名补全，`Ctrl+Enter` 执行选中（无选中不执行）、`Ctrl+Q` 查看光标处表定义 DDL、`Ctrl+S` 保存、多语句执行 + 多 Tab 结果。
+- **结果网格**：纵横滚动 + 列宽拖动 / 单列自适应；单击高亮并 `Ctrl+C`，右键复制单元格 / 「复制本行 → INSERT」；`Ctrl+T` 行列转置；超 1000 行截断提示 + 全量流式 CSV 导出；长查询可取消（`Esc`）。
+- **多控制台**：一个数据源可开多个控制台，跨源标签；标签右键「关闭」（隐藏可重开）；每个控制台独立执行目标（库 / schema）与**光标记忆**（切换、重启都恢复到所在行）。
+- **SQL 历史**：执行记录落库 + 历史面板，双击弹窗查看完整 SQL（可复制），或一键插入到当前光标处。
+- **连接安全**：连接密码 AES-256-GCM 本机加密（密钥 `secret.key`，权限 600），存量明文自动迁移。
+- **外观与配置**：浅 / 深色主题切换并持久化；设置窗口可调编辑器字体族与字号（实时预览）。
+- **其它**：窗口几何持久化、会话日志按月归档、连接目录元数据磁盘缓存。
+
+## 支持的数据源
+
+| 数据源 | 连接方式 | 备注 |
+|---|---|---|
+| PostgreSQL | 内置驱动 | 对象类型细分最全 |
+| MySQL | 内置驱动 | |
+| MariaDB | 内置驱动 | |
+| SQLite | 内置驱动 | |
+| H2 | 内置驱动 | |
+| ClickHouse | 内置驱动（HTTP，默认端口 8123） | 默认关压缩，兼容反向代理链路 |
+
+> SQL Server / Oracle 需外部驱动加载机制（Oracle 驱动有 license 限制），尚未实现，见 `TODO.md`。
+
+## 快速开始
 
 ```bash
 source ~/.sdkman/bin/sdkman-init.sh   # 或按你 shell 的方式加载 sdkman
 source env-init                        # sdk use java 25.0.3-jbr / sdk use gradle 9.4.1
-gradle run                             # 调试运行
-gradle createDistributable             # 构建可分发目录
+
+gradle run                 # 调试运行
+gradle test                # 单元测试（jdbc / tree / db / app.state 纯逻辑 + 嵌入式库集成）
+gradle smokeJdbc           # JDBC 方言 / QueryExecutor 冒烟自检（无需 UI）
 ```
 
-## 数据
+## 打包
 
-本地元数据（连接档案 / 文件夹 / SQL 历史）位于平台数据目录下的 `app.db`：
+```bash
+gradle createDistributable   # 免安装目录 build/compose/binaries/main/app/db-k
+gradle packageDeb            # Linux Deb
+gradle makeAppImage          # Linux 单文件 .AppImage（需 appimagetool，见下）
+gradle packageMsi            # Windows MSI（仅在 Windows + WiX 上构建）
+```
 
-- Linux: `~/.local/share/db-k/app.db`
+- AppImage：下载 [appimagetool](https://github.com/AppImage/appimagetool/releases) 放到 `tools/`，或 `-Pappimagetool=<path>` / 环境变量 `APPIMAGETOOL`。产物 `build/compose/binaries/main/appimage/db-k-<ver>-x86_64.AppImage`。
+- MSI 只能在 Windows 上构建（jpackage 不支持交叉打包），需 JDK 25 + Gradle 9.4.1 + WiX Toolset 3.x。
+- 平台构建矩阵、前置条件与 glibc 兼容下限见 **[doc/PACKAGING.md](doc/PACKAGING.md)**。
+
+## 数据与存储
+
+本地数据默认位于平台数据目录：
+
+- Linux：`~/.local/share/db-k/`
 - 开发调试可用 `debugHome` 重定向：在主数据目录放 `app-settings.properties`，内容 `debugHome=/path/to/sandbox`。
+
+持久化分层：
+
+| 内容 | 位置 |
+|---|---|
+| 连接 / 文件夹 / 控制台元数据 / SQL 历史 / 元数据缓存 | `app.db`（SQLite，含版本迁移与 FK 级联） |
+| 控制台正文 | `consoles/<id>.sql`（独立文件，防抖 3s 自动写回） |
+| 主题 / 窗口几何 / 树展开 / 编辑器字体字号 | `*.properties` |
+| 会话日志 | `logs/<yyyy-MM>/<yyyy-MM-dd>_<N>.log`（每次启动一份） |
 
 ## 目录结构
 
 ```
 src/main/kotlin/
-├── app/     # Compose UI + 状态（状态即 ViewModel：TreeState/DialogState/…）
-│   ├── core/    # Main.kt 窗口与组装
-│   ├── state/   # 各状态类（含业务动作）
-│   ├── dialog/  # 连接/文件夹编辑弹窗
-│   ├── ui/      # 主题、右侧面板、自绘矢量图标
-│   └── settings/# 树展开等持久化
-├── db/      # 应用自身元数据：SQLite 迁移 + Repository
-├── tree/    # 左侧树：扁平化行模型 + 侧栏组件
-└── jdbc/    # （M2 起）目标库方言/连接/元数据探测
+├── app/          # Compose UI + 状态（状态即 ViewModel）
+│   ├── core/     # Main.kt 窗口组装、CsvExport、会话日志 writer
+│   ├── state/    # ConnectionsState / ConsoleState / TreeState / DialogState / ToastState / ColumnCatalog
+│   ├── dialog/   # 连接编辑、设置、单字段输入、查看器（SQL / 单元格）
+│   ├── ui/       # 主题、工作区、对象树侧栏、历史面板、SQL 高亮/补全、自绘图标
+│   └── settings/ # 主题 / 窗口 / 树展开 / 编辑器 等 properties 持久化
+├── db/           # 应用自身元数据：AppDatabase 迁移 + Repository + 密码加密 + 控制台文件
+├── tree/         # 左侧树：扁平化行模型 + 侧栏组件
+└── jdbc/         # 目标库方言 / 连接 / 元数据探测 / 查询执行（阻塞 API）
 ```
 
-分层纪律：`db/` `tree/` 不依赖 compose，`app/` 单向依赖它们。
+分层纪律：`jdbc/` `db/` `tree/` 不依赖 compose / coroutines；`app/` 单向依赖它们。
 
 ## 里程碑
 
 - [x] M0 脚手架：空窗口 + 主题
-- [x] M1 元数据+树：文件夹/连接档案 CRUD、左侧树、展开持久化、右侧数据源面板
-- [ ] M2 JDBC 运行时：方言抽象 + 连接 + 懒加载 库→表/视图/触发器 树
-- [ ] M3 编辑执行：SQL 编辑器 + 结果网格 + 历史
-- [ ] M4 体验打磨 / M5 打包
+- [x] M1 元数据 + 树：连接 / 文件夹档案 CRUD、对象树、展开持久化
+- [x] M2 JDBC 运行时：方言抽象 + 连接 + 懒加载 库 → 对象树（6 种数据源）
+- [x] M3 编辑执行：SQL 编辑器 + 结果网格 + 取消 + 历史
+- [x] M4 体验打磨：补全 / 预览 / CSV / 主题 / 设置 / 多控制台
+- [x] M5 工程收敛与发布：单元测试体系 + Deb / AppImage / MSI 打包配置（v1.0.0）
+- [ ] P4 数据源扩展机制：`<dataDir>/drivers` 外部驱动独立 classloader（SQL Server / Oracle）
+
+## 文档
+
+- **[AGENTS.md](AGENTS.md)**：工具链、分层、主题硬性规则、持久化约定、验证习惯
+- **[doc/DESIGN.md](doc/DESIGN.md)**：数据模型、方言抽象、线程模型、打包风险
+- **[Roadmap.md](Roadmap.md)**：分阶段发展计划与完成状态
+- **[doc/PACKAGING.md](doc/PACKAGING.md)**：Deb / AppImage / MSI 打包
+- **[TODO.md](TODO.md)**：零散待办
+
+## 许可
+
+[Apache License 2.0](LICENSE)
