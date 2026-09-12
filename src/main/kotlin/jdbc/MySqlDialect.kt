@@ -105,7 +105,7 @@ open class MySqlLikeDialect(
             }
         }.onFailure { Logger.warn(it, "mysql loadColumns failed {}", table) }
             .getOrDefault(emptyList())
-        return if (cols.isNotEmpty()) cols else queryTableColumns(conn, schema, table)
+        return if (cols.isNotEmpty()) markPrimaryKeys(conn, schema, table, cols) else queryTableColumns(conn, schema, table)
     }
 
     /**

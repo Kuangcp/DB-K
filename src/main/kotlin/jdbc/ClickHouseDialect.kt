@@ -103,6 +103,6 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
             }
         }.onFailure { Logger.warn(it, "clickhouse loadColumns failed {}", table) }
             .getOrDefault(emptyList())
-        return if (cols.isNotEmpty()) cols else queryTableColumns(conn, schema, table)
+        return if (cols.isNotEmpty()) markPrimaryKeys(conn, schema, table, cols) else queryTableColumns(conn, schema, table)
     }
 }

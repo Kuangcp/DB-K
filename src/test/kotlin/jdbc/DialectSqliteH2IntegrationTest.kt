@@ -45,6 +45,8 @@ class DialectSqliteH2IntegrationTest {
             val columns = SQLiteDialect.loadColumns(conn, schemas.first(), "users")
             assertEquals(listOf("id", "name"), columns.map { it.name })
             assertTrue(columns.all { it.ordinal > 0 })
+            assertTrue(columns.first { it.name == "id" }.primaryKey, "SQLite 主键应被标记")
+            assertTrue(columns.none { it.name == "name" && it.primaryKey })
 
             // 对象定义（Ctrl+Q）：sqlite_master.sql 即原始建表/建视图语句
             assertEquals(
@@ -76,6 +78,7 @@ class DialectSqliteH2IntegrationTest {
             // 列探测：经 PUBLIC schema；小写表名应能命中原大写表（大小写兜底）
             val columns = H2Dialect.loadColumns(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
             assertEquals(listOf("id"), columns.map { it.name.lowercase() })
+            assertTrue(columns.single().primaryKey, "H2 主键应被标记")
 
             // 对象定义：H2 无内置 SHOW CREATE，走通用重建（列名/类型/NOT NULL）
             val ddl = H2Dialect.tableDdl(conn, schemas.first { it.displayName == "PUBLIC" }, "account")

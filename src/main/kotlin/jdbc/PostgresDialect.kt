@@ -181,7 +181,7 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
                 }
             }.onFailure { Logger.warn(it, "pg loadColumns failed {}.{}", schemaName, table) }
                 .getOrDefault(emptyList())
-            if (cols.isNotEmpty()) return cols
+            if (cols.isNotEmpty()) return markPrimaryKeys(conn, schema, table, cols)
         }
         return queryTableColumns(conn, schema, table)
     }

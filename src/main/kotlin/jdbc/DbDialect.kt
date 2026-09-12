@@ -89,7 +89,48 @@ internal fun queryTableColumns(conn: Connection, schema: SchemaMeta?, table: Str
     if (cols.isEmpty() && table.lowercase() != table) {
         cols = queryColumns(md, catalog, schemaPattern, table.lowercase())
     }
-    return cols.sortedBy { it.ordinal }
+    return markPrimaryKeys(conn, schema, table, cols.sortedBy { it.ordinal })
+}
+
+/**
+ * 用 JDBC [DatabaseMetaData.getPrimaryKeys] 给列打主键标记（大小写不敏感）。
+ * 各库 fast path（PG/MySQL/CK）与通用 [queryTableColumns] 都应在返回前调用，保证
+ * `ColumnMeta.primaryKey` 可信；查不到主键/驱动不支持时原样返回（不抛）。
+ */
+internal fun markPrimaryKeys(
+    conn: Connection,
+    schema: SchemaMeta?,
+    table: String,
+    cols: List<ColumnMeta>,
+): List<ColumnMeta> {
+    if (cols.isEmpty()) return cols
+    // 表名可能带引号/大小写不符（引用标识符、H2 折大写、PG 折小写），逐个变体试到命中
+    val bare = table.trim('"', '`', '[', ']')
+    val keys = runCatching {
+        val md = conn.metaData
+        val catalog = schema?.catalog
+        val schemaPattern = schema?.schema?.takeIf { it != "main" }
+        linkedSetOf(bare, bare.uppercase(), bare.lowercase())
+            .firstNotNullOfOrNull { readPrimaryKeys(md, catalog, schemaPattern, it).takeIf { pk -> pk.isNotEmpty() } }
+            ?: emptySet()
+    }.getOrDefault(emptySet())
+    if (keys.isEmpty()) return cols
+    return cols.map { if (it.name.lowercase() in keys) it.copy(primaryKey = true) else it }
+}
+
+private fun readPrimaryKeys(
+    md: DatabaseMetaData,
+    catalog: String?,
+    schemaPattern: String?,
+    table: String,
+): Set<String> {
+    val out = mutableSetOf<String>()
+    runCatching {
+        md.getPrimaryKeys(catalog, schemaPattern, table).use { rs ->
+            while (rs.next()) rs.getString("COLUMN_NAME")?.let { out += it.lowercase() }
+        }
+    }
+    return out
 }
 
 private fun queryColumns(

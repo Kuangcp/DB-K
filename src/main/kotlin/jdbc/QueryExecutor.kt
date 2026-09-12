@@ -3,11 +3,29 @@ package jdbc
 import org.tinylog.Logger
 import java.sql.Connection
 import java.sql.ResultSet
+import java.sql.ResultSetMetaData
 import java.sql.Statement
+import java.sql.Types
+
+/**
+ * 结果集列：展示名 + 结果编辑定位所需的来源元数据。
+ * 仅当 [table]/[baseColumn] 非空（真实基表列）且同属一张基表时，该列才可能可编辑。
+ * [sqlType] 为 JDBC `java.sql.Types`，用于写入时按类型绑定；[autoIncrement]/[readOnly]
+ * 标记自动/只读列（不允许修改）。元数据取不到时全部降级为不可编辑（安全失败）。
+ */
+data class QueryColumn(
+    val name: String,
+    val catalog: String? = null,
+    val schema: String? = null,
+    val table: String? = null,
+    val baseColumn: String? = null,
+    val sqlType: Int = Types.OTHER,
+    val nullable: Boolean = true,
+    val autoIncrement: Boolean = false,
+    val readOnly: Boolean = false,
+)
 
 /** 查询结果：结果集模式（列+行）或更新模式（影响行数）。行内值为字符串化的单元格。 */
-data class QueryColumn(val name: String)
-
 data class QueryResult(
     val sql: String,
     val columns: List<QueryColumn>,
@@ -93,7 +111,7 @@ object QueryExecutor {
     private fun readResultSet(sql: String, rs: ResultSet, started: Long): QueryResult {
         val meta = rs.metaData
         val count = meta.columnCount
-        val columns = (1..count).map { QueryColumn(meta.getColumnLabel(it).ifBlank { meta.getColumnName(it) }) }
+        val columns = (1..count).map { readColumnMeta(meta, it) }
         val rows = ArrayList<List<String?>>(minOf(MAX_ROWS, 256))
         var truncated = false
         while (rs.next()) {
@@ -112,6 +130,33 @@ object QueryExecutor {
     }
 
     private fun readCell(rs: ResultSet, i: Int): String? = cellToString(rs.getObject(i))
+
+    /**
+     * 读单列元数据；各取值独立 runCatching，个别驱动不支持的 API 不影响整体（降级为不可编辑）。
+     * 注意：部分驱动对表达式列的 `getTableName`/`getColumnName` 可能给出别名而非空——
+     * 编辑判定在 app 层还会用 `ColumnCatalog` 的已知列名二次校验，双保险。
+     */
+    private fun readColumnMeta(meta: ResultSetMetaData, i: Int): QueryColumn {
+        val label = runCatching { meta.getColumnLabel(i) }.getOrNull().orEmpty()
+        val baseName = runCatching { meta.getColumnName(i) }.getOrNull().orEmpty()
+        fun textOf(read: (Int) -> String): String? =
+            runCatching { read(i) }.getOrNull()?.takeIf { it.isNotBlank() }
+        val tableName = textOf { meta.getTableName(it) }
+        // SQLite(xerial) 的 getCatalogName 返回的是表名（非 catalog），与表名相同则视为无 catalog，
+        // 否则会给 UPDATE 拼出 `"users"."users"` 这种错误限定名。
+        val catalogName = textOf { meta.getCatalogName(it) }
+        return QueryColumn(
+            name = label.ifBlank { baseName },
+            catalog = catalogName?.takeUnless { it.equals(tableName, ignoreCase = true) },
+            schema = textOf { meta.getSchemaName(it) },
+            table = tableName,
+            baseColumn = baseName.takeIf { it.isNotBlank() },
+            sqlType = runCatching { meta.getColumnType(i) }.getOrDefault(Types.OTHER),
+            nullable = runCatching { meta.isNullable(i) != ResultSetMetaData.columnNoNulls }.getOrDefault(true),
+            autoIncrement = runCatching { meta.isAutoIncrement(i) }.getOrDefault(false),
+            readOnly = runCatching { meta.isReadOnly(i) }.getOrDefault(false),
+        )
+    }
 
     /** 单元格值 → 展示/导出字符串（与 CSV 全量导出共用同一转换）。 */
     fun cellToString(v: Any?): String? = when (v) {

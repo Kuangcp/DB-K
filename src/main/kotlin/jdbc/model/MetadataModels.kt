@@ -50,8 +50,9 @@ val ObjectKind.displayNoun: String
     }
 
 /**
- * 单列元数据（编辑器列补全 / 展示用）。
+ * 单列元数据（编辑器列补全 / 结果编辑定位用）。
  * [typeName] 为驱动给出的类型名，可能为 null；[ordinal] 用于稳定排序。
+ * [primaryKey]：该列属于主键（结果单元格编辑时用作行定位；取不到主键信息时为 false）。
  */
 @Serializable
 data class ColumnMeta(
@@ -59,6 +60,7 @@ data class ColumnMeta(
     val typeName: String? = null,
     val nullable: Boolean = true,
     val ordinal: Int = 0,
+    val primaryKey: Boolean = false,
 )
 
 /** 表 / 视图 / 序列……对象节点。TRIGGER 时 tableName 为其所属表名。 */

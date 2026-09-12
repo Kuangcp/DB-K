@@ -49,7 +49,8 @@ fun main() {
 
     smokeEditorUtils()
     smokeColumnCompletion()
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion PASS (ClickHouse driver load OK)")
+    smokeRowUpdater(dir)
+    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion + row-updater PASS (ClickHouse driver load OK)")
 }
 
 /** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */
@@ -426,6 +427,57 @@ private fun smokeDbStore(dir: Path) {
         Logger.info("[db-store] meta_cache 删除级联 PASS", "PASS")
     }
     Files.deleteIfExists(dbFile)
+}
+
+/**
+ * 结果单元格写回自检（SQLite）：主键标记 → 编辑计划 → 参数化 UPDATE → 查库确认。
+ * 同时验证“影响行数≠1 回滚”的防御逻辑。
+ */
+private fun smokeRowUpdater(dir: Path) {
+    val dbFile = dir.resolve("smoke-edit.db")
+    DriverManager.getConnection("jdbc:sqlite:$dbFile").use { conn ->
+        conn.createStatement().use { st ->
+            st.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+            st.execute("INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 40)")
+        }
+        val schema = jdbc.model.SchemaMeta(null, "main")
+        val cols = SQLiteDialect.loadColumns(conn, schema, "users")
+        check(cols.first { it.name == "id" }.primaryKey) { "id 应标记为主键" }
+        check(!cols.first { it.name == "name" }.primaryKey) { "name 不应是主键" }
+
+        val result = QueryExecutor.execute(conn, "SELECT id, name, age FROM users ORDER BY id")
+        check(result.columns[1].table == "users" && result.columns[1].baseColumn == "name") {
+            "结果列应带基表来源元数据"
+        }
+        val plan = app.ui.buildEditPlan(
+            result,
+            primaryKeys = cols.filter { it.primaryKey }.map { it.name.lowercase() }.toSet(),
+            knownColumns = cols.map { it.name.lowercase() }.toSet(),
+        )
+        check(plan != null && plan.keyColumns == listOf(0)) { "编辑计划应基于主键定位" }
+
+        val edits = mapOf(app.ui.CellKey(1, 1) to CellValue("Bobby"))
+        val sql = RowUpdater.renderUpdateSql(app.ui.buildUpdatePlans(result, plan, edits).single(), SQLiteDialect)
+        Logger.info("[row-updater] rendered: {}", sql)
+        check(sql.contains("Bobby")) { "渲染 SQL 应含新值" }
+        check(RowUpdater.executeBatch(conn, app.ui.buildUpdatePlans(result, plan, edits), SQLiteDialect) == 1)
+        val after = QueryExecutor.execute(conn, "SELECT name FROM users WHERE id = 2")
+        check(after.rows.single().single() == "Bobby") { "更新未生效" }
+
+        // 防御：WHERE 非唯一（两行同键）→ 影响多行 → 抛错并回滚
+        conn.createStatement().execute("CREATE TABLE dup (a TEXT, b TEXT)")
+        conn.createStatement().execute("INSERT INTO dup VALUES ('x','o1'),('x','o2')")
+        val bad = UpdatePlan(
+            null, "dup",
+            listOf(ColumnValue("b", CellValue("n"), java.sql.Types.VARCHAR)),
+            listOf(ColumnValue("a", CellValue("x"), java.sql.Types.VARCHAR)),
+        )
+        val failed = runCatching { RowUpdater.executeBatch(conn, listOf(bad), SQLiteDialect) }.isFailure
+        check(failed) { "非唯一命中应失败" }
+        val dup = QueryExecutor.execute(conn, "SELECT b FROM dup ORDER BY b")
+        check(dup.rows.map { it.single() } == listOf("o1", "o2")) { "失败应整体回滚" }
+        Logger.info("[row-updater] plan/update/rollback PASS", "PASS")
+    }
 }
 
 /** 直读某连接行落盘密码（绕过仓库解密层，验证盘上形态）。 */
