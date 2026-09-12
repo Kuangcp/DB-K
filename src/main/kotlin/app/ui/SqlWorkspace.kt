@@ -115,6 +115,7 @@ import app.state.ConsoleRunUi
 import app.state.StatementOutcome
 import app.settings.EditorSettings
 import app.dialog.CellViewerDialog
+import app.dialog.EditCellDialog
 import app.dialog.TextViewerDialog
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import com.neoutils.highlight.compose.remember.rememberTextFieldValue
@@ -2004,6 +2005,9 @@ private fun CenteredHint(text: String, isError: Boolean) {
 /** 结果表内单元格坐标（行列均基于当前展示视图：转置后为转置坐标）。 */
 private data class CellSel(val row: Int, val col: Int)
 
+/** 对话框编辑请求（长值/多行）：坐标用原始（非转置）坐标。 */
+private data class CellEditRequest(val key: CellKey, val title: String, val value: String?)
+
 @Composable
 private fun ResultTable(
     result: QueryResult,
@@ -2022,6 +2026,8 @@ private fun ResultTable(
     // 正在行内编辑的展示坐标 + 草稿
     var editing by remember(result.sql, result.rows.size, transposed) { mutableStateOf<CellSel?>(null) }
     var editDraft by remember { mutableStateOf("") }
+    // 长值/多行 → 对话框编辑（原始坐标定位）
+    var dialogEdit by remember { mutableStateOf<CellEditRequest?>(null) }
     // 暂存修改叠到展示值上（仅值变化，尺寸不变）
     val edited = remember(result, edits) { applyEdits(result, edits) }
     val view = if (transposed) transposeResult(edited) else edited
@@ -2242,8 +2248,23 @@ private fun ResultTable(
                                     onDoubleClick = when {
                                         isEditable -> {
                                             {
-                                                if (ctrlDown) { ctrlDown = false; beginEdit(index, c) }
-                                                else cellView?.let { cv -> viewer = cv }
+                                                if (ctrlDown) {
+                                                    ctrlDown = false
+                                                    // 长值/多行/NULL → 对话框；短值 → 行内编辑
+                                                    if (v == null || v.length > 60 || v.contains('\n')) {
+                                                        origKey?.let {
+                                                            dialogEdit = CellEditRequest(
+                                                                it,
+                                                                "${result.columns[it.col].name} · 第 ${it.row + 1} 行",
+                                                                v,
+                                                            )
+                                                        }
+                                                    } else {
+                                                        beginEdit(index, c)
+                                                    }
+                                                } else {
+                                                    cellView?.let { cv -> viewer = cv }
+                                                }
                                             }
                                         }
                                         else -> cellView?.let { cv -> { viewer = cv } }
@@ -2269,6 +2290,17 @@ private fun ResultTable(
                                         }
                                         if (isEditable) {
                                             add(ContextMenuItem("编辑单元格（Ctrl+双击）") { beginEdit(index, c) })
+                                            add(
+                                                ContextMenuItem("在对话框中编辑…") {
+                                                    origKey?.let {
+                                                        dialogEdit = CellEditRequest(
+                                                            it,
+                                                            "${result.columns[it.col].name} · 第 ${it.row + 1} 行",
+                                                            v,
+                                                        )
+                                                    }
+                                                },
+                                            )
                                             add(
                                                 ContextMenuItem("置为 NULL") {
                                                     origKey?.let { onCellEdit(it, CellValue(null)) }
@@ -2304,6 +2336,24 @@ private fun ResultTable(
                 style = scrollbarStyle,
             )
         }
+    }
+    dialogEdit?.let { req ->
+        EditCellDialog(
+            title = "编辑单元格 · ${req.title}",
+            initial = req.value,
+            onDismiss = { dialogEdit = null },
+            onConfirm = { value ->
+                dialogEdit = null
+                val original = result.rows.getOrNull(req.key.row)?.getOrNull(req.key.col)
+                val raw = value.raw
+                // 改回原始值 → 撤销暂存；其余（含空串）写入 overlay
+                if (raw == original.orEmpty() && !(raw.isNullOrEmpty() && original == null)) {
+                    onClearCellEdit(req.key)
+                } else {
+                    onCellEdit(req.key, value)
+                }
+            },
+        )
     }
     viewer?.let { v ->
         CellViewerDialog(

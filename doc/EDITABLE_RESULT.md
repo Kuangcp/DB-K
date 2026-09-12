@@ -1,6 +1,6 @@
 # 可编辑查询结果（Cell Editing & Commit）设计方案
 
-> 状态：**Phase 2 已实现**（编辑/提交/刷新 + 撤销全部/退出守卫 + 唯一索引回落）。目标读者：后续实现者。
+> 状态：**Phase 3 已实现**（行内/对话框编辑、提交/刷新/撤销/守卫、唯一索引回落）。目标读者：后续实现者。
 > 与 `AGENTS.md` 冲突时以 `AGENTS.md` 为准。实施进度见文末 §13。
 
 ## 0. 背景与目标
@@ -416,6 +416,13 @@ data class DiscardEdits(
 | `app/ui/DbIcons.kt` | `Undo` 图标 |
 | `app/ui/SqlWorkspace.kt` | 工具条「撤销全部」图标（有修改时显示）；控制台标签显示 `✦N` 未提交数 |
 
-### 后续
+### Phase 3（长值对话框编辑，已完成）
 
-- **Phase 3**：`EditCellDialog`（长值/多行）、UPDATE 预览、`SELECT ... FOR UPDATE`。
+| 文件 | 内容 |
+|---|---|
+| `app/dialog/EditCellDialog.kt`（新） | 多行对话框编辑：NULL 与空串严格区分（「设为 NULL」勾选）、`Ctrl+Enter` 提交 / `Esc` 取消 / `Enter` 换行；颜色全走主题 |
+| `app/ui/SqlWorkspace.kt` | `Ctrl+双击` 对长值(>60)/多行/NULL 自动改用对话框，短值仍行内；右键新增「在对话框中编辑…」；确认后回写 overlay（改回原值即撤销） |
+
+### 后续（未实现）
+
+- UPDATE 预览（提交前展示参数化 SQL）；`SELECT ... FOR UPDATE` 锁定行。
