@@ -72,6 +72,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -120,6 +121,7 @@ import com.neoutils.highlight.compose.remember.rememberTextFieldValue
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
+import jdbc.CellValue
 import jdbc.QueryExecutor
 import jdbc.QueryResult
 import jdbc.model.SchemaMeta
@@ -184,6 +186,20 @@ fun SqlWorkspace(
     onRun: (String?) -> Unit,
     /** 结果区多语句 Tab 切换（选中第 index 条语句结果）。 */
     onSelectOutcome: (Int) -> Unit,
+    /** 提交结果单元格的未提交修改（参数化 UPDATE + 单事务）。 */
+    onCommitEdits: () -> Unit = {},
+    /** 刷新当前结果 Tab（重新执行该语句）。 */
+    onRefreshResult: () -> Unit = {},
+    /** 未提交修改（原始坐标 → 新值）。 */
+    edits: Map<CellKey, CellValue> = emptyMap(),
+    /** 当前结果的可编辑计划（null = 只读：视图/无主键/表达式）。 */
+    editPlan: EditPlan? = null,
+    /** 有提交/刷新在执行中。 */
+    resultBusy: Boolean = false,
+    /** 暂存一格修改。 */
+    onCellEdit: (CellKey, CellValue) -> Unit = { _, _ -> },
+    /** 撤销一格修改。 */
+    onClearCellEdit: (CellKey) -> Unit = {},
     onExportCsv: () -> Unit,
     /** 取消当前执行（取消按钮 / Esc）。 */
     onCancelRun: () -> Unit,
@@ -259,6 +275,11 @@ fun SqlWorkspace(
                 // Ctrl+T 行列转制（仅在有可转置结果时消费，避免与其它用途冲突）
                 if (e.isCtrlPressed && e.key == Key.T && canTranspose(run)) {
                     transposed = !transposed
+                    return@onPreviewKeyEvent true
+                }
+                // F5：刷新当前结果 Tab（有未提交修改时由 Main 先弹确认）
+                if (e.key == Key.F5 && !run.executing && run.result != null) {
+                    onRefreshResult()
                     return@onPreviewKeyEvent true
                 }
                 // Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
@@ -417,6 +438,15 @@ fun SqlWorkspace(
                             enabled = status != ConnUiStatus.CONNECTING,
                             onSelectOutcome = onSelectOutcome,
                             onToggleTranspose = { transposed = !transposed },
+                            onCommitEdits = onCommitEdits,
+                            onRefreshResult = onRefreshResult,
+                            editCount = edits.size,
+                            canCommit = editPlan != null,
+                            resultBusy = resultBusy,
+                            edits = edits,
+                            editPlan = editPlan,
+                            onCellEdit = onCellEdit,
+                            onClearCellEdit = onClearCellEdit,
                             onExportCsv = onExportCsv,
                             onExportAllCsv = onExportAllCsv,
                             onCancelRun = onCancelRun,
@@ -1529,6 +1559,11 @@ private fun ResultToolbar(
     enabled: Boolean,
     onSelectOutcome: (Int) -> Unit,
     onToggleTranspose: () -> Unit,
+    onCommitEdits: () -> Unit,
+    onRefreshResult: () -> Unit,
+    editCount: Int,
+    canCommit: Boolean,
+    resultBusy: Boolean,
     onExportCsv: () -> Unit,
     onExportAllCsv: () -> Unit,
     onCancelRun: () -> Unit,
@@ -1557,9 +1592,11 @@ private fun ResultToolbar(
             Text(" 执行中…", fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
         } else if (run.error == null && result != null) {
             Text(
-                metaText(result, transposed),
+                if (editCount > 0) "${metaText(result, transposed)} · $editCount 处未提交"
+                else metaText(result, transposed),
                 fontSize = 11.sp,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                color = if (editCount > 0) MaterialTheme.colors.primary
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                 maxLines = 1,
             )
         }
@@ -1574,6 +1611,21 @@ private fun ResultToolbar(
                 onClick = onCancelRun,
             )
         } else {
+            // 结果编辑：提交（有未提交修改时高亮 + 徽标）/ 刷新当前 Tab
+            ResultIconButton(
+                icon = DbIcons.Commit,
+                description = if (editCount > 0) "提交 $editCount 处修改" else "提交修改",
+                enabled = canCommit && editCount > 0 && !resultBusy,
+                active = editCount > 0,
+                badgeCount = editCount.takeIf { it > 0 },
+                onClick = onCommitEdits,
+            )
+            ResultIconButton(
+                icon = DbIcons.Refresh,
+                description = "刷新查询结果 (F5)",
+                enabled = result != null && !resultBusy,
+                onClick = onRefreshResult,
+            )
             if (canTranspose(run)) {
                 ResultIconButton(
                     icon = DbIcons.Transpose,
@@ -1644,6 +1696,7 @@ private fun ResultIconButton(
     enabled: Boolean = true,
     active: Boolean = false,
     danger: Boolean = false,
+    badgeCount: Int? = null,
 ) {
     val tint = when {
         !enabled -> MaterialTheme.colors.onSurface.copy(alpha = 0.25f)
@@ -1667,7 +1720,25 @@ private fun ResultIconButton(
         delayMillis = 500,
     ) {
         IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(24.dp)) {
-            Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(15.dp))
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(15.dp))
+                if (badgeCount != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(13.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colors.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (badgeCount > 99) "99+" else "$badgeCount",
+                            fontSize = 8.sp,
+                            color = MaterialTheme.colors.onPrimary,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -1765,6 +1836,15 @@ private fun ResultTabs(
     enabled: Boolean,
     onSelectOutcome: (Int) -> Unit,
     onToggleTranspose: () -> Unit,
+    onCommitEdits: () -> Unit,
+    onRefreshResult: () -> Unit,
+    editCount: Int,
+    canCommit: Boolean,
+    resultBusy: Boolean,
+    edits: Map<CellKey, CellValue>,
+    editPlan: EditPlan?,
+    onCellEdit: (CellKey, CellValue) -> Unit,
+    onClearCellEdit: (CellKey) -> Unit,
     onExportCsv: () -> Unit,
     onExportAllCsv: () -> Unit,
     onCancelRun: () -> Unit,
@@ -1780,6 +1860,11 @@ private fun ResultTabs(
                 enabled = enabled,
                 onSelectOutcome = onSelectOutcome,
                 onToggleTranspose = onToggleTranspose,
+                onCommitEdits = onCommitEdits,
+                onRefreshResult = onRefreshResult,
+                editCount = editCount,
+                canCommit = canCommit,
+                resultBusy = resultBusy,
                 onExportCsv = onExportCsv,
                 onExportAllCsv = onExportAllCsv,
                 onCancelRun = onCancelRun,
@@ -1790,6 +1875,10 @@ private fun ResultTabs(
             result = run.result,
             error = run.error,
             transposed = transposed,
+            edits = edits,
+            editPlan = editPlan,
+            onCellEdit = onCellEdit,
+            onClearCellEdit = onClearCellEdit,
             onCopyText = onCopyText,
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
@@ -1801,6 +1890,10 @@ private fun ResultPane(
     result: QueryResult?,
     error: String?,
     transposed: Boolean,
+    edits: Map<CellKey, CellValue>,
+    editPlan: EditPlan?,
+    onCellEdit: (CellKey, CellValue) -> Unit,
+    onClearCellEdit: (CellKey) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1818,6 +1911,10 @@ private fun ResultPane(
                 ResultTable(
                     result = result,
                     transposed = transposed,
+                    edits = edits,
+                    editPlan = editPlan,
+                    onCellEdit = onCellEdit,
+                    onClearCellEdit = onClearCellEdit,
                     onCopyText = onCopyText,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -1882,12 +1979,23 @@ private data class CellSel(val row: Int, val col: Int)
 private fun ResultTable(
     result: QueryResult,
     transposed: Boolean,
+    edits: Map<CellKey, CellValue>,
+    editPlan: EditPlan?,
+    onCellEdit: (CellKey, CellValue) -> Unit,
+    onClearCellEdit: (CellKey) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // 单元格大段文本查看器（双击 / 右键「查看完整内容」）
     var viewer by remember { mutableStateOf<CellView?>(null) }
-    val view = if (transposed) transposeResult(result) else result
+    // Ctrl 按下状态（结果表内跟踪）：Ctrl+双击 = 进入编辑；普通双击 = 查看
+    var ctrlDown by remember { mutableStateOf(false) }
+    // 正在行内编辑的展示坐标 + 草稿
+    var editing by remember(result.sql, result.rows.size, transposed) { mutableStateOf<CellSel?>(null) }
+    var editDraft by remember { mutableStateOf("") }
+    // 暂存修改叠到展示值上（仅值变化，尺寸不变）
+    val edited = remember(result, edits) { applyEdits(result, edits) }
+    val view = if (transposed) transposeResult(edited) else edited
     val cols = view.columns
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -1961,11 +2069,53 @@ private fun ResultTable(
             }
         }
     }
+    fun cellText(r: Int, c: Int): String? = view.rows.getOrNull(r)?.getOrNull(c)
+
+    fun editableAt(r: Int, c: Int): Boolean {
+        val plan = editPlan ?: return false
+        val orig = viewToOriginal(result, transposed, r, c) ?: return false
+        return plan.columnAt(orig.col) != null
+    }
+
+    fun beginEdit(r: Int, c: Int) {
+        if (!editableAt(r, c)) return
+        editDraft = cellText(r, c).orEmpty()
+        sel.value = CellSel(r, c)
+        editing = CellSel(r, c)
+    }
+
+    fun commitEditDraft() {
+        val e = editing ?: return
+        editing = null
+        val orig = viewToOriginal(result, transposed, e.row, e.col) ?: return
+        val text = editDraft
+        val shown = cellText(e.row, e.col)
+        // 与当前显示值一致（含 NULL/空串语义）→ 不产生修改
+        if (text == shown.orEmpty() && !(text.isEmpty() && shown == null)) return
+        val original = result.rows.getOrNull(orig.row)?.getOrNull(orig.col)
+        // 改回原始值 → 撤销暂存
+        if (text == original.orEmpty() && !(text.isEmpty() && original == null)) {
+            onClearCellEdit(orig)
+            return
+        }
+        onCellEdit(orig, CellValue(text))
+    }
+
+    fun cancelEditDraft() {
+        editing = null
+    }
+
     val onKey: (KeyEvent) -> Boolean = { e ->
-        if (e.type != KeyEventType.KeyDown) {
+        if (e.key == Key.CtrlLeft || e.key == Key.CtrlRight) {
+            ctrlDown = e.type == KeyEventType.KeyDown
+            false
+        } else if (e.type != KeyEventType.KeyDown) {
             false
         } else {
             when {
+                editing != null && e.key == Key.Escape -> { cancelEditDraft(); true }
+                // 编辑中：其余按键（含方向键/Ctrl+C）交给文本框，不要劫持光标移动与复制
+                editing != null -> false
                 e.isCtrlPressed && e.key == Key.C -> {
                     sel.value?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
                     true
@@ -1988,6 +2138,7 @@ private fun ResultTable(
             .onSizeChanged { tableWidthPx = it.width }
             .focusRequester(focusRequester)
             .focusable()
+            .onFocusChanged { if (!it.isFocused) ctrlDown = false }
             .onPreviewKeyEvent(onKey),
     ) {
         Row(
@@ -2035,15 +2186,39 @@ private fun ResultTable(
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
                                 val cellView = v?.let { CellView("$colName · 第 ${index + 1} 行", it) }
+                                val origKey = viewToOriginal(result, transposed, index, c)
+                                val isEditable = editableAt(index, c)
+                                val pending = origKey != null && edits.containsKey(origKey)
+                                val isEditing = editing == CellSel(index, c)
                                 DataCell(
                                     value = v,
                                     width = widths[c],
                                     selected = sel.value == CellSel(index, c),
+                                    pending = pending,
                                     onSelect = {
+                                        if (editing != null && editing != CellSel(index, c)) commitEditDraft()
                                         sel.value = CellSel(index, c)
                                         focusRequester.requestFocus()
                                     },
-                                    onDoubleClick = cellView?.let { cv -> { viewer = cv } },
+                                    editor = if (isEditing) {
+                                        {
+                                            CellEditor(
+                                                value = editDraft,
+                                                onValueChange = { editDraft = it },
+                                                onCommit = { commitEditDraft() },
+                                                onCancel = { cancelEditDraft() },
+                                            )
+                                        }
+                                    } else null,
+                                    onDoubleClick = when {
+                                        isEditable -> {
+                                            {
+                                                if (ctrlDown) { ctrlDown = false; beginEdit(index, c) }
+                                                else cellView?.let { cv -> viewer = cv }
+                                            }
+                                        }
+                                        else -> cellView?.let { cv -> { viewer = cv } }
+                                    },
                                     menuItems = buildList {
                                         add(
                                             ContextMenuItem("复制单元格值") {
@@ -2060,6 +2235,21 @@ private fun ResultTable(
                                                         insertSql,
                                                         "已复制本行 → INSERT（表 ${tableName ?: "?"}）",
                                                     )
+                                                },
+                                            )
+                                        }
+                                        if (isEditable) {
+                                            add(ContextMenuItem("编辑单元格（Ctrl+双击）") { beginEdit(index, c) })
+                                            add(
+                                                ContextMenuItem("置为 NULL") {
+                                                    origKey?.let { onCellEdit(it, CellValue(null)) }
+                                                },
+                                            )
+                                        }
+                                        if (pending) {
+                                            add(
+                                                ContextMenuItem("撤销此单元格修改") {
+                                                    onClearCellEdit(origKey)
                                                 },
                                             )
                                         }
@@ -2195,10 +2385,12 @@ private fun DataCell(
     value: String?,
     width: Int,
     selected: Boolean = false,
+    pending: Boolean = false,
     onSelect: () -> Unit = {},
     mono: Boolean = true,
     muted: Boolean = false,
     onDoubleClick: (() -> Unit)? = null,
+    editor: (@Composable () -> Unit)? = null,
     menuItems: List<ContextMenuItem> = emptyList(),
 ) {
     val content: @Composable () -> Unit = {
@@ -2228,30 +2420,100 @@ private fun DataCell(
     // 手势块只捕获一次 lambda：经 rememberUpdatedState 取最新回调，避免每次重组合重启手势
     val currentSelect = rememberUpdatedState(onSelect)
     val currentDoubleClick = rememberUpdatedState(onDoubleClick)
-    val base = Modifier
-        .width(width.dp)
-        .height(26.dp)
-        .background(if (selected) MaterialTheme.colors.primary.copy(alpha = 0.18f) else Color.Transparent)
-        .then(
-            if (selected) Modifier.border(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.85f))
-            else Modifier,
-        )
-        // 单击按下即选中（不等双击判定）；双击开大字段查看器（无内容时不动作）
-        .pointerInput(Unit) {
+    val background = when {
+        selected -> MaterialTheme.colors.primary.copy(alpha = 0.18f)
+        pending -> Color(0xFFFFB300).copy(alpha = 0.20f)
+        else -> Color.Transparent
+    }
+    // 行内编辑时不要挂选中/双击手势，避免与文本框抢指针
+    val gesture = if (editor == null) {
+        Modifier.pointerInput(Unit) {
             detectTapGestures(
                 onPress = { currentSelect.value() },
                 onDoubleTap = { currentDoubleClick.value?.invoke() },
             )
         }
-    if (menuItems.isEmpty()) {
-        Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
     } else {
-        // 仅右键菜单可复制（不做单击复制）
-        ContextMenuArea(items = { menuItems }) {
-            Box(modifier = base, contentAlignment = Alignment.CenterStart) {
-                content()
+        Modifier
+    }
+    val base = Modifier
+        .width(width.dp)
+        .height(26.dp)
+        .background(background)
+        .then(
+            if (selected) Modifier.border(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.85f))
+            else Modifier,
+        )
+        .then(gesture)
+    when {
+        editor != null -> Box(modifier = base, contentAlignment = Alignment.CenterStart) { editor() }
+        menuItems.isEmpty() -> Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
+        else -> {
+            // 仅右键菜单可复制（不做单击复制）
+            ContextMenuArea(items = { menuItems }) {
+                Box(modifier = base, contentAlignment = Alignment.CenterStart) {
+                    content()
+                }
             }
         }
+    }
+}
+
+/**
+ * 结果单元格行内编辑器：Enter 提交、Esc 取消、失焦提交（点其他单元格/工具条按钮同样生效）。
+ * 受控：草稿由 [ResultTable] 持有，便于“点其它格先提交当前格”。
+ */
+@Composable
+private fun CellEditor(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onCommit: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    var hadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 2.dp)
+            .border(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.9f)),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                color = MaterialTheme.colors.onSurface,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colors.primary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 5.dp)
+                .focusRequester(focusRequester)
+                .onFocusChanged { st ->
+                    if (st.isFocused) {
+                        hadFocus = true
+                    } else if (hadFocus) {
+                        hadFocus = false
+                        onCommit()
+                    }
+                }
+                .onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) {
+                        false
+                    } else {
+                        when (e.key) {
+                            Key.Enter, Key.NumPadEnter -> { onCommit(); true }
+                            Key.Escape -> { onCancel(); true }
+                            else -> false
+                        }
+                    }
+                },
+        )
     }
 }
 

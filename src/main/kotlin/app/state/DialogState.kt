@@ -36,6 +36,9 @@ sealed interface ConfirmRequest {
     data class DeleteFolder(val id: String, val name: String, val movingConnections: Int) : ConfirmRequest
     data class DeleteConnection(val id: String, val name: String) : ConfirmRequest
     data class DeleteConsole(val id: String, val name: String, val connectionName: String) : ConfirmRequest
+
+    /** 有未提交的结果修改时，刷新/重跑等动作会丢弃它们 → 确认；[onDiscard] 为确认后执行的动作。 */
+    class DiscardResultEdits(val count: Int, val actionLabel: String, val onDiscard: () -> Unit) : ConfirmRequest
 }
 
 class DialogState {

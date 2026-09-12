@@ -1,6 +1,6 @@
 # 可编辑查询结果（Cell Editing & Commit）设计方案
 
-> 状态：**Phase 0 已实现**（地基/纯逻辑；UI 未接入）。目标读者：后续实现者。
+> 状态：**Phase 1 已实现**（单格改 + 提交 + 刷新 + 丢弃确认）。目标读者：后续实现者。
 > 与 `AGENTS.md` 冲突时以 `AGENTS.md` 为准。实施进度见文末 §13。
 
 ## 0. 背景与目标
@@ -346,8 +346,8 @@ data class DiscardEdits(
 ## 10. 分阶段实施
 
 - **Phase 0（地基，无 UI 变化）**：`QueryColumn` 元数据扩展；`ColumnMeta.primaryKey`；`ResultEditPlan` 纯逻辑 + 单测；`RowUpdater` 生成器/绑定/事务 + 单测 + 冒烟。
-- **Phase 1（单格改 + 提交）**：内联编辑、buffer、提交图标、`commitEdits`、成功后更新内存行与历史。
-- **Phase 2（刷新 + 守卫）**：刷新图标、`DiscardEdits` 确认、撤销全部/单格、脏标记、切换/退出守卫。
+- **Phase 1（单格改 + 提交）**：内联编辑、buffer、提交图标、`commitEdits`、成功后 `refreshOutcome` + 丢弃确认。
+- **Phase 2（更完整守卫）**：撤销全部、更完整的脏标记、切换控制台/退出守卫。
 - **Phase 3（打磨）**：`EditCellDialog`（长值/多行）、提交后自动刷新、UPDATE 预览。
 
 ---
@@ -394,8 +394,18 @@ data class DiscardEdits(
 若直接把它当 catalog，`RowUpdater` 会拼出 `UPDATE "users"."users"`。已在 `readColumnMeta` 里归一化：
 `catalog == table`（忽略大小写）时视为无 catalog。H2/SQLite 主键标记均在集成测试中守住。
 
+### Phase 1（单格改 + 提交 + 刷新，已完成）
+
+| 文件 | 内容 |
+|---|---|
+| `app/state/ConsoleState.kt` | `editBuffers`（CelliKey→CellValue，纯内存）/`editPlans`/`resultBusy`；`ensureEditPlan`（结果列元数据 → schema 解析 → `ColumnCatalog.ensure` → PK/基表判定 → `buildEditPlan`）；`commitEdits`（`buildUpdatePlans` + `RowUpdater.executeBatch` 单事务 + 历史，成功后清 overlay 并固定 `refreshOutcome`）；`refreshOutcome`（只重跑当前 Tab 语句并替换该 outcome，保留其它 Tab/草稿）；`run`/`selectRunOutcome`/`deleteConsole` 清理编辑态 |
+| `app/state/DialogState.kt` | `ConfirmRequest.DiscardResultEdits(count, actionLabel, onDiscard)`（带确认后动作） |
+| `app/dialog/TextInputDialogs.kt` | `ConfirmDialog` 支持「继续/取消」（非删除文案） |
+| `app/ui/DbIcons.kt` | `Commit` / `Refresh` 图标 |
+| `app/ui/SqlWorkspace.kt` | 工具条提交/刷新按钮（提交带未提交数量徽标与高亮）；`Ctrl+双击`内联编辑（Enter 提交 / Esc 取消 / 失焦提交）；`pending` 琥珀底色与「撤销此单元格修改」「置为 NULL」「编辑单元格」右键项；`F5` 刷新 |
+| `app/core/Main.kt` | 提交/刷新回调；刷新/Tab 切换/重跑前 `editCount>0` → `DiscardResultEdits` 确认；结果落地/切 Tab 后 `LaunchedEffect` 重算编辑计划 |
+
 ### 后续
 
-- **Phase 1**：`ConsoleState.editBuffers` + `commitEdits`、Ctrl+双击内联编辑、提交图标、提交后 `refreshOutcome`。
-- **Phase 2**：刷新图标 + `DiscardEdits` 确认、撤销、脏标记、切换/退出守卫。
+- **Phase 2**：撤销全部、更完整的脏标记、切换控制台/退出守卫（当前跨控制台编辑态按 consoleId 保留，不丢）、`SELECT ... FOR UPDATE`/唯一索引回落。
 - **Phase 3**：`EditCellDialog`（长值/多行）、UPDATE 预览。

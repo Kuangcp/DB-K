@@ -142,14 +142,19 @@ fun ConfirmDialog(
         is ConfirmRequest.DeleteConsole -> {
             "删除控制台" to "确定删除控制台「${request.name}」（数据源：${request.connectionName}）吗？\n\n其绑定的 SQL 文件将一并删除，不可恢复。"
         }
+        is ConfirmRequest.DiscardResultEdits -> {
+            "未提交的修改" to
+                "有 ${request.count} 处修改尚未提交，${request.actionLabel}将丢失这些修改。\n\n确定继续吗？"
+        }
     }
+    val destructive = request !is ConfirmRequest.DiscardResultEdits
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("删除", color = MaterialTheme.colors.error)
+                Text(if (destructive) "删除" else "继续", color = MaterialTheme.colors.error)
             }
         },
         dismissButton = {

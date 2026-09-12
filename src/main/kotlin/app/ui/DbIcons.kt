@@ -74,4 +74,17 @@ object DbIcons {
     val Stop: ImageVector by lazy {
         vector("stop", "M6 6h12v12H6z")
     }
+
+    /** 提交（对勾）：把未提交的单元格修改写回库。 */
+    val Commit: ImageVector by lazy {
+        vector("commit", "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
+    }
+
+    /** 刷新（环形箭头）：重新执行当前结果 Tab 的语句。 */
+    val Refresh: ImageVector by lazy {
+        vector(
+            "refresh",
+            "M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-8 3.58-8 8s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z",
+        )
+    }
 }

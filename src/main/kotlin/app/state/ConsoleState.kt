@@ -4,12 +4,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.ui.CellKey
+import app.ui.EditPlan
+import app.ui.buildEditPlan
+import app.ui.buildUpdatePlans
 import db.ConsoleRecord
 import db.ConnectionsRepository
 import db.SqlHistoryRow
+import jdbc.CellValue
 import jdbc.DialectRegistry
+import jdbc.QueryColumn
 import jdbc.QueryExecutor
 import jdbc.QueryResult
+import jdbc.RowUpdater
+import jdbc.model.SchemaMeta
 import jdbc.splitSqlStatements
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -83,6 +91,18 @@ class ConsoleState(
     /** consoleId -> 最近一次执行快照。 */
     val runSlots = mutableStateMapOf<String, ConsoleRunUi>()
 
+    /**
+     * 结果单元格未提交修改（本地 overlay）：consoleId → (原始坐标 → 新值)。
+     * 纯瞬态，不落盘；新执行/刷新/切 Tab 即清（有修改时 UI 先确认）。
+     */
+    val editBuffers = mutableStateMapOf<String, Map<CellKey, CellValue>>()
+
+    /** 当前结果集的编辑计划（表/主键/可编辑列）；null = 不可编辑（视图/无主键/表达式）。 */
+    val editPlans = mutableStateMapOf<String, EditPlan?>()
+
+    /** 正在提交/刷新某控制台的结果（禁用按钮）。 */
+    val resultBusy = mutableStateMapOf<String, Boolean>()
+
     /** 会话内记住每个数据源最后激活的控制台（重启后默认选 updated_at 最新）。 */
     private val lastActivePerProfile = mutableMapOf<String, String>()
 
@@ -138,6 +158,192 @@ class ConsoleState(
     fun textOf(consoleId: String): String = buffers[consoleId] ?: ""
 
     fun runStateOf(consoleId: String): ConsoleRunUi = runSlots[consoleId] ?: ConsoleRunUi()
+
+    // ---------- 结果单元格编辑（本地 overlay → 提交写回） ----------
+
+    fun editsOf(consoleId: String): Map<CellKey, CellValue> = editBuffers[consoleId].orEmpty()
+
+    fun editCount(consoleId: String): Int = editsOf(consoleId).size
+
+    fun editPlanOf(consoleId: String): EditPlan? = editPlans[consoleId]
+
+    fun resultBusyOf(consoleId: String): Boolean = resultBusy[consoleId] == true
+
+    /** 暂存一格修改（仅内存；重复点同一格覆盖）。 */
+    fun setCellEdit(consoleId: String, key: CellKey, value: CellValue) {
+        editBuffers[consoleId] = editsOf(consoleId) + (key to value)
+    }
+
+    /** 撤销单格修改。 */
+    fun clearCellEdit(consoleId: String, key: CellKey) {
+        val cur = editBuffers[consoleId] ?: return
+        if (key !in cur) return
+        val next = cur - key
+        if (next.isEmpty()) editBuffers.remove(consoleId) else editBuffers[consoleId] = next
+    }
+
+    /** 丢弃某控制台全部未提交修改。 */
+    fun clearEdits(consoleId: String) {
+        editBuffers.remove(consoleId)
+    }
+
+    /**
+     * 为当前激活结果重算编辑计划：找基表 → 解析 schema → 异步拉列元数据（含主键标记）→ 构建。
+     * 结果不可编辑（无基表/无主键/视图）时存 null。UI 在结果变化时调用（幂等，有缓存）。
+     */
+    suspend fun ensureEditPlan(console: ConsoleRecord, profile: db.ConnectionProfile) {
+        val ui = runSlots[console.id]
+        val result = ui?.result
+        if (result == null || !result.isQuery || result.columns.isEmpty()) {
+            editPlans.remove(console.id)
+            return
+        }
+        val tableCol = result.columns.firstOrNull { !it.table.isNullOrBlank() && !it.baseColumn.isNullOrBlank() }
+        val table = tableCol?.table
+        if (tableCol == null || table.isNullOrBlank()) {
+            editPlans[console.id] = null
+            return
+        }
+        val schemaMeta = resolveResultSchema(console, profile, tableCol)
+        if (schemaMeta == null) {
+            editPlans[console.id] = null
+            return
+        }
+        connectionsState.columns.ensure(profile, listOf(ColumnCatalog.ColumnRef(schemaMeta, table)))
+        val cols = connectionsState.columns.peek(profile.id, schemaMeta, table)
+        if (cols == null) {
+            editPlans[console.id] = null
+            return
+        }
+        val primaryKeys = cols.filter { it.primaryKey }.map { it.name.lowercase() }.toSet()
+        val knownColumns = cols.map { it.name.lowercase() }.toSet()
+        // 目录未加载时不阻断（乐观）；提交失败仍会报错，不造成数据损坏
+        val isBaseTable = connectionsState.objectsOf(profile.id, schemaMeta.key)
+            ?.let { objs -> objs.tables.any { it.equals(table, ignoreCase = true) } }
+            ?: true
+        editPlans[console.id] = buildEditPlan(result, primaryKeys, knownColumns, isBaseTable)
+    }
+
+    /** 结果元数据里的 schema/catalog 优先；缺失（如 SQLite）时用控制台目标 / 唯一 schema 兜底。 */
+    private fun resolveResultSchema(
+        console: ConsoleRecord,
+        profile: db.ConnectionProfile,
+        column: QueryColumn,
+    ): SchemaMeta? {
+        if (column.schema != null || column.catalog != null) return SchemaMeta(column.catalog, column.schema)
+        val schemas = connectionsState.schemasOf(profile.id)
+        if (console.target.isNotBlank()) {
+            schemas?.firstOrNull { it.displayName.equals(console.target, ignoreCase = true) }?.let { return it }
+        }
+        return schemas?.singleOrNull()
+    }
+
+    /**
+     * 提交某控制台的全部未提交修改：参数化 UPDATE + 单事务 + 影响行数=1 校验；
+     * 成功后清空 overlay、写执行历史，并**固定刷新当前 Tab**（用服务端权威值覆盖）。
+     * 失败保留 overlay，返回可读错误（由 UI Toast 展示）。
+     */
+    suspend fun commitEdits(console: ConsoleRecord, profile: db.ConnectionProfile): Result<Int> {
+        val ui = runSlots[console.id] ?: return Result.failure(IllegalStateException("没有可提交的结果"))
+        if (ui.executing || resultBusyOf(console.id)) return Result.failure(IllegalStateException("正在执行，稍后再提交"))
+        val result = ui.result ?: return Result.failure(IllegalStateException("没有可提交的结果"))
+        val plan = editPlanOf(console.id) ?: return Result.failure(IllegalStateException("当前结果不可编辑"))
+        val edits = editsOf(console.id)
+        if (edits.isEmpty()) return Result.success(0)
+        val plans = buildUpdatePlans(result, plan, edits)
+        if (plans.isEmpty()) return Result.failure(IllegalStateException("没有可提交的修改"))
+
+        if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
+            connectionsState.ensureConnectionReady(profile)
+        }
+        if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
+            return Result.failure(
+                IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: "连接不可用"),
+            )
+        }
+        val live = connectionsState.liveConnection(profile.id)
+            ?: return Result.failure(IllegalStateException("连接已断开"))
+        val dialect = DialectRegistry.forProfile(profile)
+        val contextSql = sessionContextSqlFor(console, profile)
+
+        resultBusy[console.id] = true
+        val outcome = withContext(ioDispatcher) {
+            runCatching {
+                live.onConnection { conn ->
+                    QueryExecutor.applyContext(conn, contextSql)
+                    RowUpdater.executeBatch(conn, plans, dialect) { st -> live.registerStatement(st) }
+                }
+            }
+        }
+        resultBusy[console.id] = false
+
+        return outcome.fold(
+            onSuccess = { count ->
+                plans.forEach { p ->
+                    recordHistory(profile.id, RowUpdater.renderUpdateSql(p, dialect), true, 0, 1)
+                }
+                clearEdits(console.id)
+                // 提交后固定刷新当前 Tab（等值：服务端触发器等可能改写结果）
+                refreshOutcome(console, profile, ui.activeIndex)
+                Result.success(count)
+            },
+            onFailure = { t ->
+                Logger.error(t, "commit cell edits failed on {}", profile.name)
+                Result.failure(IllegalStateException(friendlySqlError(t)))
+            },
+        )
+    }
+
+    /**
+     * 只重新执行当前（或指定）结果 Tab 的语句，替换该 outcome，其余 Tab / 编辑器草稿不动。
+     * 调用前若存在未提交修改，UI 应先确认丢弃（本方法不弹窗）。
+     */
+    suspend fun refreshOutcome(console: ConsoleRecord, profile: db.ConnectionProfile, index: Int = -1) {
+        val ui = runSlots[console.id] ?: return
+        if (ui.executing || resultBusyOf(console.id)) return
+        val idx = if (index >= 0) index else ui.activeIndex
+        val stmt = ui.outcomes.getOrNull(idx)?.sql?.takeIf { it.isNotBlank() } ?: return
+
+        if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
+            connectionsState.ensureConnectionReady(profile)
+        }
+        if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) return
+        val live = connectionsState.liveConnection(profile.id) ?: return
+        val contextSql = sessionContextSqlFor(console, profile)
+
+        runGens[console.id] = (runGens[console.id] ?: 0L) + 1
+        val gen = runGens.getValue(console.id)
+        lastStableSlots[console.id] = ui
+        resultBusy[console.id] = true
+        val res = withContext(ioDispatcher) {
+            runCatching {
+                live.onConnection { conn ->
+                    QueryExecutor.applyContext(conn, contextSql)
+                    QueryExecutor.execute(conn, stmt) { st -> live.registerStatement(st) }
+                }
+            }
+        }
+        resultBusy[console.id] = false
+        if (runGens[console.id] != gen) return
+
+        val outcomes = ui.outcomes.toMutableList()
+        res.onSuccess { r ->
+            outcomes[idx] = StatementOutcome(stmt, result = r)
+            recordHistory(profile.id, stmt, true, r.durationMs, r.affectedRows ?: r.rowCount)
+        }.onFailure { t ->
+            Logger.error(t, "refresh outcome failed on {}", profile.name)
+            val msg = friendlySqlError(t)
+            outcomes[idx] = StatementOutcome(stmt, error = msg)
+            recordHistory(profile.id, stmt, false, 0, 0, msg)
+        }
+        runSlots[console.id] = ConsoleRunUi(
+            outcomes = outcomes,
+            activeIndex = idx,
+            ranMs = res.getOrNull()?.durationMs ?: ui.ranMs,
+        )
+        clearEdits(console.id)
+        ensureEditPlan(console, profile)
+    }
 
     fun isDirty(consoleId: String): Boolean = consoleId in dirtyConsoleIds
 
@@ -279,6 +485,9 @@ class ConsoleState(
         loaded.remove(consoleId)
         dirtyConsoleIds = dirtyConsoleIds - consoleId
         runSlots.remove(consoleId)
+        editBuffers.remove(consoleId)
+        editPlans.remove(consoleId)
+        resultBusy.remove(consoleId)
         runGens.remove(consoleId)
         runStartedAt.remove(consoleId)
         runTarget.remove(consoleId)
@@ -303,6 +512,9 @@ class ConsoleState(
             loaded.remove(rec.id)
             dirtyConsoleIds = dirtyConsoleIds - rec.id
             runSlots.remove(rec.id)
+            editBuffers.remove(rec.id)
+            editPlans.remove(rec.id)
+            resultBusy.remove(rec.id)
             runGens.remove(rec.id)
             runStartedAt.remove(rec.id)
             runTarget.remove(rec.id)
@@ -427,6 +639,9 @@ class ConsoleState(
     suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile, sql: String? = null) {
         // 同控制台不允许叠加执行（执行中兜底）
         if (runSlots[console.id]?.executing == true) return
+        // 新执行 → 丢弃旧的未提交修改/编辑计划（UI 已在有修改时先确认）
+        clearEdits(console.id)
+        editPlans.remove(console.id)
         withContext(ioDispatcher) { flushNow(console.id) }
         val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
         if (target.isEmpty()) {
@@ -512,12 +727,17 @@ class ConsoleState(
             activeIndex = if (errIdx >= 0) errIdx else 0,
             ranMs = durationMs,
         )
+        // 结果落地后计算可编辑计划（无基表/无主键/视图 → 保持 null）
+        ensureEditPlan(console, profile)
     }
 
     /** 切换结果区当前展示的语句（多语句时 Tab 选择）。 */
     fun selectRunOutcome(consoleId: String, index: Int) {
         val cur = runSlots[consoleId] ?: return
         if (index in cur.outcomes.indices && index != cur.activeIndex) {
+            // 未提交修改只对应当前 Tab 的结果集，切 Tab 即丢弃（UI 已在有修改时先确认）
+            clearEdits(consoleId)
+            editPlans.remove(consoleId)
             runSlots[consoleId] = cur.copy(activeIndex = index)
         }
     }

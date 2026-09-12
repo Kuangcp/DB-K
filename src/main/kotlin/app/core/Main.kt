@@ -290,6 +290,13 @@ private fun AppBody(
             toastState.show("已有查询在执行中（可点「取消」或按 Esc）")
             return
         }
+        val pending = consoleState.editCount(c.id)
+        if (pending > 0) {
+            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "重新执行") {
+                scope.launch { consoleState.run(c, p, target) }
+            }
+            return
+        }
         scope.launch { consoleState.run(c, p, target) }
     }
 
@@ -481,6 +488,14 @@ private fun AppBody(
                     TreeSplitter { delta -> treeWidthDp = (treeWidthDp + delta).coerceIn(180f, 680f) }
                     val runState = activeConsole?.let { consoleState.runStateOf(it.id) } ?: ConsoleRunUi()
                     val activeRun = runState // 仅供下方 lambda 引用
+                    // 结果落地/切 Tab 后重算可编辑计划（异步拉列元数据；幂等）
+                    LaunchedEffect(activeConsole?.id, activeRun.activeIndex, activeRun.executing) {
+                        val c = activeConsole
+                        val p = activeProfile
+                        if (c != null && p != null && !activeRun.executing && activeRun.result != null) {
+                            consoleState.ensureEditPlan(c, p)
+                        }
+                    }
                     SqlWorkspace(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         profile = activeProfile,
@@ -527,7 +542,59 @@ private fun AppBody(
                         run = activeRun,
                         onRun = ::runActiveConsole,
                         onSelectOutcome = { i ->
-                            activeConsole?.let { consoleState.selectRunOutcome(it.id, i) }
+                            val c = activeConsole
+                            if (c != null) {
+                                val pending = consoleState.editCount(c.id)
+                                val current = consoleState.runStateOf(c.id).activeIndex
+                                if (pending > 0 && i != current) {
+                                    dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "切换结果 Tab") {
+                                        consoleState.selectRunOutcome(c.id, i)
+                                    }
+                                } else {
+                                    consoleState.selectRunOutcome(c.id, i)
+                                }
+                            }
+                        },
+                        onCommitEdits = {
+                            val c = activeConsole
+                            val p = activeProfile
+                            if (c != null && p != null) {
+                                scope.launch {
+                                    consoleState.commitEdits(c, p)
+                                        .onSuccess { n ->
+                                            toastState.show(if (n > 0) "已提交 $n 处修改" else "没有修改")
+                                        }
+                                        .onFailure { t ->
+                                            toastState.show("提交失败：${t.message?.take(120)}")
+                                        }
+                                }
+                            }
+                        },
+                        onRefreshResult = {
+                            val c = activeConsole
+                            val p = activeProfile
+                            if (c != null && p != null) {
+                                val pending = consoleState.editCount(c.id)
+                                val doRefresh: () -> Unit = {
+                                    scope.launch {
+                                        consoleState.refreshOutcome(c, p, consoleState.runStateOf(c.id).activeIndex)
+                                    }
+                                }
+                                if (pending > 0) {
+                                    dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "刷新结果", doRefresh)
+                                } else {
+                                    doRefresh()
+                                }
+                            }
+                        },
+                        edits = activeConsole?.let { consoleState.editsOf(it.id) }.orEmpty(),
+                        editPlan = activeConsole?.let { consoleState.editPlanOf(it.id) },
+                        resultBusy = activeConsole?.let { consoleState.resultBusyOf(it.id) } == true,
+                        onCellEdit = { key, value ->
+                            activeConsole?.let { consoleState.setCellEdit(it.id, key, value) }
+                        },
+                        onClearCellEdit = { key ->
+                            activeConsole?.let { consoleState.clearCellEdit(it.id, key) }
                         },
                         onExportCsv = {
                             val result = activeConsole?.let { consoleState.runStateOf(it.id).result }
@@ -734,6 +801,7 @@ private fun DialogHost(
                         consoleState.onConnectionDeleted(request.id)
                     }
                     is ConfirmRequest.DeleteConsole -> consoleState.deleteConsole(request.id)
+                    is ConfirmRequest.DiscardResultEdits -> request.onDiscard()
                 }
                 dialogState.confirm = null
             },
