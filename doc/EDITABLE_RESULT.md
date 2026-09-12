@@ -1,6 +1,6 @@
 # 可编辑查询结果（Cell Editing & Commit）设计方案
 
-> 状态：**Phase 1 已实现**（单格改 + 提交 + 刷新 + 丢弃确认）。目标读者：后续实现者。
+> 状态：**Phase 2 已实现**（编辑/提交/刷新 + 撤销全部/退出守卫 + 唯一索引回落）。目标读者：后续实现者。
 > 与 `AGENTS.md` 冲突时以 `AGENTS.md` 为准。实施进度见文末 §13。
 
 ## 0. 背景与目标
@@ -102,7 +102,7 @@ data class QueryColumn(
 
 - `jdbc/model/MetadataModels.kt` 的 `ColumnMeta` 增加 `primaryKey: Boolean = false`（带默认值，磁盘缓存向后兼容）。
 - 各方言 `loadColumns`（默认实现 `queryTableColumns`）里顺带查 `DatabaseMetaData.getPrimaryKeys(...)` 打标。
-- 唯一索引（无 PK 时的回落）用 `getIndexInfo(unique=true)`，放 Phase 2；Phase 1 只支持主键。
+- 唯一索引（无 PK 时的回落）：`getIndexInfo(unique=true)` 选**列数最少**的唯一索引作为行定位键（已实现，见 §13 Phase 2）。
 
 这样 §2.2 的判定在 `ColumnCatalog.peek()` 命中时**同步**可得，未命中时异步拉取并回填。
 
@@ -167,10 +167,10 @@ fun executeBatch(conn: Connection, plans: List<UpdatePlan>, dialect: DbDialect,
 - 键列出现在结果里 → 参与 WHERE；用户改键列本身也允许（WHERE 仍用旧值）。
 - 自动列（`isAutoIncrement`、PG identity/generated）标记只读，不允许编辑。
 
-### 3.4 无主键即只读（明确决策）
+### 3.4 无可用键即只读（明确决策）
 
-无主键 / 唯一键时**不允许任何修改**，不提供"全列匹配"的不安全回退（重复行会误改多行）。
-单元格保持只读，tooltip 说明「该结果缺少用于定位的主键，只读」。
+无主键且无可用唯一索引时**不允许任何修改**，不提供"全列匹配"的不安全回退（重复行会误改多行）。
+单元格保持只读，tooltip 说明「该结果缺少用于定位的主键/唯一键，只读」。
 
 ---
 
@@ -312,7 +312,7 @@ data class DiscardEdits(
 |---|---|---|
 | jdbc | `jdbc/QueryExecutor.kt` | `QueryColumn` 扩展元数据字段；`readResultSet` 填充 |
 | jdbc | `jdbc/RowUpdater.kt`（新） | `UpdatePlan`、`renderUpdateSql`、`executeBatch`、类型绑定 |
-| jdbc | `jdbc/DbDialect.kt` / `GenericDialect.kt` | `loadColumns` 顺带 `getPrimaryKeys` 打标（Phase 2：唯一索引） |
+| jdbc | `jdbc/DbDialect.kt` / `GenericDialect.kt` | `loadColumns` 顺带 `getPrimaryKeys` 打标；无 PK 时回落唯一索引（已实现） |
 | jdbc | `jdbc/model/MetadataModels.kt` | `ColumnMeta.primaryKey`（带默认值，缓存兼容） |
 | jdbc | `jdbc/JdbcSmoke.kt` | UPDATE / 回滚 / 影响行数校验冒烟 |
 | app | `app/ui/ResultEditPlan.kt`（新，纯逻辑） | 可编辑性判定、`view↔original` 映射、值转换预检 |
@@ -333,7 +333,7 @@ data class DiscardEdits(
 |---|---|
 | 结果被截断（>1000 行） | 仍可编辑已加载行；提示"仅前 1000 行可改" |
 | NULL 与空串 | 两态分离：空串合法；NULL 用右键「设为 NULL」或编辑框的空态标记，绝不把空串当 NULL |
-| 无主键 | 只读，tooltip 说明原因（不做任何回退） |
+| 无可用键 | 只读，tooltip 说明原因（不做任何回退） |
 | 视图 / 聚合 / 无基表来源 | 只读，tooltip 说明原因 |
 | 约束冲突（唯一/外键/NOT NULL） | 捕获 SQLException → `friendlySqlError`，保留 buffer，指出冲突列 |
 | 行已被并发删除/修改 | `affected==0` → 报「目标行已不存在或被修改」，建议刷新 |
@@ -347,8 +347,8 @@ data class DiscardEdits(
 
 - **Phase 0（地基，无 UI 变化）**：`QueryColumn` 元数据扩展；`ColumnMeta.primaryKey`；`ResultEditPlan` 纯逻辑 + 单测；`RowUpdater` 生成器/绑定/事务 + 单测 + 冒烟。
 - **Phase 1（单格改 + 提交）**：内联编辑、buffer、提交图标、`commitEdits`、成功后 `refreshOutcome` + 丢弃确认。
-- **Phase 2（更完整守卫）**：撤销全部、更完整的脏标记、切换控制台/退出守卫。
-- **Phase 3（打磨）**：`EditCellDialog`（长值/多行）、提交后自动刷新、UPDATE 预览。
+- **Phase 2（守卫 + 唯一索引回落）**：撤销全部、退出守卫、`getIndexInfo` 唯一索引回落（已实现）。
+- **Phase 3（打磨）**：`EditCellDialog`（长值/多行）、UPDATE 预览、`SELECT ... FOR UPDATE`。
 
 ---
 
@@ -405,7 +405,17 @@ data class DiscardEdits(
 | `app/ui/SqlWorkspace.kt` | 工具条提交/刷新按钮（提交带未提交数量徽标与高亮）；`Ctrl+双击`内联编辑（Enter 提交 / Esc 取消 / 失焦提交）；`pending` 琥珀底色与「撤销此单元格修改」「置为 NULL」「编辑单元格」右键项；`F5` 刷新 |
 | `app/core/Main.kt` | 提交/刷新回调；刷新/Tab 切换/重跑前 `editCount>0` → `DiscardResultEdits` 确认；结果落地/切 Tab 后 `LaunchedEffect` 重算编辑计划 |
 
+### Phase 2（守卫 + 唯一索引回落，已完成）
+
+| 文件 | 内容 |
+|---|---|
+| `jdbc/DbDialect.kt` | `markPrimaryKeys` 无 PK 时回落 `readUniqueKey`（`getIndexInfo` 唯一索引，选列数最少者）；驱动不支持/无唯一索引返回 null |
+| `jdbc/model/MetadataModels.kt` | `primaryKey` 语义扩展为「行定位键（PK 优先，回落唯一索引）」 |
+| `app/state/ConsoleState.kt` | `totalEditCount()`（退出守卫）；`editBuffers` 供标签提示 |
+| `app/core/Main.kt` | 窗口关闭（`onCloseRequest`）时有未提交修改 → `DiscardResultEdits` 确认后再退出；标签传入各控制台未提交数 |
+| `app/ui/DbIcons.kt` | `Undo` 图标 |
+| `app/ui/SqlWorkspace.kt` | 工具条「撤销全部」图标（有修改时显示）；控制台标签显示 `✦N` 未提交数 |
+
 ### 后续
 
-- **Phase 2**：撤销全部、更完整的脏标记、切换控制台/退出守卫（当前跨控制台编辑态按 consoleId 保留，不丢）、`SELECT ... FOR UPDATE`/唯一索引回落。
-- **Phase 3**：`EditCellDialog`（长值/多行）、UPDATE 预览。
+- **Phase 3**：`EditCellDialog`（长值/多行）、UPDATE 预览、`SELECT ... FOR UPDATE`。

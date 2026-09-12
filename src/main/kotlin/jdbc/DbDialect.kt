@@ -93,9 +93,10 @@ internal fun queryTableColumns(conn: Connection, schema: SchemaMeta?, table: Str
 }
 
 /**
- * 用 JDBC [DatabaseMetaData.getPrimaryKeys] 给列打主键标记（大小写不敏感）。
+ * 用 JDBC [DatabaseMetaData.getPrimaryKeys] 给列打主键标记（大小写不敏感）；
+ * **无主键时回落到最小的唯一索引**（列数最少者），让「唯一键表」也能定位行编辑。
  * 各库 fast path（PG/MySQL/CK）与通用 [queryTableColumns] 都应在返回前调用，保证
- * `ColumnMeta.primaryKey` 可信；查不到主键/驱动不支持时原样返回（不抛）。
+ * `ColumnMeta.primaryKey` 可信；查不到/驱动不支持时原样返回（不抛）。
  */
 internal fun markPrimaryKeys(
     conn: Connection,
@@ -110,9 +111,12 @@ internal fun markPrimaryKeys(
         val md = conn.metaData
         val catalog = schema?.catalog
         val schemaPattern = schema?.schema?.takeIf { it != "main" }
-        linkedSetOf(bare, bare.uppercase(), bare.lowercase())
-            .firstNotNullOfOrNull { readPrimaryKeys(md, catalog, schemaPattern, it).takeIf { pk -> pk.isNotEmpty() } }
-            ?: emptySet()
+        val variants = linkedSetOf(bare, bare.uppercase(), bare.lowercase())
+        val pk = variants.firstNotNullOfOrNull { readPrimaryKeys(md, catalog, schemaPattern, it).takeIf { k -> k.isNotEmpty() } }
+        when {
+            !pk.isNullOrEmpty() -> pk
+            else -> variants.firstNotNullOfOrNull { readUniqueKey(md, catalog, schemaPattern, it) } ?: emptySet()
+        }
     }.getOrDefault(emptySet())
     if (keys.isEmpty()) return cols
     return cols.map { if (it.name.lowercase() in keys) it.copy(primaryKey = true) else it }
@@ -131,6 +135,36 @@ private fun readPrimaryKeys(
         }
     }
     return out
+}
+
+/**
+ * 无主键时的回落：选**列数最少**的唯一索引作为行定位键（多列唯一索引取全列）。
+ * 只利用索引列名，不假设非空；真正写回时有「影响行数=1」校验兜底，不会误改多行。
+ * 驱动不支持 `getIndexInfo` 或没有唯一索引时返回 null。
+ */
+private fun readUniqueKey(
+    md: DatabaseMetaData,
+    catalog: String?,
+    schemaPattern: String?,
+    table: String,
+): Set<String>? {
+    val candidates = mutableListOf<List<String>>()
+    runCatching {
+        md.getIndexInfo(catalog, schemaPattern, table, true, true).use { rs ->
+            val byName = linkedMapOf<String, MutableList<Pair<Int, String>>>()
+            while (rs.next()) {
+                val indexName = rs.getString("INDEX_NAME") ?: continue
+                val colName = rs.getString("COLUMN_NAME") ?: continue
+                if (colName.isBlank()) continue
+                val ordinal = runCatching { rs.getInt("ORDINAL_POSITION") }.getOrDefault(0)
+                byName.getOrPut(indexName) { mutableListOf() } += ordinal to colName
+            }
+            byName.values.forEach { cols ->
+                if (cols.isNotEmpty()) candidates += cols.sortedBy { it.first }.map { it.second }
+            }
+        }
+    }
+    return candidates.minByOrNull { it.size }?.map { it.lowercase() }?.toSet()
 }
 
 private fun queryColumns(

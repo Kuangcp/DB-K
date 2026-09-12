@@ -58,6 +58,30 @@ class DialectSqliteH2IntegrationTest {
     }
 
     @Test
+    fun `sqlite falls back to unique index when no primary key`() {
+        val db = dir.resolve("uniq.db")
+        DriverManager.getConnection("jdbc:sqlite:$db").use { c ->
+            c.createStatement().use { st ->
+                st.execute("CREATE TABLE nopk (email TEXT UNIQUE, name TEXT)")
+                st.execute("CREATE TABLE multi (a TEXT, b TEXT, note TEXT, UNIQUE (a, b))")
+            }
+        }
+        val profile = ConnectionProfile(id = "p", name = "p", dbType = DbType.SQLITE, database = db.toString())
+        SQLiteDialect.openConnection(profile).use { conn ->
+            val schema = SQLiteDialect.loadSchemas(conn).first()
+            val nopk = SQLiteDialect.loadColumns(conn, schema, "nopk")
+            assertTrue(nopk.first { it.name == "email" }.primaryKey, "无主键时应回落唯一索引列")
+            assertTrue(nopk.none { it.name == "name" && it.primaryKey })
+
+            // 复合唯一索引：两列都应作为键（保证能唯一定位）
+            val multi = SQLiteDialect.loadColumns(conn, schema, "multi")
+            assertTrue(multi.first { it.name == "a" }.primaryKey)
+            assertTrue(multi.first { it.name == "b" }.primaryKey)
+            assertTrue(multi.none { it.name == "note" && it.primaryKey })
+        }
+    }
+
+    @Test
     fun `h2 loads schemas and objects`() {
         val profile = ConnectionProfile(
             id = "p", name = "p", dbType = DbType.H2, host = "",

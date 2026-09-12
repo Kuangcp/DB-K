@@ -165,6 +165,8 @@ fun SqlWorkspace(
     onCloseConsole: (ConsoleRecord) -> Unit = {},
     /** 未落盘改动控制台 id 集合（标签 ●）。 */
     dirtyConsoleIds: Set<String>,
+    /** consoleId → 未提交结果修改数（标签上提示）。 */
+    pendingEditCounts: Map<String, Int> = emptyMap(),
     /** 激活控制台数据源的库/schema 列表（目标切换菜单；null = 未连接/未加载）。 */
     schemas: List<SchemaMeta>?,
     /** 数据源方言是否支持切换执行目标（SQLite 单文件不支持）。 */
@@ -188,6 +190,8 @@ fun SqlWorkspace(
     onSelectOutcome: (Int) -> Unit,
     /** 提交结果单元格的未提交修改（参数化 UPDATE + 单事务）。 */
     onCommitEdits: () -> Unit = {},
+    /** 丢弃当前结果的全部未提交修改。 */
+    onClearAllEdits: () -> Unit = {},
     /** 刷新当前结果 Tab（重新执行该语句）。 */
     onRefreshResult: () -> Unit = {},
     /** 未提交修改（原始坐标 → 新值）。 */
@@ -331,6 +335,7 @@ fun SqlWorkspace(
             consoles = consoles,
             activeConsole = activeConsole,
             dirtyConsoleIds = dirtyConsoleIds,
+            pendingEditCounts = pendingEditCounts,
             profilesById = profilesById,
             onSelectConsole = onSelectConsole,
             onCreateConsoleAt = onCreateConsoleAt,
@@ -439,6 +444,7 @@ fun SqlWorkspace(
                             onSelectOutcome = onSelectOutcome,
                             onToggleTranspose = { transposed = !transposed },
                             onCommitEdits = onCommitEdits,
+                            onClearAllEdits = onClearAllEdits,
                             onRefreshResult = onRefreshResult,
                             editCount = edits.size,
                             canCommit = editPlan != null,
@@ -769,6 +775,7 @@ private fun ConsoleTabBar(
     consoles: List<ConsoleRecord>,
     activeConsole: ConsoleRecord?,
     dirtyConsoleIds: Set<String>,
+    pendingEditCounts: Map<String, Int>,
     profilesById: Map<String, ConnectionProfile>,
     onSelectConsole: (ConsoleRecord) -> Unit,
     onCreateConsoleAt: (String) -> Unit,
@@ -794,6 +801,7 @@ private fun ConsoleTabBar(
                     showSourceTag = multiSource,
                     active = c.id == activeConsole?.id,
                     dirty = c.id in dirtyConsoleIds,
+                    pendingEdits = pendingEditCounts[c.id] ?: 0,
                     onSelect = { onSelectConsole(c) },
                     onRename = { onRenameConsole(c) },
                     onDelete = { onDeleteConsole(c) },
@@ -846,6 +854,7 @@ private fun ConsoleChip(
     showSourceTag: Boolean,
     active: Boolean,
     dirty: Boolean,
+    pendingEdits: Int,
     onSelect: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -876,6 +885,15 @@ private fun ConsoleChip(
                 Text(
                     "●",
                     color = Color(0xFFFFB300), // 语义色：未保存（与状态点同源）
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(end = 3.dp),
+                )
+            }
+            if (pendingEdits > 0) {
+                // 语义色：该控制台有未提交的结果修改（数量）
+                Text(
+                    "✦$pendingEdits",
+                    color = Color(0xFFFFB300),
                     fontSize = 9.sp,
                     modifier = Modifier.padding(end = 3.dp),
                 )
@@ -1560,6 +1578,7 @@ private fun ResultToolbar(
     onSelectOutcome: (Int) -> Unit,
     onToggleTranspose: () -> Unit,
     onCommitEdits: () -> Unit,
+    onClearAllEdits: () -> Unit,
     onRefreshResult: () -> Unit,
     editCount: Int,
     canCommit: Boolean,
@@ -1611,7 +1630,15 @@ private fun ResultToolbar(
                 onClick = onCancelRun,
             )
         } else {
-            // 结果编辑：提交（有未提交修改时高亮 + 徽标）/ 刷新当前 Tab
+            // 结果编辑：撤销全部 / 提交（有未提交修改时高亮 + 徽标）/ 刷新当前 Tab
+            if (editCount > 0) {
+                ResultIconButton(
+                    icon = DbIcons.Undo,
+                    description = "撤销全部 $editCount 处修改",
+                    enabled = !resultBusy,
+                    onClick = onClearAllEdits,
+                )
+            }
             ResultIconButton(
                 icon = DbIcons.Commit,
                 description = if (editCount > 0) "提交 $editCount 处修改" else "提交修改",
@@ -1837,6 +1864,7 @@ private fun ResultTabs(
     onSelectOutcome: (Int) -> Unit,
     onToggleTranspose: () -> Unit,
     onCommitEdits: () -> Unit,
+    onClearAllEdits: () -> Unit,
     onRefreshResult: () -> Unit,
     editCount: Int,
     canCommit: Boolean,
@@ -1861,6 +1889,7 @@ private fun ResultTabs(
                 onSelectOutcome = onSelectOutcome,
                 onToggleTranspose = onToggleTranspose,
                 onCommitEdits = onCommitEdits,
+                onClearAllEdits = onClearAllEdits,
                 onRefreshResult = onRefreshResult,
                 editCount = editCount,
                 canCommit = canCommit,

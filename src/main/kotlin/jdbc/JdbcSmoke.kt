@@ -476,6 +476,15 @@ private fun smokeRowUpdater(dir: Path) {
         check(failed) { "非唯一命中应失败" }
         val dup = QueryExecutor.execute(conn, "SELECT b FROM dup ORDER BY b")
         check(dup.rows.map { it.single() } == listOf("o1", "o2")) { "失败应整体回滚" }
+
+        // 无主键但有唯一索引：回落到列数最少的唯一索引作为行定位键
+        conn.createStatement().use { st ->
+            st.execute("CREATE TABLE nopk (email TEXT UNIQUE, name TEXT)")
+            st.execute("INSERT INTO nopk VALUES ('a@x', 'alice'), ('b@x', 'bob')")
+        }
+        val nopkCols = SQLiteDialect.loadColumns(conn, schema, "nopk")
+        check(nopkCols.first { it.name == "email" }.primaryKey) { "无主键时唯一索引列应作为行定位键" }
+        check(!nopkCols.first { it.name == "name" }.primaryKey) { "非唯一列不应是行定位键" }
         Logger.info("[row-updater] plan/update/rollback PASS", "PASS")
     }
 }

@@ -187,6 +187,9 @@ class ConsoleState(
         editBuffers.remove(consoleId)
     }
 
+    /** 全部控制台的未提交修改总数（退出前守卫用）。 */
+    fun totalEditCount(): Int = editBuffers.values.sumOf { it.size }
+
     /**
      * 为当前激活结果重算编辑计划：找基表 → 解析 schema → 异步拉列元数据（含主键标记）→ 构建。
      * 结果不可编辑（无基表/无主键/视图）时存 null。UI 在结果变化时调用（幂等，有缓存）。

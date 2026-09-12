@@ -130,22 +130,32 @@ private fun AppRoot(onExit: () -> Unit) {
         }
     }
 
+    // 退出流程（先落盘控制台草稿 + 保存窗口几何）；有未提交结果修改时先确认。
+    val performExit: () -> Unit = {
+        consoleState.flushAllSync()
+        val size = windowState.size
+        val pos = windowState.position
+        WindowPrefs.save(
+            WindowPrefs.Geometry(
+                x = if (pos.isSpecified) (pos.x.value * density).roundToInt() else null,
+                y = if (pos.isSpecified) (pos.y.value * density).roundToInt() else null,
+                width = (size.width.value * density).roundToInt(),
+                height = (size.height.value * density).roundToInt(),
+            ),
+        )
+        onExit()
+    }
+
     Window(
         title = "DB-K",
         state = windowState,
         onCloseRequest = {
-            consoleState.flushAllSync()
-            val size = windowState.size
-            val pos = windowState.position
-            WindowPrefs.save(
-                WindowPrefs.Geometry(
-                    x = if (pos.isSpecified) (pos.x.value * density).roundToInt() else null,
-                    y = if (pos.isSpecified) (pos.y.value * density).roundToInt() else null,
-                    width = (size.width.value * density).roundToInt(),
-                    height = (size.height.value * density).roundToInt(),
-                ),
-            )
-            onExit()
+            val pending = consoleState.totalEditCount()
+            if (pending > 0) {
+                dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "退出应用") { performExit() }
+            } else {
+                performExit()
+            }
         },
     ) {
         // 运行时窗口图标（X11 任务栏/装饰、Windows 任务栏）：从 classpath 读 png 设到 AWT Frame。
@@ -511,6 +521,7 @@ private fun AppBody(
                             profiles.firstOrNull { it.id == pid }?.let(createConsoleFor)
                         },
                         dirtyConsoleIds = consoleState.dirtyConsoleIds,
+                        pendingEditCounts = consoleState.editBuffers.mapValues { it.value.size },
                         schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
                         supportsTargetSwitch =
                             activeProfile?.let { DialectRegistry.forProfile(it).supportsTargetSwitch } == true,
@@ -569,6 +580,9 @@ private fun AppBody(
                                         }
                                 }
                             }
+                        },
+                        onClearAllEdits = {
+                            activeConsole?.let { consoleState.clearEdits(it.id) }
                         },
                         onRefreshResult = {
                             val c = activeConsole

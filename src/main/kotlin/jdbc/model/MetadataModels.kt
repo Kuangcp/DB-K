@@ -52,7 +52,8 @@ val ObjectKind.displayNoun: String
 /**
  * 单列元数据（编辑器列补全 / 结果编辑定位用）。
  * [typeName] 为驱动给出的类型名，可能为 null；[ordinal] 用于稳定排序。
- * [primaryKey]：该列属于主键（结果单元格编辑时用作行定位；取不到主键信息时为 false）。
+ * [primaryKey]：该列属于行定位键（首选主键；无主键时回落到最少的唯一索引）。
+ * 结果单元格编辑时用作 WHERE 定位；取不到键信息时为 false（则该结果只读）。
  */
 @Serializable
 data class ColumnMeta(
