@@ -66,6 +66,16 @@ object AppPaths {
     /** 控制台 .sql 文件根目录：<dataDir>/consoles/。 */
     fun consolesDir(): Path = dataDirectory().resolve("consoles")
 
+    /**
+     * 会话日志根目录：默认 <dataDir>/logs/，可用 `-Ddbk.logDir=<dir>` 覆盖。
+     * 与 `SessionLogWriter` 共用同一解析逻辑（设置窗口「打开日志目录」需展示同一路径）。
+     */
+    fun logsDirectory(): Path = resolveLogsDirectory(System.getProperty("dbk.logDir"), dataDirectory())
+
+    /** [logsDirectory] 的纯解析（便于单测，不触碰真实数据目录）。 */
+    internal fun resolveLogsDirectory(override: String?, dataDir: Path): Path =
+        override?.takeIf { it.isNotBlank() }?.let { Paths.get(it) } ?: dataDir.resolve("logs")
+
     /** 某控制台绑定的 .sql 文件（id 稳定，重命名不换文件）。 */
     fun consoleFile(consoleId: String): Path = consolesDir().resolve("$consoleId.sql")
 }

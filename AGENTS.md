@@ -69,6 +69,8 @@
   （现为 `Logger.info("db-k session start; …")`）；新增启动流程不要删它。
 - writer 构造：必须同时提供无参与 `(Map<String,String>)` 两个公开构造（tinylog 反射实例化用）。
 - 新增「运行日志写哪」自查：`find ~/.local/share/db-k/logs -name '*.log' | tail` 应与今天日期/启动次数对应。
+- 入口：设置窗口「通用设置 → 诊断」可显示并一键打开日志 / 数据目录（`AppPaths.logsDirectory()` /
+  `dataDirectory()`，`app/core/DesktopOpen.kt`；无桌面环境回落复制路径 + 行内提示）。
 
 ### 自查
 

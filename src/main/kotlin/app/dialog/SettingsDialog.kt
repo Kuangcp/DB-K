@@ -40,14 +40,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.build.Version
+import app.core.openDirectory
+import app.core.writeClipboardText
 import app.settings.EditorSettings
 import app.ui.appMaterialColors
 import app.ui.editorFontFamily
+import db.AppPaths
 
 /**
  * 设置窗口（独立 [DialogWindow]，与主窗口同款主题）。
@@ -117,12 +121,15 @@ private fun SettingsBody(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 when (section) {
-                    0 -> GeneralSection(
-                        fontFamily = fontFamily,
-                        onFontFamilyChange = { fontFamily = it },
-                        fontSize = fontSize,
-                        onFontSizeChange = { fontSize = it },
-                    )
+                    0 -> {
+                        GeneralSection(
+                            fontFamily = fontFamily,
+                            onFontFamilyChange = { fontFamily = it },
+                            fontSize = fontSize,
+                            onFontSizeChange = { fontSize = it },
+                        )
+                        DiagnosticsSection()
+                    }
                 }
             }
         }
@@ -234,3 +241,55 @@ private fun settingsFieldColors(): TextFieldColors = TextFieldDefaults.outlinedT
     unfocusedLabelColor = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     placeholderColor = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
 )
+
+/**
+ * 诊断分区（P9）：展示日志 / 数据目录路径，支持一键用系统文件管理器打开。
+ * 无桌面环境时回落「复制路径 + 行内提示」（设置窗口是独立窗口，主窗口 Toast 会被遮住）。
+ */
+@Composable
+private fun DiagnosticsSection() {
+    // 路径在窗口存活期间不变，remember 避免每帧拼字符串
+    val logDir = remember { AppPaths.logsDirectory() }
+    val dataDir = remember { AppPaths.dataDirectory() }
+    var hint by remember { mutableStateOf<String?>(null) }
+
+    Text(
+        "诊断",
+        style = MaterialTheme.typography.subtitle2,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+    )
+    Text(
+        "日志目录",
+        style = MaterialTheme.typography.body2,
+        color = MaterialTheme.colors.onSurface,
+    )
+    Text(
+        logDir.toString(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = { openOrCopy(logDir, "日志目录") { hint = it } }) { Text("打开日志目录") }
+        TextButton(onClick = { openOrCopy(dataDir, "数据目录") { hint = it } }) { Text("打开数据目录") }
+    }
+    hint?.let {
+        Text(
+            it,
+            fontSize = 11.sp,
+            color = MaterialTheme.colors.primary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** 尝试打开目录；失败则复制路径并回传提示文案（成功时清空提示）。 */
+private fun openOrCopy(dir: java.nio.file.Path, label: String, setHint: (String?) -> Unit) {
+    if (openDirectory(dir)) {
+        setHint(null)
+    } else {
+        writeClipboardText(dir.toString())
+        setHint("当前环境无法自动打开$label，已复制路径到剪贴板")
+    }
+}

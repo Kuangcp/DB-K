@@ -30,8 +30,7 @@ class SessionLogWriter() : AbstractWriter(emptyMap()) {
     private val out: BufferedWriter
 
     init {
-        val root = System.getProperty("dbk.logDir")?.let(::File)
-            ?: db.AppPaths.dataDirectory().resolve("logs").toFile()
+        val root = db.AppPaths.logsDirectory().toFile()
         val now = LocalDateTime.now()
         val monthDir = File(root, now.format(MONTH_DIR))
         monthDir.mkdirs()

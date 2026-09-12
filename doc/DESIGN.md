@@ -279,6 +279,8 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 左侧分区导航（当前仅「通用设置」），右侧配置**编辑器字体族 / 字号**（带实时预览），左下角显示版本号 `v<NAME>-<COMMIT>`；
 保存写 `<dataDir>/editor.properties` 并即时重排编辑器（字号变化时行高按 20/13 等比缩放，行号槽同步），取消不改。
 版本号由构建期 `generateVersion` 任务生成 `app/build/Version.kt`（含 git short hash）。
+「通用设置」底部还有**诊断**分区（P9）：展示 `AppPaths.logsDirectory()`（`<dataDir>/logs`，`-Ddbk.logDir` 可覆盖）
+与数据目录，按钮经 `Desktop.open` 用文件管理器打开；无桌面环境则复制路径 + 行内提示（设置窗口是独立窗口，主窗口 Toast 会被遮住）。
 
 ---
 
