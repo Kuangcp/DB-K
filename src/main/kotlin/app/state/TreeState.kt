@@ -7,6 +7,8 @@ import app.settings.TreeExpandPrefs
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.FolderRow
+import db.ProfileImportSummary
+import db.ProfileTransfer
 
 /**
  * 左侧树状态：本地元数据（文件夹 + 连接档案）内存镜像 + 展开/选中 + 增删改动作。
@@ -122,6 +124,13 @@ class TreeState(
     fun updateConnection(p: ConnectionProfile) {
         repository.updateConnection(p)
         refresh()
+    }
+
+    /** P5：导入连接档案包（id 冲突自动重映射，不覆盖现有），刷新树并返回统计。 */
+    fun importProfiles(bundle: ProfileTransfer.ProfileBundle): ProfileImportSummary {
+        val summary = repository.importProfiles(bundle.folders, bundle.connections)
+        refresh()
+        return summary
     }
 
     /** 删除连接档案。调用前需用户确认。 */

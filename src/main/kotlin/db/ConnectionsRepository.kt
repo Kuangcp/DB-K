@@ -226,6 +226,88 @@ class ConnectionsRepository(
         }
     }
 
+    // ---------- 连接档案导出/导入（批量） ----------
+
+    /**
+     * 批量导入连接档案 + 文件夹（P5）：
+     * - **id 冲突时自动生成新 id，绝不覆盖现有档案**；
+     * - 文件夹被重映射时，引用它的连接 `folder_id` 同步重映射（保持层级）；
+     * - 整个导入在单事务内，任一失败全部回滚。
+     * 导入内容来自 [ProfileTransfer]（应已在仓外解析校验）。
+     */
+    fun importProfiles(
+        folders: List<FolderRow>,
+        connections: List<ConnectionProfile>,
+    ): ProfileImportSummary {
+        conn.autoCommit = false
+        try {
+            val folderIds = existingIds("folders")
+            val folderRemap = mutableMapOf<String, String>()
+            var foldersAdded = 0
+            folders.forEach { f ->
+                val id = if (f.id in folderIds) newId() else f.id
+                if (id != f.id) folderRemap[f.id] = id
+                conn.prepareStatement(
+                    "INSERT INTO folders(id, name, parent_id, sort_order, created_at) VALUES (?, ?, NULL, ?, ?)",
+                ).use { ps ->
+                    ps.setString(1, id)
+                    ps.setString(2, f.name)
+                    ps.setInt(3, nextSortOrder("folders"))
+                    ps.setLong(4, System.currentTimeMillis())
+                    ps.executeUpdate()
+                }
+                folderIds += id
+                foldersAdded++
+            }
+            val connectionIds = existingIds("connections")
+            var connectionsAdded = 0
+            connections.forEach { c ->
+                val id = if (c.id in connectionIds) newId() else c.id
+                val folderId = c.folderId?.let { folderRemap[it] ?: it }
+                conn.prepareStatement(
+                    """
+                    INSERT INTO connections(id, folder_id, name, db_type, host, port, database_name, user_name,
+                        password, extra_params, color, sort_order, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { ps ->
+                    val now = System.currentTimeMillis()
+                    ps.setString(1, id)
+                    ps.setString(2, folderId)
+                    ps.setString(3, c.name)
+                    ps.setString(4, c.dbType.name)
+                    ps.setString(5, c.host)
+                    ps.setInt(6, c.port)
+                    ps.setString(7, c.database)
+                    ps.setString(8, c.user)
+                    ps.setString(9, PasswordVault.encrypt(keyFile, c.password))
+                    ps.setString(10, c.extraParams)
+                    ps.setString(11, c.color)
+                    ps.setInt(12, nextSortOrder("connections"))
+                    ps.setLong(13, now)
+                    ps.setLong(14, now)
+                    ps.executeUpdate()
+                }
+                connectionIds += id
+                connectionsAdded++
+            }
+            conn.commit()
+            return ProfileImportSummary(foldersAdded, connectionsAdded)
+        } catch (e: Exception) {
+            conn.rollback()
+            throw e
+        } finally {
+            conn.autoCommit = true
+        }
+    }
+
+    private fun existingIds(table: String): MutableSet<String> =
+        conn.createStatement().use { st ->
+            st.executeQuery("SELECT id FROM $table").use { rs ->
+                buildSet { while (rs.next()) rs.getString(1)?.let { add(it) } }.toMutableSet()
+            }
+        }
+
     // ---------- consoles（数据源 → 多个命名控制台，每个绑定一个 .sql 文件） ----------
 
     fun listConsoles(connectionId: String): List<ConsoleRecord> {

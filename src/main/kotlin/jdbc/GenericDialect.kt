@@ -8,6 +8,7 @@ import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
 import java.sql.Connection
 import java.sql.DriverManager
+import java.util.Properties
 
 /**
  * 通用兜底方言：完全基于 java.sql.DatabaseMetaData。
@@ -19,8 +20,16 @@ open class GenericDialect(
 ) : DbDialect {
 
     override fun openConnection(profile: ConnectionProfile): Connection {
-        Class.forName(driverClass)
         val url = profile.urlPreview()
+        // 外部驱动（SQL Server / Oracle）不在内置 classpath：<dataDir>/drivers 的 jar 由独立
+        // classloader 加载，直接 driver.connect（绕过 DriverManager 的 caller-classloader 校验）。
+        ExternalDrivers.driverFor(driverClass)?.let { driver ->
+            val props = Properties()
+            profile.user?.takeIf { it.isNotBlank() }?.let { props.setProperty("user", it) }
+            profile.password?.let { props.setProperty("password", it) }
+            return driver.connect(url, props)
+        }
+        Class.forName(driverClass)
         return if (profile.user.isNullOrBlank()) {
             DriverManager.getConnection(url)
         } else {

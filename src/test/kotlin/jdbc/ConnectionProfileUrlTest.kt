@@ -89,4 +89,31 @@ class ConnectionProfileUrlTest {
             profile(DbType.POSTGRES, extraParams = "sslmode=require").urlPreview(),
         )
     }
+
+    @Test
+    fun `sql server uses databaseName and semicolon params`() {
+        assertEquals(
+            "jdbc:sqlserver://localhost:1433;databaseName=mydb",
+            profile(DbType.SQLSERVER).urlPreview(),
+        )
+        assertEquals(
+            "jdbc:sqlserver://h:1433;databaseName=db;encrypt=false;trustServerCertificate=true",
+            profile(
+                DbType.SQLSERVER, host = "h", database = "db",
+                extraParams = "?encrypt=false&trustServerCertificate=true",
+            ).urlPreview(),
+        )
+    }
+
+    @Test
+    fun `oracle uses thin service form and question params`() {
+        assertEquals(
+            "jdbc:oracle:thin:@localhost:1521/mydb",
+            profile(DbType.ORACLE).urlPreview(),
+        )
+        assertEquals(
+            "jdbc:oracle:thin:@h:1521/XEPDB1?oracle.net.ssl_version=1.2",
+            profile(DbType.ORACLE, host = "h", database = "XEPDB1", extraParams = "oracle.net.ssl_version=1.2").urlPreview(),
+        )
+    }
 }

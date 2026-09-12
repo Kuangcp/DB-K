@@ -39,6 +39,9 @@ sealed interface ConfirmRequest {
 
     /** 有未提交的结果修改时，刷新/重跑等动作会丢弃它们 → 确认；[onDiscard] 为确认后执行的动作。 */
     class DiscardResultEdits(val count: Int, val actionLabel: String, val onDiscard: () -> Unit) : ConfirmRequest
+
+    /** 导出含明文密码前的风险确认；[onConfirm] 为确认后的导出动作。 */
+    class ExportWithPasswords(val onConfirm: () -> Unit) : ConfirmRequest
 }
 
 class DialogState {

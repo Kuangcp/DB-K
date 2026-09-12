@@ -27,6 +27,13 @@ class DbDialectTest {
     }
 
     @Test
+    fun `quoteIdent uses brackets for sql server`() {
+        assertEquals("[x]", SqlServerDialect.quoteIdent("x"))
+        assertEquals("[a]]b]", SqlServerDialect.quoteIdent("a]b"))
+        assertEquals("\"HR\"", OracleDialect.quoteIdent("HR"))
+    }
+
+    @Test
     fun `isSystemSchemaName is case-insensitive and pg-prefixed`() {
         assertTrue("pg_catalog".isSystemSchemaName())
         assertTrue("PG_TOAST".isSystemSchemaName())
@@ -51,6 +58,12 @@ class DbDialectTest {
         assertEquals("USE `mydb`", MariaDbDialect.sessionContextSql(SchemaMeta("mydb", null)))
         assertEquals("USE `mydb`", ClickHouseDialect.sessionContextSql(SchemaMeta("mydb", null)))
         assertEquals("SET SCHEMA \"PUBLIC\"", H2Dialect.sessionContextSql(SchemaMeta(null, "PUBLIC")))
+        assertEquals(
+            "ALTER SESSION SET CURRENT_SCHEMA = \"HR\"",
+            OracleDialect.sessionContextSql(SchemaMeta(null, "HR")),
+        )
+        // SQL Server 无会话级 schema 切换
+        assertNull(SqlServerDialect.sessionContextSql(SchemaMeta(null, "dbo")))
         // SQLite 无 schema 语义，不切换
         assertNull(SQLiteDialect.sessionContextSql(SchemaMeta(null, "main")))
     }
@@ -58,10 +71,12 @@ class DbDialectTest {
     @Test
     fun `supportsTargetSwitch is false only for sqlite`() {
         assertFalse(SQLiteDialect.supportsTargetSwitch)
+        assertFalse(SqlServerDialect.supportsTargetSwitch)
         assertTrue(PostgresDialect.supportsTargetSwitch)
         assertTrue(MySqlDialect.supportsTargetSwitch)
         assertTrue(H2Dialect.supportsTargetSwitch)
         assertTrue(ClickHouseDialect.supportsTargetSwitch)
+        assertTrue(OracleDialect.supportsTargetSwitch)
     }
 
     @Test
@@ -84,15 +99,28 @@ class DbDialectTest {
             "SELECT * FROM \"t\" LIMIT 100",
             PostgresDialect.previewSelect(SchemaMeta(null, null), "t"),
         )
+        // SQL Server：TOP；Oracle：FETCH FIRST
+        assertEquals(
+            "SELECT TOP 100 * FROM [dbo].[t]",
+            SqlServerDialect.previewSelect(SchemaMeta(null, "dbo"), "t"),
+        )
+        assertEquals(
+            "SELECT * FROM \"HR\".\"EMP\" FETCH FIRST 100 ROWS ONLY",
+            OracleDialect.previewSelect(SchemaMeta(null, "HR"), "EMP"),
+        )
     }
 
     @Test
-    fun `registry maps all six types to singletons`() {
+    fun `registry maps all eight types to singletons`() {
         assertSame(PostgresDialect, DialectRegistry.forType(DbType.POSTGRES))
         assertSame(MySqlDialect, DialectRegistry.forType(DbType.MYSQL))
         assertSame(MariaDbDialect, DialectRegistry.forType(DbType.MARIADB))
         assertSame(SQLiteDialect, DialectRegistry.forType(DbType.SQLITE))
         assertSame(H2Dialect, DialectRegistry.forType(DbType.H2))
         assertSame(ClickHouseDialect, DialectRegistry.forType(DbType.CLICKHOUSE))
+        assertSame(SqlServerDialect, DialectRegistry.forType(DbType.SQLSERVER))
+        assertSame(OracleDialect, DialectRegistry.forType(DbType.ORACLE))
+        // 外部驱动标记只给 SQL Server / Oracle
+        assertEquals(setOf(DbType.SQLSERVER, DbType.ORACLE), DbType.entries.filter { it.externalDriver }.toSet())
     }
 }

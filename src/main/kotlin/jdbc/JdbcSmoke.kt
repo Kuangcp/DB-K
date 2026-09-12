@@ -50,7 +50,8 @@ fun main() {
     smokeEditorUtils()
     smokeColumnCompletion()
     smokeRowUpdater(dir)
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion + row-updater PASS (ClickHouse driver load OK)")
+    smokeExternalDrivers(dir)
+    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion + row-updater + external-drivers PASS (ClickHouse driver load OK)")
 }
 
 /** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */
@@ -487,6 +488,58 @@ private fun smokeRowUpdater(dir: Path) {
         check(!nopkCols.first { it.name == "name" }.primaryKey) { "非唯一列不应是行定位键" }
         Logger.info("[row-updater] plan/update/rollback PASS", "PASS")
     }
+}
+
+/**
+ * 外部驱动机制自检：把驱动 jar 放进临时目录（模拟 <dataDir>/drivers）→ 独立 classloader 加载 →
+ * 用 `driver.connect` 建连。用 H2（纯 Java、自包含、带 service 声明）当样本驱动。
+ * 同时验证新类型 SQL Server / Oracle 的 URL 拼装与方言（无服务端，不真连）。
+ */
+private fun smokeExternalDrivers(dir: Path) {
+    val driversDir = dir.resolve("drivers")
+    Files.createDirectories(driversDir)
+    val h2Jar = Path.of(
+        Class.forName("org.h2.Driver").protectionDomain.codeSource.location.toURI(),
+    )
+    Files.copy(h2Jar, driversDir.resolve("h2-driver.jar"))
+    // 只扫临时目录，避免碰到开发机真实数据目录
+    System.setProperty("dbk.driversDir", driversDir.toString())
+    ExternalDrivers.reset()
+    val loaded = ExternalDrivers.scanDirectory(driversDir)
+    check(loaded.any { it == "org.h2.Driver" }) { "外部 jar 中的驱动应被加载，实际=$loaded" }
+    val driver = ExternalDrivers.driverFor("org.h2.Driver")
+    check(driver != null) { "应能按类名取到外部驱动" }
+    val db = dir.resolve("external-h2")
+    driver.connect("jdbc:h2:$db", java.util.Properties().apply { setProperty("user", "sa") }).use { c ->
+        c.createStatement().use { st ->
+            st.execute("CREATE TABLE ext_probe (id INT PRIMARY KEY)")
+            st.execute("INSERT INTO ext_probe VALUES (1)")
+        }
+        val n = c.createStatement().use { st ->
+            st.executeQuery("SELECT COUNT(*) FROM ext_probe").use { rs -> rs.next(); rs.getInt(1) }
+        }
+        check(n == 1) { "外部驱动建连后查询应可用" }
+    }
+    check(!ExternalDrivers.isAvailable("com.microsoft.sqlserver.jdbc.SQLServerDriver")) {
+        "未投放 SQL Server jar 时不应可用"
+    }
+    // 新数据源的无服务端冒烟：URL 拼装 + 方言预览
+    check(
+        ConnectionProfile(id = "x", name = "x", dbType = DbType.SQLSERVER, host = "localhost", database = "db")
+            .urlPreview() == "jdbc:sqlserver://localhost:1433;databaseName=db",
+    )
+    check(
+        ConnectionProfile(id = "x", name = "x", dbType = DbType.ORACLE, host = "localhost", database = "XEPDB1")
+            .urlPreview() == "jdbc:oracle:thin:@localhost:1521/XEPDB1",
+    )
+    check(
+        SqlServerDialect.previewSelect(jdbc.model.SchemaMeta(null, "dbo"), "t") == "SELECT TOP 100 * FROM [dbo].[t]",
+    )
+    check(
+        OracleDialect.previewSelect(jdbc.model.SchemaMeta(null, "HR"), "EMP") ==
+            "SELECT * FROM \"HR\".\"EMP\" FETCH FIRST 100 ROWS ONLY",
+    )
+    Logger.info("[external-drivers] scan/load/connect + SQLServer/Oracle url PASS", "PASS")
 }
 
 /** 直读某连接行落盘密码（绕过仓库解密层，验证盘上形态）。 */

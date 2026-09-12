@@ -1,100 +1,207 @@
 # db-k Roadmap（核心发展计划）
 
 > 执行计划主文档：按阶段描述「要做什么、为什么这个顺序、怎么算完成」。
-> 每阶段验收必须过 `AGENTS.md` 验证习惯（compileKotlin / smokeJdbc / 人工 UI 验收）。
+> 每阶段验收必须过 `AGENTS.md` 验证习惯（compileKotlin / smokeJdbc / test / 人工 UI 验收）。
 > 零散即时事项在 `TODO.md`；架构与数据模型依据在 `doc/DESIGN.md`（里程碑章节与本文对应）。
 
 ---
 
 ## 1. 现状总览（截至当前）
 
-单窗口 JDBC 数据库客户端已完成主闭环：
+单窗口 JDBC 数据库客户端，主闭环 + 体验打磨 + 工程化均已落地；剩余工作集中在
+**外部数据源扩展**与**发布验证**两条主线，以及若干深化项。
 
-| 能力 | 落点 |
+| 维度 | 现状 |
 |---|---|
-| 本地元数据存储 | `db/`：app.db（连接/文件夹/控制台/sql_history 表）、仓库、控制台 .sql 文件 |
-| 左树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象分组（表/视图/触发器），展开持久化 |
-| 编辑执行 | 高亮编辑器 + 控制台标签（每连接多控制台）+ Ctrl+Enter 执行选中（无选中不执行）+ 结果网格 |
-| 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP，默认关压缩兼容反代链路） |
-| 体验 | 双击表预览、导出 CSV、深色主题（持久化）、Toast、窗口几何持久化、会话日志 |
-| 验证 | `gradle smokeJdbc`（SQLite+H2 实测 + 各驱动加载） |
+| 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数；PG 细分 11 类；组可折叠；展开持久化 |
+| 编辑执行 | 高亮 + 行号 + 当前行高亮 + 关键字/表/列补全；选中执行、多语句多 Tab；Ctrl+Q DDL；Ctrl+S 保存 |
+| 结果区 | 网格滚动/列宽拖动/单元格选中复制/转置/CSV（含全量流式）；**单元格编辑 + 提交 + 刷新 + 撤销**（Phase 0–3） |
+| 查看器 | 长文本弹窗、JSON 树视图高亮折叠、Base64 图片预览 + MD5 |
+| 控制台 | 跨源多标签；独立执行目标；光标记忆（持久化到 `consoles.caret_start/end`）；关闭可重开 |
+| 安全/存储 | app.db SQLite v8（迁移 + FK 级联）；列缓存 v7；密码 AES-256-GCM；连接档案 JSON 导出/导入；控制台正文独立 .sql |
+| 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP，默认关压缩）；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动（P4）|
+| 工程 | 单测体系（jdbc/tree/db/app.state/app.ui）；smokeJdbc；Deb/AppImage/MSI 打包配置；AppImage 已产出 |
 
 ## 2. 里程碑状态（对齐 DESIGN §11）
 
-| 里程碑 | 状态 | 剩余缺口 |
+| 里程碑 | 状态 | 说明 |
 |---|---|---|
 | M0 脚手架 | ✅ | — |
 | M1 元数据+树 | ✅ | — |
-| M2 JDBC 运行时 | ✅ | ClickHouse 已并入（compress=0 反代兼容已修） |
-| M3 编辑执行 | ✅ 主闭环 | 取消执行/历史落库已并入 P1 完成（待人工验收）；P2 起转向体验增强 |
-| M4 体验打磨 | ✅ | 右键菜单/预览/CSV/几何/主题齐；单元测试缺位（→ P5） |
-| M5 打包发布 | ⏳ 配置就绪未产出 | 首次构建 Deb + 干净环境安装验证（→ P5） |
+| M2 JDBC 运行时 | ✅ | 6 种内置数据源 + 2 种外部驱动数据源（P4） |
+| M3 编辑执行 | ✅ | 取消/历史/多语句均已并入 |
+| M4 体验打磨 | ✅ | 远超原范围（补全/编辑结果/查看器/设置/多控制台） |
+| M5 打包发布 | ⏳ 配置就绪 | AppImage 已产出；Deb 未构建、干净环境未验证；MSI 需 Windows |
 
-## 3. 阶段计划（核心发展顺序）
+---
 
-优先级逻辑：先把「执行→看结果」闭环的粗糙边磨平（P1/P2），再动树与存储安全
-（P3），随后按需扩数据源（P4），最后收敛工程债并发布（P5）。远期能力不进核心线
-（§5），与 DESIGN「第一版不做」边界保持一致。
+## 3. 已完成能力速览（压缩记录）
 
-### P1 执行闭环补全 ✅（已实现，待人工验收）
-范围：
-- 长查询可取消（UI「取消 (Esc)」+ Esc），语义：单线程执行器上放弃等待并复位状态，不误伤同连接后续查询
-- sql_history 落库（执行时间/连接/SQL/成功与否/耗时/行数）+ 右侧历史面板（双击回填编辑器、可清空）
-- 结果 >1000 行截断时醒目提示；「导出全量 CSV」重跑 SQL 流式导出（不受上限影响）
-落点：`jdbc/QueryExecutor|LiveConnection`（registerStatement/cancelCurrentQuery）、
-`app/state/ConsoleState`（代次守卫 + recordHistory）、`app/ui/HistoryPanel`、
-`app/core/CsvExport.exportAll`、`db/AppDatabase v3`、`JdbcSmoke`（cancel + v2→v3 自检）。
-验收口径：跑一个超长查询可取消且连接仍可用；重开应用后历史仍在且能回填；smokeJdbc 绿。
+> 详细实现与踩坑见 `doc/COLUMN_COMPLETION.md`、`doc/EDITABLE_RESULT.md`，此处仅留检索锚点。
 
-### P2 编辑器与结果体验 ✅（已实现，待人工验收；与 P1 一并验收）
-范围：
-- 自动补全：关键字 + 当前连接已加载的表/视图名候选，Enter/Tab 上屏，Esc 关闭，箭头选择（`app/ui/SqlEditing.kt` 纯逻辑 + `SqlWorkspace` 弹层；连接元数据由 Main 懒预取首个 schema，列名级补全需先补元数据列缓存 → 归 P3）
-- 结果 Ctrl+T 行列转制（仅视图切换，不清缓存/历史）；单元格单击复制值（NULL → 空串）；右键“复制单元格值 / 复制本行 → INSERT”（转置视图下隐藏后者）
-- 编辑器可选小增强：行号、当前行高亮 → 未做（Roadmap 原标注可选，验收清单不含）
-落点：`SqlEditing.kt`（新增，smoke 直测）、`SqlWorkspace.kt`（EditorPane/ExecBar/ResultTable）、`Main.kt`（identifiers + 预取）、`JdbcSmoke.smokeEditorUtils`
-验收：人工验证补全在深色/浅色下可读；Ctrl+T 转制与单击/右键复制数据无错位；浅色/深色均无黑字沉底。
+- **P1 执行闭环** ✅：长查询取消（Esc）、`sql_history` 落库 + 历史面板（查看/插入光标处）、>1000 行截断提示 + 全量流式 CSV 导出。
+- **P2 编辑/结果体验** ✅：关键字 + 表/视图 + **列名**补全（`app/ui/SqlEditing.kt`，按需拉取 + 磁盘缓存 `column_cache`）、`Ctrl+T` 转置、单元格选中/Ctrl+C/右键复制与「复制本行 → INSERT」、行号/当前行高亮、`Ctrl+Q` DDL（语法高亮）、拖拽到边缘自动滚动。
+- **P3 树深化 + 连接安全** ✅：`ObjectKind` 11 类分组计数（PG 生效，其余库只出自身类型）、密码 AES-256-GCM（密钥 `secret.key` 600，`enc:v1:`，存量明文自动迁移）。
+- **结果可编辑** ✅（Phase 0–3）：`QueryColumn` 来源元数据、`ColumnMeta.primaryKey`（无 PK 回落唯一索引）、`ResultEditPlan`/`RowUpdater` 纯逻辑 + 单测；行内编辑（Ctrl+双击）、长值/多行对话框（Phase 3）、提交（参数化 UPDATE + 单事务 + affected=1 校验）、提交后固定刷新、撤销全部、退出/切换守卫（`DiscardResultEdits`）、未提交琥珀底纹。
+- **查看器增强** ✅：JSON 识别 + 树视图、Base64 图片 + MD5（`app/dialog/JsonTreeView.kt`、`ViewerDialogs.kt`）。
+- **控制台模型** ✅（原 M4 扩展）：`consoles` v8（closed 隐藏可重开）、每控制台执行目标、光标记忆（v6，防抖 1.5s + 切换/退出强制落库，写光标不动 `updated_at`）。
+- **设置窗口** ✅：顶栏齿轮 → 独立 DialogWindow，编辑器字体族/字号 + 实时预览，`editor.properties` 持久化，版本号 `v<NAME>-<COMMIT>`。
+- **工程收敛** ✅（原 P5 测试部分）：`gradle test` 覆盖 jdbc/tree/db/app.state/app.ui；`gradle smokeJdbc`；打包配置 `nativeDistributions` + `makeAppImage`。
 
-### P3 树深化 + 连接安全（给“看库”与“存档案”补课）
-范围：
-- DataGrip 式多类型分组：PG 的物化视图/序列/routines/… 分类 + 计数（参考 TODO 示例结构）
-- app.db 密码本机加密（AES-GCM + chmod 600 密钥文件），含存量明文迁移
-验收：PG 库树展开到细分类型；重启后连接可用（加密不破坏现有会话）；明文不再落盘。
+---
 
-状态：✅ **已实现（待人工验收）**：
-- `ObjectKind` 扩为 11 类，`SchemaObjects` 改 Map 分组（兼容 tables/views/triggers 访问器），
-  各库只产出自己支持的类型 → 非 PG 库视觉不变
-- PG `loadObjects` 按 relkind/prokind/pg_* 分桶：表/物化视图/视图/触发器/序列/函数与过程/聚合/操作符/类型/操作符类/操作符族（均 DISTINCT + 按 schema 过滤）
-- 对象组计数：schema 收起总数徽章 = 全部类型求和，组行「表 (12)」样式；右键文案按类型泛化（复制物化视图名…），双击/菜单预览仅限 表/视图/物化视图
-- 密码：`db/PasswordVault.kt`（AES-256-GCM、随机 IV、`enc:v1:` 前缀、密钥 `<dataDir>/secret.key` 600），
-  仓库 init 自动迁移存量明文；写库即加密、读库即解密，编辑框回显明文不变
-- smoke：vault 迁移/回环/盘上无明文/密钥文件权限 + 分组键不串组断言 PASS
+## 4. 待实施路线（详细）
 
-### P4 数据源扩展机制（为 Oracle/SQL Server 铺路）
-范围：
-- `<dataDir>/drivers` 外部驱动目录 + 独立 classloader 注册（Oracle license 限制不进内置 classpath）
-- SQL Server 方言（Generic 兜底先通，再覆写分页/引号）；Oracle 按需
-验收：把驱动 jar 放入 drivers 目录即能建连并展开树，无需改代码重启（或文档明确需重启）。
+优先级逻辑：P4 / P5 已落地；下一步收发布闭环（Deb + 干净环境），
+然后按价值做深化（树大库性能 → 结果编辑打磨 → 诊断入口）。
+剩余阶段状态：P4 ✅ / P5 ✅ / P6–P9 未开始。
 
-### P5 工程收敛与发布
-范围：
-- 单测起步：urlPreview / quoteIdent / isSystemSchemaName / 树行派生（jdbc、tree、db 层均可测）
-- M5 打包：首次 `gradle createDistributable`/Deb，干净环境安装自检（jlink 补 java.sql 等模块、图标、启动即出窗口）
-验收：CI 习惯可跑 `compileKotlin + smokeJdbc + test`；Deb 安装后 demo 连接（SQLite）可开可查。
+### P4 数据源扩展机制（外部驱动，SQL Server / Oracle）✅ 已实现（待真实库人工验收）
 
-## 4. 阶段粒度建议
+**目标**：让 SQL Server / Oracle（Oracle 驱动有 license，不能进内置 classpath）在**不改代码**的前提下接入；
+把驱动 jar 放进目录即可建连、展开树、执行查询。
 
-每阶段拆 2~5 次提交为佳；单提交=一个可感知的小能力（见 AGENTS 分层纪律与"提交前删调试代码"）。
+**已落地**
+- `<dataDir>/drivers/` 扫描 `*.jar`，独立 `URLClassLoader`（parent = `java.sql.Driver` 的 classloader）加载；
+  驱动类来自 jar 内 `META-INF/services/java.sql.Driver` + `DbType` 声明的外部驱动类。
+- **不走 DriverManager 注册**，直接 `driver.connect(url, props)`，规避 `DriverManager` 的 caller-classloader
+  可见性校验；内置驱动仍走原 `Class.forName + DriverManager`。幂等、失败仅记日志、`-Ddbk.driversDir` 可覆盖。
+- `DbType` 新增 `SQLSERVER` / `ORACLE`（`externalDriver=true`）+ URL 模板（SQL Server `;databaseName=`，
+  Oracle thin `@host:port/service`）；`ConnectionEditorDialog` 未加载驱动时给黄字提示与目录路径。
+- 方言：`SqlServerDialect`（`[]` 引号、`TOP` 预览、schema 列表、无会话 schema 切换、`supportsTargetSwitch=false`）；
+  `OracleDialect`（`all_users` 过滤、`ALTER SESSION SET CURRENT_SCHEMA`、`ALL_TAB_COLUMNS` 列探测、
+  `DBMS_METADATA.GET_DDL` + 回落、`FETCH FIRST` 预览）。
+- 启动时 `ExternalDrivers.ensureLoaded()`（`Main.kt`）；新增 jar 需重启。
+- 验证：`gradle test`（`ExternalDriversTest` 用 H2 jar 模拟投放驱动并真建连；URL/引号/预览用例）；
+  `gradle smokeJdbc` 新增 external-drivers 段（扫描/加载/连接 + 两库 URL/预览）。
+
+**待人工验收（需真实库）**
+- 放入 SQL Server / Oracle 官方驱动 jar → 重启 → 新建连接可连、树可展开、查询出结果；
+- 移除 jar 后对应驱动不可用但不影响其余库启动；
+- 验收限制：SQL Server 暂按「schema 内对象」建模（跨 database 需改档案 database）；Oracle 仅 thin service 形式。
+
+**关键坑**
+- 驱动 jar 必须与运行 JDK 25 兼容；驱动自带依赖（如需）一并放 `drivers/`；
+- 子 classloader 必须 parent=平台层，`parent=null` 会导致 `java.sql.Driver` 接口不可见而实例化失败。
+
+---
+
+### P5 连接档案导出 / 导入（可移植与备份）✅ 已实现
+
+**目标**：换机迁移 / 备份连接档案；把散落的连接与文件夹一次性带走，而不暴露密码。
+
+**已落地**
+- 范围：**连接 + 文件夹层级**（不含控制台正文 / SQL 历史 / 元数据缓存）。
+- 格式：单个 JSON（UTF-8），带 `formatVersion` / `app` / `exportedAt`；`decode` 拒绝更高版本、
+  跳过未知 `dbType`（计入 `skipped`）、丢弃 bundle 内不存在的 folder 引用。
+- 密码：**默认不导出**（`encodeDefaults=false` 直接省略 `password` 字段）；可选「含明文密码」
+  导出，先弹风险确认（`ConfirmRequest.ExportWithPasswords`）。
+- 导入：**幂等合并** —— id 冲突自动生成新 id，**绝不覆盖现有**；文件夹被重映射时其下连接的
+  `folder_id` 同步重映射；单事务，失败全回滚。
+- UI：树工具栏「⋮」溢出菜单：导出（不含密码）/ 导出（含明文密码）/ 导入；AWT `FileDialog`（同 CSV 导出）。
+- 落点：`db/ProfileTransfer.kt`（DTO + 序列化/文件 IO）、`ConnectionsRepository.importProfiles`、
+  `TreeState.importProfiles`、`app/core/Main.kt`（FileDialog + 接线）。
+
+**验证**：`gradle test` 覆盖不含密码时无 `password` 字段 / 含密码回环 / 版本拒绝 / 未知类型跳过 /
+ dangling folder 清理 / 二次导入 id 重映射不覆盖且 linkage 保持；`smokeJdbc` 绿。
+
+**未做（可选）**：同名冲突的交互式「跳过 / 导入为新档案」选择（现统一导入为新档案，已满足不覆盖）；
+加密导出（口令派生密钥）本轮不做。
+
+---
+
+### P6 树深化（大库性能 + 集群级对象）
+
+**背景**：组折叠已实现（`DbTreeModels.buildTreeRows` 里对象行只在组展开时渲染），但
+**对象清单仍随 schema 展开一次性拉取**（`loadObjects` 一次返回全部类型）——routines 上千时首屏慢。
+另：集群级对象目录（DataGrip 的 Database Objects / Server Objects）未做。
+
+**范围**
+1. **按组懒加载**：schema 展开只拉「组 + 计数」，组展开时才拉该类型对象。
+   - 轻量计数：PG 用 `pg_class`/`pg_proc` 按 relkind/prokind `GROUP BY` 一次取全；
+     MySQL 用 `information_schema` 计数；其余库可先按 Generic 计数。
+   - 落点：`jdbc/DbDialect.loadObjects` 拆出 `loadObjectCounts` + `loadObjectsForKind`，
+     `SchemaObjects` 支持按 kind 增量填充；`tree/` 组行空数据时出「加载中/尚未加载」占位；
+     缓存 key 提升为 `(profileId, schema, groupKind)`。
+2. **集群级目录**（可选/低优先）：PG 的 extensions/casts/languages（Database Objects）、
+   roles/tablespaces（Server Objects）；需跨 schema 聚合查询，类型加入 `ObjectKind` 与树顶层分组。
+3. **（观察）表子节点**：表下展开列 / 索引 / 约束（当前列信息只服务补全缓存，不在树展示）。
+
+**验收**
+- 构造含上千例程的 schema：schema 展开秒回（只出组行 + 计数），展开 routines 组才加载；
+- 缓存命中切换不重复查询；非 PG 库视觉不回退；`gradle smokeJdbc`/`test` 绿。
+
+---
+
+### P7 可编辑结果后续（UPDATE 预览 / 行锁 / 边界）
+
+**已实现**：行内 + 对话框编辑、提交（参数化 + 单事务 + affected=1）、提交后刷新、撤销全部、守卫（见 `doc/EDITABLE_RESULT.md` §13）。
+
+**剩余**
+1. **UPDATE 预览**：提交前弹窗展示 `RowUpdater.renderUpdateSql` 生成的参数化 SQL（及参数列表），
+   确认后再执行；`renderUpdateSql` 已存在，只差 UI 接线与确认弹窗。
+2. **行锁**（可选）：刷新编辑结果时可用 `SELECT … FOR UPDATE`（PG/MySQL/Oracle 支持）降低并发覆盖；
+   当前靠提交时 `affected==1` 检测（`0`=行被删/改、`>1`=定位不唯一）。需评估对只读查询的副作用。
+3. **明确仍不做**：新增行 / 删除行；富类型（BLOB/图片/JSON 结构）就地编辑仍走查看器。
+   若后续要支持，需先设计主键生成、批量删除二次确认与事务边界。
+
+**验收**：预览 SQL 与实际提交一致；取消预览不产生修改；深浅色下弹窗文字可读。
+
+---
+
+### P8 发布验证与分发（Deb / AppImage / MSI）
+
+**目标**：把「配置就绪」变成「产出可安装包并在干净环境验证」，完成 M5。
+
+**范围**
+1. **Deb**：`gradle packageDeb` 产出 `build/compose/binaries/main/deb/db-k_<ver>-1_amd64.deb`；
+   干净环境（临时用户 / 容器）`dpkg -i` 后启动。
+2. **AppImage**：`build/compose/binaries/main/appimage/db-k-1.0.0-x86_64.AppImage` 已产出，
+   补一次干净环境运行验证（glibc ≥ 2.28，见 `doc/PACKAGING.md`）。
+3. **MSI**：仅 Windows + WiX Toolset 3.x 可构建（jpackage 不支持交叉打包），需在 Windows 机器产出并安装验证。
+4. **干净环境自检清单**：
+   - 启动即出窗口；图标/菜单/快捷方式正确；
+   - jlink 运行时含 `java.sql/java.naming/java.management`（已在 `build.gradle.kts` 配置）；
+   - SQLite 演示连接可开可查；内置 6 驱动均可加载；
+   - 数据目录 / 日志目录按平台约定创建。
+5. **CI 习惯**：一条命令跑 `compileKotlin + test + smokeJdbc`（可加 `Makefile` target）。
+
+**验收**：Deb 安装后可跑 demo 查询；AppImage 在干净环境可启动；MSI 在 Windows 安装可跑；
+打包产物版本号与设置窗口 `v<ver>` 一致。
+
+---
+
+### P9 诊断与易用性小项
+
+1. **「打开日志目录」入口**（`TODO.md`）：设置窗口「通用设置」显示日志路径 + 按钮，
+   `Desktop.getDesktop().open(logDir)`；无桌面环境时回落复制路径 + Toast。
+   可顺带加「打开数据目录」。
+2. **（可选）保存的查询**：DESIGN 的后置里程碑 `saved_queries`（命名查询收藏）尚未实现，
+   与 sql_history 不同，需要文件夹/命名/编辑 UI；按需排期（见 §6）。
+
+**验收**：点击能打开对应目录（或正确提示）；不影响设置窗口深浅色可读性。
+
+---
+
+## 5. 阶段粒度建议
+
+每阶段拆 2~5 次提交为佳；单提交 = 一个可感知的小能力（见 `AGENTS.md` 分层纪律与「提交前删调试代码」）。
 UI 可感知变化需人工切深色复检（无黑字沉底、无过曝白块）后再交付。
 
-## 5. 远期（观察项，不排期）
+## 6. 远期（观察项，不排期）
 
-- 表数据编辑（DESIGN 明确第一版不做）
-- SSH 隧道连接内网库
-- ER 图 / 多窗口 / 插件体系（DESIGN 不做范围）
-- 结果集虚拟滚动与流式分页（当前 1000 行上限 + 截断已够用，遇到大数据场景再升级）
+- 表数据编辑：新增行 / 删除行（当前只支持改格；DESIGN 第一版明确不做）。
+- SSH 隧道连接内网库。
+- 保存的查询（saved_queries）收藏与分组。
+- 结果集虚拟滚动与流式分页（当前 1000 行上限 + 截断已够用，遇大数据场景再升级）。
+- 集群级对象目录（若 P6 未覆盖：casts/extensions/languages、roles/tablespaces 等跨 schema 聚合）。
+- ER 图 / 多窗口 / 插件体系（DESIGN 明确不做范围）。
 
-## 6. 关联文档
+## 7. 关联文档
 
-- `AGENTS.md`：工具链、分层、主题硬性规则、验证习惯（验收口径）
-- `doc/DESIGN.md`：数据模型、方言抽象、线程模型、打包风险
-- `TODO.md`：零散即时事项（随做随删）
+- `AGENTS.md`：工具链、分层、主题硬性规则、持久化分层、验证习惯（验收口径）。
+- `doc/DESIGN.md`：数据模型、方言抽象、线程模型、打包风险。
+- `doc/EDITABLE_RESULT.md`：可编辑结果设计 + Phase 0–3 实施进度。
+- `doc/COLUMN_COMPLETION.md`：列补全设计 + P0–P4 实施进度。
+- `doc/PACKAGING.md`：Deb / AppImage / MSI 构建矩阵与前置条件。
+- `TODO.md`：零散即时事项（随做随删）。

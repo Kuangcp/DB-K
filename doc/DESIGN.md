@@ -9,8 +9,8 @@
 
 **形态**：单窗口桌面工具，左树 + 右上 SQL 编辑器 + 右下结果区（传统 DB 客户端布局）。
 
-**首发支持数据库**：PostgreSQL / MySQL / MariaDB / SQLite / H2（全部走 JDBC）。
-后置可扩展：ClickHouse、SQL Server、Oracle（Oracle 驱动需手动放 libs，license 限制）。
+**已支持数据库**：PostgreSQL / MySQL / MariaDB / SQLite / H2 / ClickHouse（内置驱动，全部走 JDBC）。
+SQL Server / Oracle 走**外部驱动目录** `<dataDir>/drivers`（Oracle 驱动 license 限制，见 §5）。
 
 **应用自身元数据**（连接、分组文件夹、SQL 历史）持久化在本地 SQLite，与目标库无关。
 
@@ -48,7 +48,7 @@ src/main/kotlin/
 │   └── editor/     #   SqlEditor、ResultPanel、顶部工具栏
 ├── db/             # 元数据层：AppPaths / AppDatabase(migrate) / ConnectionsRepository
 ├── jdbc/           # 运行时层：方言、连接生命周期、元数据探测、查询执行（禁止 import compose）
-│   ├── dialect/    #   DbDialect 接口 + Generic + Postgres/MySql/MariaDb/SQLite/H2
+│   ├── dialect/    #   DbDialect 接口 + Generic + Postgres/MySql/MariaDb/SQLite/H2/ClickHouse/SqlServer/Oracle
 │   ├── LiveConnection.kt / MetadataLoader.kt / QueryExecutor.kt
 │   └── model/      #   SchemaTree / TableInfo / ColumnInfo / RunOutcome 等纯模型
 └── tree/           # 树形模型（UI 树节点）+ DbTreeSidebar 组件
@@ -67,7 +67,7 @@ src/main/kotlin/
 ### 4.1 存储模型（SQLite 行 → data class）
 
 ```kotlin
-enum class DbType { POSTGRES, MYSQL, MARIADB, SQLITE, H2 }
+enum class DbType { POSTGRES, MYSQL, MARIADB, SQLITE, H2, CLICKHOUSE, SQLSERVER, ORACLE }
 
 data class ConnectionProfile(
     val id: String,
@@ -301,7 +301,7 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 
 - jlink 模块：JDBC/驱动需要 `java.sql`（api-x 注释里已踩过）、`java.sql.rowset`、`java.naming`（部分驱动）、`java.management`；
 - 驱动体积：PG+MySQL+MariaDB+SQLite+H2 约 40MB 内，可接受；想更轻可后续做「驱动目录按需加载」；
-- Oracle 驱动 license 不可中央仓库直接引入 → 手动 libs；ClickHouse 驱动依赖重 → 后置；
+- Oracle 驱动 license 不可中央仓库直接引入 → 放 `<dataDir>/drivers/` 用独立 classloader 加载（见 §5、`jdbc/ExternalDrivers.kt`）；
 - 编辑器高亮：后置接 highlight-compose 或自写轻量 SQL tokenizer；
 - 大库风险：schema 探测必须懒加载 + IO 线程，绝不启动时全量探测；
 - 工具链风险：如果 Kotlin 2.4.0 + Gradle 8.3 wrapper 组合出现意外问题，退回方案是复制 api-x 完整 gradle 配置逐项对齐（同机器同缓存，概率极低）。

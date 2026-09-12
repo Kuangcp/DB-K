@@ -15,7 +15,7 @@
 - **结果网格**：纵横滚动 + 列宽拖动 / 单列自适应；单击高亮并 `Ctrl+C`，右键复制单元格 / 「复制本行 → INSERT」；`Ctrl+T` 行列转置；超 1000 行截断提示 + 全量流式 CSV 导出；长查询可取消（`Esc`）。
 - **多控制台**：一个数据源可开多个控制台，跨源标签；标签右键「关闭」（隐藏可重开）；每个控制台独立执行目标（库 / schema）与**光标记忆**（切换、重启都恢复到所在行）。
 - **SQL 历史**：执行记录落库 + 历史面板，双击弹窗查看完整 SQL（可复制），或一键插入到当前光标处。
-- **连接安全**：连接密码 AES-256-GCM 本机加密（密钥 `secret.key`，权限 600），存量明文自动迁移。
+- **连接安全与迁移**：连接密码 AES-256-GCM 本机加密（密钥 `secret.key`，权限 600），存量明文自动迁移；连接档案 JSON 导出/导入（默认不含密码，可选含明文密码并二次确认；导入幂等合并、id 冲突自动重映射）。
 - **外观与配置**：浅 / 深色主题切换并持久化；设置窗口可调编辑器字体族与字号（实时预览）。
 - **其它**：窗口几何持久化、会话日志按月归档、连接目录元数据磁盘缓存。
 
@@ -29,8 +29,12 @@
 | SQLite | 内置驱动 | |
 | H2 | 内置驱动 | |
 | ClickHouse | 内置驱动（HTTP，默认端口 8123） | 默认关压缩，兼容反向代理链路 |
+| SQL Server | **外部驱动**（`drivers/`） | `mssql-jdbc` jar 放入数据目录 `drivers/` |
+| Oracle | **外部驱动**（`drivers/`） | `ojdbc` jar 放入数据目录 `drivers/`（license 限制，不内置） |
 
-> SQL Server / Oracle 需外部驱动加载机制（Oracle 驱动有 license 限制），尚未实现，见 `TODO.md`。
+> **外部驱动**：把驱动 jar（及它自带的依赖 jar）放进数据目录下的 `drivers/` 目录
+> （Linux `~/.local/share/db-k/drivers/`，可用 `-Ddbk.driversDir=<dir>` 覆盖），**重启应用**后生效。
+> 加载状态可在「新建连接 → 类型」处看到提示。
 
 ## 快速开始
 
@@ -70,6 +74,7 @@ gradle packageMsi            # Windows MSI（仅在 Windows + WiX 上构建）
 | 连接 / 文件夹 / 控制台元数据 / SQL 历史 / 元数据缓存 | `app.db`（SQLite，含版本迁移与 FK 级联） |
 | 控制台正文 | `consoles/<id>.sql`（独立文件，防抖 3s 自动写回） |
 | 主题 / 窗口几何 / 树展开 / 编辑器字体字号 | `*.properties` |
+| 外部 JDBC 驱动（SQL Server / Oracle 等） | `drivers/*.jar`（可 `-Ddbk.driversDir` 覆盖） |
 | 会话日志 | `logs/<yyyy-MM>/<yyyy-MM-dd>_<N>.log`（每次启动一份） |
 
 ## 目录结构
@@ -97,7 +102,7 @@ src/main/kotlin/
 - [x] M3 编辑执行：SQL 编辑器 + 结果网格 + 取消 + 历史
 - [x] M4 体验打磨：补全 / 预览 / CSV / 主题 / 设置 / 多控制台
 - [x] M5 工程收敛与发布：单元测试体系 + Deb / AppImage / MSI 打包配置（v1.0.0）
-- [ ] P4 数据源扩展机制：`<dataDir>/drivers` 外部驱动独立 classloader（SQL Server / Oracle）
+- [x] P4 数据源扩展机制：`<dataDir>/drivers` 外部驱动独立 classloader（SQL Server / Oracle）
 
 ## 文档
 

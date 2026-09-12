@@ -56,6 +56,7 @@ import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
 import jdbc.DialectRegistry
+import jdbc.ExternalDrivers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -175,6 +176,19 @@ fun ConnectionEditorDialog(
                             }
                             dbType = next
                         },
+                    )
+                }
+                if (dbType.externalDriver) {
+                    val ready = ExternalDrivers.isAvailable(dbType.driverClass)
+                    Text(
+                        if (ready) {
+                            "外部驱动已加载：${dbType.driverClass}"
+                        } else {
+                            "外部驱动未加载：请将 ${dbType.label} 驱动 jar 放入 ${ExternalDrivers.driversDir()} 后重启"
+                        },
+                        style = MaterialTheme.typography.caption,
+                        color = if (ready) MaterialTheme.colors.onSurface.copy(alpha = 0.55f) else Color(0xFFFFB300),
+                        modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
                     )
                 }
                 FormRow("文件夹") {

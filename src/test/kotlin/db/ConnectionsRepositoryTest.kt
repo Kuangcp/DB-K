@@ -169,4 +169,38 @@ class ConnectionsRepositoryTest {
             assertNull(mc.load(profile)) // meta_cache 级联清理
         }
     }
+
+    @Test
+    fun `importProfiles remaps conflicting ids without overwriting and keeps linkage`() {
+        open().use { repo ->
+            val folders = listOf(FolderRow("f1", "生产", parentId = null, sortOrder = 0))
+            val conns = listOf(
+                ConnectionProfile(
+                    id = "c1", name = "pg", folderId = "f1", dbType = DbType.POSTGRES,
+                    host = "h", database = "app", user = "u", password = "pw",
+                ),
+            )
+            val first = repo.importProfiles(folders, conns)
+            assertEquals(1, first.foldersAdded)
+            assertEquals(1, first.connectionsAdded)
+            assertEquals("pw", repo.getConnection("c1")!!.password)
+            assertTrue(rawPassword("c1")!!.startsWith("enc:v1:"))
+
+            // 改名后二次导入（相同 id）不得覆盖现有档案
+            repo.updateConnection(repo.getConnection("c1")!!.copy(name = "renamed"))
+            val second = repo.importProfiles(folders, conns)
+            assertEquals(1, second.foldersAdded)
+            assertEquals(1, second.connectionsAdded)
+            assertEquals("renamed", repo.getConnection("c1")!!.name)
+
+            val allFolders = repo.listFolders().sortedBy { it.sortOrder }
+            val allConns = repo.listConnections().sortedBy { it.sortOrder }
+            assertEquals(2, allFolders.size)
+            assertEquals(2, allConns.size)
+            assertTrue(allFolders[0].id != allFolders[1].id)
+            // 第二次导入的连接 folderId 必须被重映射到第二次导入的文件夹
+            assertEquals(allFolders[0].id, allConns[0].folderId)
+            assertEquals(allFolders[1].id, allConns[1].folderId)
+        }
+    }
 }

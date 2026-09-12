@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -155,10 +158,23 @@ fun DbTreeSidebar(
     onPreviewObject: (TreeRowInfo) -> Unit = {},
     /** DB_OBJECT（表/视图/物化视图）：浮窗查看定义 DDL（Ctrl+Q 同源）。 */
     onViewObjectDef: (TreeRowInfo) -> Unit = {},
+    /** 连接档案导出（不含密码）。 */
+    onExportProfiles: () -> Unit = {},
+    /** 连接档案导出（含明文密码；调用方先弹风险确认）。 */
+    onExportProfilesWithPasswords: () -> Unit = {},
+    /** 连接档案导入（合并，不覆盖现有）。 */
+    onImportProfiles: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        SidebarToolbar(onAddFolder, { onAddConnectionAt(null) }, onRefresh)
+        SidebarToolbar(
+            onAddFolder = onAddFolder,
+            onAddConnection = { onAddConnectionAt(null) },
+            onRefresh = onRefresh,
+            onExportProfiles = onExportProfiles,
+            onExportProfilesWithPasswords = onExportProfilesWithPasswords,
+            onImportProfiles = onImportProfiles,
+        )
         if (rows.isEmpty()) {
             EmptyTreeHint(onAddFolder, { onAddConnectionAt(null) })
         } else {
@@ -447,6 +463,9 @@ private fun SidebarToolbar(
     onAddFolder: () -> Unit,
     onAddConnection: () -> Unit,
     onRefresh: () -> Unit,
+    onExportProfiles: () -> Unit,
+    onExportProfilesWithPasswords: () -> Unit,
+    onImportProfiles: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
@@ -459,6 +478,40 @@ private fun SidebarToolbar(
         ToolPill(icon = { Icon(DbIcons.Database, null, Modifier.size(13.dp)) }, label = "连接", onClick = onAddConnection)
         Spacer(Modifier.width(2.dp))
         ToolPill(icon = { Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp)) }, label = null, onClick = onRefresh)
+        Spacer(Modifier.width(2.dp))
+        ArchiveMenu(
+            onExportProfiles = onExportProfiles,
+            onExportProfilesWithPasswords = onExportProfilesWithPasswords,
+            onImportProfiles = onImportProfiles,
+        )
+    }
+}
+
+/** 连接档案导出/导入的溢出菜单（工具栏空间有限，收进“⋮”）。 */
+@Composable
+private fun ArchiveMenu(
+    onExportProfiles: () -> Unit,
+    onExportProfilesWithPasswords: () -> Unit,
+    onImportProfiles: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        ToolPill(
+            icon = { Icon(Icons.Filled.MoreVert, null, Modifier.size(14.dp)) },
+            label = null,
+            onClick = { expanded = true },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                onClick = { expanded = false; onExportProfiles() },
+            ) { Text("导出档案（不含密码）…", fontSize = 13.sp) }
+            DropdownMenuItem(
+                onClick = { expanded = false; onExportProfilesWithPasswords() },
+            ) { Text("导出档案（含明文密码）…", fontSize = 13.sp) }
+            DropdownMenuItem(
+                onClick = { expanded = false; onImportProfiles() },
+            ) { Text("导入档案…", fontSize = 13.sp) }
+        }
     }
 }
 

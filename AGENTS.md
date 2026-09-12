@@ -101,6 +101,7 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
    tree-expand、editor（编辑器字体/字号）。都是标量、无查询/级联需求；新增同类项合并进已有文件，别每项开一个文件。
 3. **大块正文 → 独立文件**，DB 只存路径（`consoles/<id>.sql`）。
 4. **纯瞬态 → 只放内存**：结果集（`runSlots`）、补全弹层、错误文案等，可随时重建，不落盘。
+5. **外部 JDBC 驱动 jar → `<dataDir>/drivers/`**（`-Ddbk.driversDir` 可覆盖），独立 classloader 加载（`jdbc/ExternalDrivers.kt`），启动时 `ensureLoaded()`，新增 jar 需重启。
 
 ### 控制台光标记忆（`consoles.caret_start/caret_end`）
 

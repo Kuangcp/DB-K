@@ -69,7 +69,9 @@ import db.AppPaths
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
+import db.ProfileTransfer
 import jdbc.DialectRegistry
+import jdbc.ExternalDrivers
 import jdbc.QueryExecutor
 import jdbc.model.ObjectKind
 import jdbc.model.SchemaMeta
@@ -95,6 +97,9 @@ import java.io.File
 fun main() = application {
     // 首条日志触发 tinylog 初始化 → SessionLogWriter 立即创建本次会话日志文件（logs/yyyy-MM/yyyy-MM-dd_N.log）
     Logger.info("db-k session start; dataDir={}", AppPaths.dataDirectory())
+    // 外部 JDBC 驱动（SQL Server / Oracle）：<dataDir>/drivers 下的 jar 以独立 classloader 加载。
+    // 需重启才生效（新增 jar 后重启应用）。
+    ExternalDrivers.ensureLoaded()
     AppRoot(onExit = ::exitApplication)
 }
 
@@ -401,6 +406,53 @@ private fun AppBody(
         toastState.show("已新建控制台「$name」（绑定 ${p.name}）")
     }
 
+    // ---------- P5 连接档案导出 / 导入（不自动连接，导入后刷新树） ----------
+
+    fun exportProfiles(includePasswords: Boolean) {
+        // Linux 桌面支持无主窗口的 AWT 文件对话框（owner=null），与 CSV 导出同源
+        val ownerFrame: java.awt.Frame? = null
+        val fd = FileDialog(
+            ownerFrame,
+            if (includePasswords) "导出连接档案（含明文密码）" else "导出连接档案",
+            FileDialog.SAVE,
+        )
+        fd.file = "db-k-connections.json"
+        fd.isVisible = true
+        val name = fd.file ?: return
+        val file = File(fd.directory, name)
+        runCatching {
+            ProfileTransfer.write(file, treeState.folders, treeState.connections, includePasswords)
+        }.onSuccess {
+            toastState.show(
+                "已导出 ${treeState.folders.size} 个文件夹 / ${treeState.connections.size} 个连接 → ${file.name}",
+            )
+        }.onFailure {
+            Logger.error(it, "export profiles failed")
+            toastState.show("导出失败：${it.message?.take(120)}")
+        }
+    }
+
+    fun importProfiles() {
+        val ownerFrame: java.awt.Frame? = null
+        val fd = FileDialog(ownerFrame, "导入连接档案", FileDialog.LOAD)
+        fd.file = "*.json"
+        fd.isVisible = true
+        val name = fd.file ?: return
+        val file = File(fd.directory, name)
+        runCatching {
+            val bundle = ProfileTransfer.read(file)
+            treeState.importProfiles(bundle) to bundle.skipped
+        }.onSuccess { (summary, skipped) ->
+            val skipNote = if (skipped > 0) "，跳过 $skipped 个未知类型连接" else ""
+            toastState.show(
+                "已导入 ${summary.foldersAdded} 个文件夹 / ${summary.connectionsAdded} 个连接$skipNote",
+            )
+        }.onFailure {
+            Logger.error(it, "import profiles failed")
+            toastState.show("导入失败：${it.message?.take(140)}")
+        }
+    }
+
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
@@ -494,6 +546,13 @@ private fun AppBody(
                                 dialogState.tableDdl = TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
                             }
                         },
+                        onExportProfiles = { exportProfiles(includePasswords = false) },
+                        onExportProfilesWithPasswords = {
+                            dialogState.confirm = ConfirmRequest.ExportWithPasswords {
+                                exportProfiles(includePasswords = true)
+                            }
+                        },
+                        onImportProfiles = { importProfiles() },
                     )
                     TreeSplitter { delta -> treeWidthDp = (treeWidthDp + delta).coerceIn(180f, 680f) }
                     val runState = activeConsole?.let { consoleState.runStateOf(it.id) } ?: ConsoleRunUi()
@@ -816,6 +875,7 @@ private fun DialogHost(
                     }
                     is ConfirmRequest.DeleteConsole -> consoleState.deleteConsole(request.id)
                     is ConfirmRequest.DiscardResultEdits -> request.onDiscard()
+                    is ConfirmRequest.ExportWithPasswords -> request.onConfirm()
                 }
                 dialogState.confirm = null
             },

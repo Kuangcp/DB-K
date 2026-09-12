@@ -146,15 +146,22 @@ fun ConfirmDialog(
             "未提交的修改" to
                 "有 ${request.count} 处修改尚未提交，${request.actionLabel}将丢失这些修改。\n\n确定继续吗？"
         }
+        is ConfirmRequest.ExportWithPasswords -> {
+            "导出含密码" to
+                "导出的文件将包含连接的**明文密码**，任何拿到该文件的人都能直接读取。\n\n建议仅在可信环境使用；确定继续吗？"
+        }
     }
-    val destructive = request !is ConfirmRequest.DiscardResultEdits
+    val confirmLabel = when (request) {
+        is ConfirmRequest.DiscardResultEdits, is ConfirmRequest.ExportWithPasswords -> "继续"
+        else -> "删除"
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text(if (destructive) "删除" else "继续", color = MaterialTheme.colors.error)
+                Text(confirmLabel, color = MaterialTheme.colors.error)
             }
         },
         dismissButton = {

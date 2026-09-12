@@ -224,6 +224,8 @@ object DialectRegistry {
         DbType.SQLITE to SQLiteDialect,
         DbType.H2 to H2Dialect,
         DbType.CLICKHOUSE to ClickHouseDialect,
+        DbType.SQLSERVER to SqlServerDialect,
+        DbType.ORACLE to OracleDialect,
     )
 
     fun forType(type: DbType): DbDialect = dialects[type]
@@ -237,6 +239,9 @@ object DialectRegistry {
 private val SYSTEM_NAMES = setOf(
     "information_schema", "pg_catalog", "mysql", "performance_schema", "sys",
     "system", "pg_toast", "pg_temp_1", "pg_toast_temp_1", "INFORMATION_SCHEMA",
+    // Oracle 常见维护账号（老库无 oracle_maintained 列时的名称兜底）
+    "xdb", "mdsys", "ordsys", "ctxsys", "dbsnmp", "outln", "olapsys",
+    "wmsys", "lbacsys", "audsys", "dvsys", "appqossys",
 )
 
 fun String.isSystemSchemaName(): Boolean {
