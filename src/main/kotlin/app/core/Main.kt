@@ -40,6 +40,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.dialog.CommitPreviewDialog
 import app.dialog.ConfirmDialog
 import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
@@ -50,6 +51,7 @@ import app.settings.EditorPrefs
 import app.settings.ThemePrefs
 import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
+import app.state.CommitPreviewRequest
 import app.state.ConfirmRequest
 import app.state.ConnectionEditorRequest
 import app.state.ConnectionsState
@@ -199,6 +201,15 @@ private fun AppBody(
     // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
 
+    /** 提交结果单元格修改（真正的写库动作；UI 侧先在 P7 预览弹窗确认）。 */
+    fun commitEditsNow(c: ConsoleRecord, p: ConnectionProfile) {
+        scope.launch {
+            consoleState.commitEdits(c, p)
+                .onSuccess { n -> toastState.show(if (n > 0) "已提交 $n 处修改" else "没有修改") }
+                .onFailure { t -> toastState.show("提交失败：${t.message?.take(120)}") }
+        }
+    }
+
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
     val rows = buildTreeRows(
         treeState.folders,
@@ -232,10 +243,20 @@ private fun AppBody(
                     scope.launch { connectionsState.ensureSchemaObjects(p, schema) }
                 }
             }
-            // 对象组（表/视图/序列…）支持展开/折叠：只展开单个类型组
+            // 对象组（表/视图/序列…）支持展开/折叠：只展开单个类型组；
+            // 懒加载方言在展开未加载组时触发该组正文拉取（P6）。
             TreeRowKind.OBJECT_GROUP -> {
-                if (row.expanded) treeState.collapseGroup(row.key)
-                else treeState.expandGroup(row.key)
+                if (row.expanded) {
+                    treeState.collapseGroup(row.key)
+                } else {
+                    treeState.expandGroup(row.key)
+                    val p = row.profile
+                    val s = row.schema
+                    val g = row.groupKind
+                    if (p != null && s != null && g != null) {
+                        scope.launch { connectionsState.ensureGroupObjects(p, s, g.kind) }
+                    }
+                }
             }
             else -> {}
         }
@@ -629,14 +650,14 @@ private fun AppBody(
                             val c = activeConsole
                             val p = activeProfile
                             if (c != null && p != null) {
-                                scope.launch {
-                                    consoleState.commitEdits(c, p)
-                                        .onSuccess { n ->
-                                            toastState.show(if (n > 0) "已提交 $n 处修改" else "没有修改")
-                                        }
-                                        .onFailure { t ->
-                                            toastState.show("提交失败：${t.message?.take(120)}")
-                                        }
+                                // P7：先看将要执行的 UPDATE，确认后才真正提交
+                                val preview = consoleState.previewCommit(c, p)
+                                if (preview.isEmpty()) {
+                                    commitEditsNow(c, p)
+                                } else {
+                                    dialogState.commitPreview = CommitPreviewRequest(preview) {
+                                        commitEditsNow(c, p)
+                                    }
                                 }
                             }
                         },
@@ -816,6 +837,12 @@ private fun DialogHost(
             loadDdl = connectionsState::fetchDdl,
             onDismiss = { dialogState.tableDdl = null },
             onCopy = onCopyText,
+        )
+    }
+    dialogState.commitPreview?.let { request ->
+        CommitPreviewDialog(
+            request = request,
+            onDismiss = { dialogState.commitPreview = null },
         )
     }
     dialogState.folderDialog?.let { request ->

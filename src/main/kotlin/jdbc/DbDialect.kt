@@ -3,6 +3,8 @@ package jdbc
 import db.ConnectionProfile
 import db.DbType
 import jdbc.model.ColumnMeta
+import jdbc.model.DbObjectMeta
+import jdbc.model.ObjectKind
 import jdbc.model.SchemaObjects
 import jdbc.model.SchemaMeta
 import java.sql.Connection
@@ -25,6 +27,33 @@ interface DbDialect {
 
     /** 探测某 schema 下的表/视图/触发器。 */
     fun loadObjects(conn: Connection, schema: SchemaMeta): SchemaObjects
+
+    /**
+     * 是否支持按对象组懒加载（P6 大库优化）：
+     * true → app 连接后只取 [loadObjectCounts] + [loadCoreObjects]，组展开才调 [loadObjectsForKind]；
+     * false（默认）→ 一次性 [loadObjects] 全量（对象数量小的库无需懒加载）。
+     */
+    val lazyObjectGroups: Boolean get() = false
+
+    /**
+     * 各对象组的计数（不拉对象正文）。默认由全量 [loadObjects] 推导，仅供非懒加载方言兜底；
+     * 懒加载方言必须覆写，否则退化为全量查询。
+     */
+    fun loadObjectCounts(conn: Connection, schema: SchemaMeta): Map<ObjectKind, Int> =
+        loadObjects(conn, schema).objects.mapValues { it.value.size }
+
+    /**
+     * 懒加载方言的「核心组」：编辑器补全与树首屏必须立即可用的类型（表/视图/物化视图/序列）。
+     * 默认 = 全量 [loadObjects]（非懒加载方言本就一次取全）。
+     */
+    fun loadCoreObjects(conn: Connection, schema: SchemaMeta): SchemaObjects = loadObjects(conn, schema)
+
+    /**
+     * 单一类型组的正文（组展开时调用）。默认从全量 [loadObjects] 取子集；
+     * 懒加载方言应覆写为只查该类型。
+     */
+    fun loadObjectsForKind(conn: Connection, schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
+        loadObjects(conn, schema).forKind(kind)
 
     /**
      * 探测单表列清单（编辑器列补全）。默认走 JDBC [DatabaseMetaData.getColumns]。

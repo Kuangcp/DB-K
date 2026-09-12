@@ -3,6 +3,8 @@ package tree
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
+import jdbc.model.DbObjectMeta
+import jdbc.model.ObjectKind
 import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
 import kotlin.test.Test
@@ -19,6 +21,7 @@ private class FakeRuntime : ConnectionRuntimeView {
     val schemasLoading = mutableMapOf<String, Boolean>()
     val objectsBySchema = mutableMapOf<Pair<String, String>, SchemaObjects?>()
     val objectsLoading = mutableMapOf<String, Boolean>()
+    val groupLoading = mutableMapOf<Triple<String, String, ObjectKind>, Boolean>()
 
     override fun statusOf(profileId: String) = statuses[profileId] ?: ConnUiStatus.DISCONNECTED
     override fun statusMessageOf(profileId: String) = messages[profileId]
@@ -26,6 +29,8 @@ private class FakeRuntime : ConnectionRuntimeView {
     override fun schemasLoadingOf(profileId: String) = schemasLoading[profileId] ?: false
     override fun objectsOf(profileId: String, schemaKey: String) = objectsBySchema[profileId to schemaKey]
     override fun objectsLoadingOf(profileId: String, schemaKey: String) = objectsLoading[profileId] ?: false
+    override fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind) =
+        groupLoading[Triple(profileId, schemaKey, kind)] ?: false
 }
 
 class DbTreeRowsTest {
@@ -220,6 +225,55 @@ class DbTreeRowsTest {
         // 对象行带 schema/profile 上下文
         assertEquals("c1", objRow.profile!!.id)
         assertEquals("main", objRow.schema!!.displayName)
+    }
+
+    @Test
+    fun `group row uses count when body not loaded`() {
+        val schema = SchemaMeta(null, "main")
+        val out = rows(
+            connections = listOf(conn("c1")),
+            expandedConnectionIds = setOf("c1"),
+            expandedSchemaKeys = setOf("s:c1:${schema.key}"),
+            runtime = FakeRuntime().apply {
+                statuses["c1"] = ConnUiStatus.CONNECTED
+                schemasByProfile["c1"] = listOf(schema)
+                objectsBySchema["c1" to schema.key] = SchemaObjects(
+                    objects = mapOf(ObjectKind.TABLE to listOf(DbObjectMeta("users", ObjectKind.TABLE))),
+                    counts = mapOf(ObjectKind.TABLE to 1, ObjectKind.ROUTINE to 1200),
+                )
+            },
+        )
+        // connection + schema + TABLES 组 + ROUTINES 组（正文未加载但计数已知）
+        assertEquals(4, out.size)
+        assertEquals(ObjectGroupKind.TABLES, out[2].groupKind)
+        assertEquals(1, out[2].childCount)
+        assertEquals(ObjectGroupKind.ROUTINES, out[3].groupKind)
+        assertEquals(1200, out[3].childCount)
+    }
+
+    @Test
+    fun `expanded unloaded group shows loading or not-loaded placeholder`() {
+        val schema = SchemaMeta(null, "main")
+        val key = schema.key
+        fun runtime(loading: Boolean) = FakeRuntime().apply {
+            statuses["c1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["c1"] = listOf(schema)
+            objectsBySchema["c1" to key] = SchemaObjects(counts = mapOf(ObjectKind.ROUTINE to 1200))
+            if (loading) groupLoading[Triple("c1", key, ObjectKind.ROUTINE)] = true
+        }
+        fun build(loading: Boolean) = rows(
+            connections = listOf(conn("c1")),
+            expandedConnectionIds = setOf("c1"),
+            expandedSchemaKeys = setOf("s:c1:$key"),
+            expandedGroupKeys = setOf("s:c1:$key:g:ROUTINES"),
+            runtime = runtime(loading),
+        )
+        val loadingRow = build(true)[3]
+        assertEquals(PlaceholderKind.LOADING, loadingRow.placeholderKind)
+        assertEquals("正在加载函数与过程…", loadingRow.name)
+        val idleRow = build(false)[3]
+        assertEquals(PlaceholderKind.INFO, idleRow.placeholderKind)
+        assertEquals("尚未加载", idleRow.name)
     }
 
     @Test

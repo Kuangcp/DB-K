@@ -169,6 +169,10 @@ private fun smokeSqlite(dir: Path) {
         check(objects.objects.keys == setOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.TRIGGER))
         check(objects.forKind(ObjectKind.TABLE).size == objects.tables.size)
         check(objects.total == objects.tables.size + objects.views.size + objects.triggers.size)
+        // P6：非懒加载方言的组计数/按组正文默认实现（回落全量 loadObjects）
+        check(!dialect.lazyObjectGroups)
+        check(dialect.loadObjectCounts(conn, schemas.first())[ObjectKind.TABLE] == objects.tables.size)
+        check(dialect.loadObjectsForKind(conn, schemas.first(), ObjectKind.TABLE).map { it.name } == objects.tables)
         Logger.info("[SQLite] previewSql: {}", dialect.previewSelect(schemas.first(), "users"))
         val cols = dialect.loadColumns(conn, schemas.first(), "orders")
         Logger.info("[SQLite] columns={}", cols.map { "${it.name}:${it.typeName}" })

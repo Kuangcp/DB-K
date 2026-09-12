@@ -72,6 +72,9 @@ interface ConnectionRuntimeView {
     fun schemasLoadingOf(profileId: String): Boolean
     fun objectsOf(profileId: String, schemaKey: String): SchemaObjects?
     fun objectsLoadingOf(profileId: String, schemaKey: String): Boolean
+
+    /** 某类型组正文是否正在懒加载（P6；非懒加载实现默认 false）。 */
+    fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean = false
 }
 
 /** 空实现：未接线的运行时（测试/回退用）。 */
@@ -215,8 +218,9 @@ private fun appendSchema(
             out += infoPlaceholder(depth + 1, "$rowKey:empty", "（空 schema）")
         else -> {
             ObjectGroupKind.entries.forEach { group ->
-                val items = objects.forKind(group.kind)
-                if (items.isEmpty()) return@forEach
+                val kind = group.kind
+                val count = objects.countOf(kind)
+                if (count <= 0) return@forEach
                 val groupKey = "$rowKey:g:${group.name}"
                 val groupExpanded = groupKey in expandedGroupKeys
                 out += TreeRowInfo(
@@ -228,20 +232,29 @@ private fun appendSchema(
                     schema = schema,
                     groupKind = group,
                     expanded = groupExpanded,
-                    childCount = items.size,
+                    childCount = count,
                 )
                 // 组折叠：对象行只在组展开时列出（大库例程上千条也不拖垮渲染）
                 if (groupExpanded) {
-                    items.forEach { obj ->
-                        out += TreeRowInfo(
-                            key = "$groupKey:o:${obj.name}",
-                            kind = TreeRowKind.DB_OBJECT,
-                            depth = depth + 2,
-                            name = obj.name,
-                            profile = conn,
-                            schema = schema,
-                            dbObject = obj,
-                        )
+                    if (!objects.isLoaded(kind)) {
+                        // P6 懒加载：正文未拉取时给占位；上层在展开时触发 ensureGroupObjects
+                        out += if (runtime.groupObjectsLoadingOf(conn.id, schema.key, kind)) {
+                            loadingPlaceholder(depth + 2, "$groupKey:load", "正在加载${group.label}…")
+                        } else {
+                            infoPlaceholder(depth + 2, "$groupKey:load", "尚未加载")
+                        }
+                    } else {
+                        objects.forKind(kind).forEach { obj ->
+                            out += TreeRowInfo(
+                                key = "$groupKey:o:${obj.name}",
+                                kind = TreeRowKind.DB_OBJECT,
+                                depth = depth + 2,
+                                name = obj.name,
+                                profile = conn,
+                                schema = schema,
+                                dbObject = obj,
+                            )
+                        }
                     }
                 }
             }

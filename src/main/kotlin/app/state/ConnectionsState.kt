@@ -10,6 +10,7 @@ import db.MetaCache
 import jdbc.DialectRegistry
 import jdbc.LiveConnection
 import jdbc.model.ColumnMeta
+import jdbc.model.ObjectKind
 import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,8 @@ class ConnectionsState(
         var schemasLoading by mutableStateOf(false)
         val objects = mutableStateMapOf<String, SchemaObjects>()
         val objectsLoading = mutableStateMapOf<String, Boolean>()
+        /** 按组懒加载中的标记（key = schemaKey + 组类型）；值 true 时树出「正在加载」。 */
+        val groupLoading = mutableStateMapOf<String, Boolean>()
         /** 后台静默重取进行中标记（防重复）。非 UI 展示，普通字段即可。 */
         var backgroundRefreshing = false
 
@@ -74,6 +77,7 @@ class ConnectionsState(
             schemasLoading = false
             objects.clear()
             objectsLoading.clear()
+            groupLoading.clear()
             backgroundRefreshing = false
         }
     }
@@ -106,6 +110,9 @@ class ConnectionsState(
 
     override fun objectsLoadingOf(profileId: String, schemaKey: String): Boolean =
         runtimes[profileId]?.objectsLoading?.get(schemaKey) == true
+
+    override fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean =
+        runtimes[profileId]?.groupLoading?.get(groupLoadingKey(schemaKey, kind)) == true
 
     // ---------- 连接 / 元数据（suspend；UI 协程调用，内部切 IO） ----------
 
@@ -170,6 +177,7 @@ class ConnectionsState(
         rt.schemas = null
         rt.objects.clear()
         rt.objectsLoading.clear()
+        rt.groupLoading.clear()
         rt.schemasLoading = true
         val result = fetchFreshMetadata(rt)
         rt.schemasLoading = false
@@ -236,6 +244,38 @@ class ConnectionsState(
                 Logger.error(it, "load objects failed {} {} {}", rt.profile.name, schema.displayName)
                 rt.statusMessage = friendlyMessage(it)
             }
+    }
+
+    /**
+     * 懒加载方言：展开某类型组时确保该组正文已加载（幂等）。
+     * 非懒加载方言或已加载组无操作；成功后把该组并入 schema 的 [SchemaObjects] 并增量回写磁盘缓存。
+     */
+    suspend fun ensureGroupObjects(profile: ConnectionProfile, schema: SchemaMeta, kind: ObjectKind) {
+        val rt = runtime(profile)
+        val key = schema.key
+        val current = rt.objects[key] ?: return
+        val loadingKey = groupLoadingKey(key, kind)
+        if (current.isLoaded(kind) || rt.groupLoading[loadingKey] == true) return
+        rt.groupLoading[loadingKey] = true
+        val result = withContext(Dispatchers.IO) {
+            runCatching { rt.live.loadObjectsForKind(schema, kind) }
+        }
+        rt.groupLoading.remove(loadingKey)
+        result.onSuccess { items ->
+            // 写回时重读当前快照：期间可能已并发加载了别的组（同一 schema 多组先后展开）
+            val base = rt.objects[key] ?: current
+            rt.objects[key] = SchemaObjects(
+                objects = base.objects + (kind to items),
+                counts = base.counts,
+            )
+            val schemas = rt.schemas
+            if (schemas != null) {
+                withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, rt.objects.toMap()) }
+            }
+        }.onFailure {
+            Logger.error(it, "load group failed {} {} {}", rt.profile.name, schema.displayName, kind)
+            rt.statusMessage = friendlyMessage(it)
+        }
     }
 
     /** 主动断开：只放连接与会话内存，磁盘缓存保留（下次连接/离线仍可用）。 */
@@ -332,6 +372,7 @@ class ConnectionsState(
         rt.objects.clear()
         rt.objects.putAll(objects)
         rt.objectsLoading.clear()
+        rt.groupLoading.clear()
     }
 
     /**
@@ -346,8 +387,18 @@ class ConnectionsState(
         val schemas = live.loadSchemas()
         val objects = linkedMapOf<String, SchemaObjects>()
         val failed = mutableListOf<String>()
+        val lazy = DialectRegistry.forProfile(rt.profile).lazyObjectGroups
         schemas.forEach { s ->
-            runCatching { live.loadObjects(s) }
+            runCatching {
+                // 懒加载方言：只取组计数 + 关系类核心组（补全/首屏用）；重目录组展开时再拉。
+                if (lazy) {
+                    val counts = live.loadObjectCounts(s)
+                    val core = live.loadCoreObjects(s)
+                    SchemaObjects(objects = core.objects, counts = counts)
+                } else {
+                    live.loadObjects(s)
+                }
+            }
                 .onSuccess { objects[s.key] = it }
                 .onFailure { t ->
                     Logger.error(t, "load objects failed {} {}", rt.profile.name, s.displayName)
@@ -360,5 +411,9 @@ class ConnectionsState(
 
     companion object {
         private fun friendlyMessage(t: Throwable?): String = friendlySqlError(t)
+
+        /** 按组懒加载标记的键（schemaKey + 类型）。 */
+        private fun groupLoadingKey(schemaKey: String, kind: ObjectKind): String =
+            schemaKey + "\u0000" + kind.name
     }
 }

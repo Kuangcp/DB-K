@@ -74,25 +74,37 @@ data class DbObjectMeta(
 )
 
 /**
- * 单个 schema 下按类型分组拆好的对象清单。
- * 内部以 Map<ObjectKind, List<DbObjectMeta>> 表达（各库只填自己支持的类型），
- * 另提供 tables/views/triggers 便捷读法供预览与补全等既有调用使用。
+ * 单个 schema 下的对象清单。支持**按组增量加载**（大库优化，见 P6）：
+ * - [objects] 仅含已加载正文的组；
+ * - [counts] 记录已知组计数（含尚未加载正文的组），供组行徒章与懒加载决策；
+ * - [isLoaded] / [countOf] 是树的读取入口：未加载但有计数 → 可展开触发加载。
+ * 全量加载的方言 [counts] 可为空，[countOf] 自动回落到 [objects] 实际大小。
  */
 @Serializable
 data class SchemaObjects(
     val objects: Map<ObjectKind, List<DbObjectMeta>> = emptyMap(),
+    /** 组计数（不拉正文）；缺失视为未知，回落已加载组大小。 */
+    val counts: Map<ObjectKind, Int> = emptyMap(),
 ) {
     val tables: List<String> get() = namesOf(ObjectKind.TABLE)
     val views: List<String> get() = namesOf(ObjectKind.VIEW)
     val materializedViews: List<String> get() = namesOf(ObjectKind.MATERIALIZED_VIEW)
     val triggers: List<DbObjectMeta> get() = objects[ObjectKind.TRIGGER].orEmpty()
 
-    val isEmpty: Boolean get() = objects.values.none { it.isNotEmpty() }
+    val isEmpty: Boolean get() = knownKinds.all { countOf(it) == 0 }
 
     /** 该 schema 全部对象数量（schema 收起时的徽章数）。 */
-    val total: Int get() = objects.values.sumOf { it.size }
+    val total: Int get() = knownKinds.sumOf { countOf(it) }
 
     fun forKind(kind: ObjectKind): List<DbObjectMeta> = objects[kind].orEmpty()
+
+    /** 展示计数：已加载组取实际条数（最可信），否则取 [counts]。 */
+    fun countOf(kind: ObjectKind): Int = objects[kind]?.size ?: counts[kind] ?: 0
+
+    /** 该组正文是否已加载（false 且 [countOf] > 0 表示可懒加载）。 */
+    fun isLoaded(kind: ObjectKind): Boolean = objects.containsKey(kind)
+
+    private val knownKinds: Set<ObjectKind> get() = objects.keys + counts.keys
 
     private fun namesOf(kind: ObjectKind): List<String> = objects[kind].orEmpty().map { it.name }
 

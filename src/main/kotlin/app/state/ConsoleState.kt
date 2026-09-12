@@ -298,6 +298,20 @@ class ConsoleState(
     }
 
     /**
+     * P7：提交前预览——把暂存修改渲染为可读 UPDATE（不执行、不改状态）。
+     * 返回空列表表示没有可预览内容（无修改 / 不可编辑）。
+     */
+    fun previewCommit(console: ConsoleRecord, profile: db.ConnectionProfile): List<String> {
+        val ui = runSlots[console.id] ?: return emptyList()
+        val result = ui.result ?: return emptyList()
+        val plan = editPlanOf(console.id) ?: return emptyList()
+        val edits = editsOf(console.id)
+        if (edits.isEmpty()) return emptyList()
+        val dialect = DialectRegistry.forProfile(profile)
+        return buildUpdatePlans(result, plan, edits).map { RowUpdater.renderUpdateSql(it, dialect) }
+    }
+
+    /**
      * 只重新执行当前（或指定）结果 Tab 的语句，替换该 outcome，其余 Tab / 编辑器草稿不动。
      * 调用前若存在未提交修改，UI 应先确认丢弃（本方法不弹窗）。
      */

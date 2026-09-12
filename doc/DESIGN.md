@@ -101,7 +101,7 @@ sealed interface UiTreeNode {
 **渲染策略**：不用递归嵌套 lazy（深度大、滚动抖动），改为**扁平展开**——
 给定 `expandedIds + 元数据缓存`，把可见节点展开成 `List<UiTreeNode>`，单条 `LazyColumn` 每行一个节点（缩进按 depth）。这与 api-x 树（嵌套数据类递归）不同，是 DB 工具更优解。
 
-**懒加载契约**：`DataSource` 展开 → 拉 catalog/schema 列表；`Schema` 展开 → 拉该库的表/视图/触发器名（只读名字，快）；双击/右键表 → 才拉 columns/主键/行预览。避免大库启动即卡。
+**懒加载契约**：`DataSource` 展开 → 拉 catalog/schema 列表；`Schema` 展开 → 拉该库的表/视图/触发器名（只读名字，快）；双击/右键表 → 才拉 columns/主键/行预览。避免大库启动即卡。P6 起 `Schema` 展开进一步只取「组计数 + 核心类型」（表/视图/物化视图/序列），重类型组（触发器/例程/…）**组展开时才拉正文**（PG 开启 `DbDialect.lazyObjectGroups`；其余库默认回落全量 `loadObjects`，行为不变）。
 
 ### 4.3 JDBC 运行时模型
 

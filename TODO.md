@@ -9,6 +9,12 @@
 **编辑区域**
 
 
+**结果编辑**
+
+- （可选）行锁：刷新编辑结果时用 `SELECT … FOR UPDATE`（PG/MySQL/Oracle）降低并发覆盖；需评估对只读查询的副作用（当前靠提交时 `affected==1` 检测）
+- 明确不做：新增行 / 删除行；富类型（BLOB/图片/JSON 结构）就地编辑仍走查看器
+
+
 **数据源支持**
 
 - SQL Server / Oracle：外部驱动机制已实现（`<dataDir>/drivers` 放 jar + 独立 classloader + 方言 + 驱动未加载提示）→ **待放真实驱动 jar 人工验收**（建连 / 展开树 / 查询）；驱动需与 JDK 25 兼容
@@ -18,8 +24,9 @@
 **树区域**
 
 - 已做：按类型细分分组 + 组内计数（P3：表/物化视图/视图/触发器/序列/函数与过程/聚合/操作符/类型/操作符类/操作符族，PG 生效；非 PG 库仅产出自己支持的类型）
-- 组折叠已做（对象行只在组展开时渲染），但对象清单仍随 schema 展开一次性拉取（`loadObjects` 全量），大库（routines 上千）首屏慢 → 按组懒加载（schema 只拉组+计数，组展开才拉对象），详见 `Roadmap.md` P6
+- 按组懒加载已实现（P6）：schema 展开只取「计数 + 核心类型」，重类型组展开时才拉对象（PG 开启 `lazyObjectGroups`，非 PG 回落全量）→ **待含上千例程的实库人工验收**
 - 集群级目录（Database Objects：casts/extensions/languages；Server Objects：roles/tablespaces 等）未做（需跨 schema 查询），详见 `Roadmap.md` P6
+- （远期）表子节点：表下展开列 / 索引 / 约束（当前列信息只服务补全缓存，树不展示）
 
 **连接与安全**
 

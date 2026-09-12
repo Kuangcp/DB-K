@@ -40,6 +40,7 @@
 ```
 
 - 「提交」图标在有未提交修改时高亮 + 徽标数字；无修改时置灰。
+- 点「提交」→ 先弹 **UPDATE 预览**（`CommitPreviewDialog`，逐行可读 SQL），确认后才真正写库；取消不产生任何修改（Phase 4）。
 - 「刷新查询结果」= **只重新执行当前结果 Tab 对应的那条语句**，不动其余 Tab、不动编辑器草稿。
 - 有未提交修改时点刷新 → `ConfirmDialog`：
   「有 N 处修改尚未提交，刷新将丢弃这些修改。」`[刷新并丢弃]` / `[取消]`。
@@ -423,6 +424,15 @@ data class DiscardEdits(
 | `app/dialog/EditCellDialog.kt`（新） | 多行对话框编辑：NULL 与空串严格区分（「设为 NULL」勾选）、`Ctrl+Enter` 提交 / `Esc` 取消 / `Enter` 换行；颜色全走主题 |
 | `app/ui/SqlWorkspace.kt` | `Ctrl+双击` 对长值(>60)/多行/NULL 自动改用对话框，短值仍行内；右键新增「在对话框中编辑…」；确认后回写 overlay（改回原值即撤销） |
 
+### Phase 4（提交前 UPDATE 预览，已完成）
+
+| 文件 | 内容 |
+|---|---|
+| `app/state/ConsoleState.kt` | `previewCommit(console, profile)`：纯只读，用与提交相同的 `buildUpdatePlans` + `RowUpdater.renderUpdateSql` 逐行渲染，不执行、不改状态 |
+| `app/state/DialogState.kt` | `CommitPreviewRequest(statements, onConfirm)` + `commitPreview` 状态 |
+| `app/dialog/ViewerDialogs.kt` | `CommitPreviewDialog`：显式尺寸 `DialogWindow` + SQL 高亮只读 + 「取消 / 提交」（Esc 取消） |
+| `app/core/Main.kt` | 点「提交」→ 有修改则先弹预览，确认后才 `commitEditsNow`；无修改/不可编辑直接走原路径 |
+
 ### 后续（未实现）
 
-- UPDATE 预览（提交前展示参数化 SQL）；`SELECT ... FOR UPDATE` 锁定行。
+- `SELECT ... FOR UPDATE` 锁定行（可选，需评估只读查询副作用）。

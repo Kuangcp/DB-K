@@ -1,6 +1,7 @@
 package jdbc
 
 import db.DbType
+import jdbc.model.ObjectKind
 import jdbc.model.SchemaMeta
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -108,6 +109,22 @@ class DbDialectTest {
             "SELECT * FROM \"HR\".\"EMP\" FETCH FIRST 100 ROWS ONLY",
             OracleDialect.previewSelect(SchemaMeta(null, "HR"), "EMP"),
         )
+    }
+
+    @Test
+    fun `postgres relkind prokind mapping and lazy flag`() {
+        assertEquals(ObjectKind.MATERIALIZED_VIEW, relationKindOf("m"))
+        assertEquals(ObjectKind.VIEW, relationKindOf("v"))
+        assertEquals(ObjectKind.SEQUENCE, relationKindOf("S"))
+        assertEquals(ObjectKind.TABLE, relationKindOf("r"))
+        assertEquals(ObjectKind.TABLE, relationKindOf("p"))
+        assertEquals(ObjectKind.TABLE, relationKindOf("f"))
+        assertEquals(ObjectKind.AGGREGATE, routineKindOf("a"))
+        assertEquals(ObjectKind.ROUTINE, routineKindOf("f"))
+        assertEquals(ObjectKind.ROUTINE, routineKindOf(null))
+        assertTrue(PostgresDialect.lazyObjectGroups)
+        assertFalse(SQLiteDialect.lazyObjectGroups)
+        assertFalse(MySqlDialect.lazyObjectGroups)
     }
 
     @Test

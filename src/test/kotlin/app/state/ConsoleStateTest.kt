@@ -1,10 +1,16 @@
 package app.state
 
+import app.ui.CellKey
+import app.ui.buildEditPlan
 import db.ColumnCache
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.DbType
 import db.MetaCache
+import java.sql.Types
+import jdbc.CellValue
+import jdbc.QueryColumn
+import jdbc.QueryResult
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -243,6 +249,50 @@ class ConsoleStateTest {
             state.setTarget(c.id, "main")
             // 未连接的 ConnectionsState 无 schema → 不切换
             assertNull(state.sessionContextSqlFor(state.activeConsole()!!, profile()))
+        }
+    }
+
+    @Test
+    fun `previewCommit renders updates and leaves edits untouched`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c = state.createConsole(pid, "c")
+
+            val result = QueryResult(
+                sql = "SELECT id, bal FROM acc",
+                columns = listOf(
+                    QueryColumn("id", table = "acc", baseColumn = "id", sqlType = Types.INTEGER),
+                    QueryColumn("bal", table = "acc", baseColumn = "bal", sqlType = Types.INTEGER),
+                ),
+                rows = listOf(listOf("1", "100")),
+            )
+            state.runSlots[c.id] = ConsoleRunUi(
+                outcomes = listOf(StatementOutcome("SELECT id, bal FROM acc", result, null)),
+                activeIndex = 0,
+            )
+            state.editPlans[c.id] = buildEditPlan(result, primaryKeys = setOf("id"))!!
+            state.setCellEdit(c.id, CellKey(0, 1), CellValue("200"))
+
+            val preview = state.previewCommit(c, profile())
+            assertEquals(1, preview.size)
+            assertTrue(preview.single().startsWith("UPDATE"))
+            assertTrue(preview.single().contains("200"))
+            assertTrue(preview.single().contains("WHERE"))
+            // 预览纯只读：暂存修改与编辑计划都不变
+            assertEquals(1, state.editCount(c.id))
+            assertNotNull(state.editPlanOf(c.id))
+        }
+    }
+
+    @Test
+    fun `previewCommit is empty without edits or edit plan`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c = state.createConsole(pid, "c")
+            // 无 run slot / 无编辑计划 → 空
+            assertTrue(state.previewCommit(c, profile()).isEmpty())
         }
     }
 }

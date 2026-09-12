@@ -1,6 +1,8 @@
 package jdbc
 
 import db.ConnectionProfile
+import jdbc.model.DbObjectMeta
+import jdbc.model.ObjectKind
 import jdbc.model.SchemaObjects
 import jdbc.model.SchemaMeta
 import java.sql.Connection
@@ -79,4 +81,16 @@ class LiveConnection(private val profile: ConnectionProfile) {
 
     fun loadObjects(schema: SchemaMeta): SchemaObjects =
         onConnection { dialect.loadObjects(it, schema) }
+
+    /** 懒加载：组计数（不拉正文）。 */
+    fun loadObjectCounts(schema: SchemaMeta): Map<ObjectKind, Int> =
+        onConnection { dialect.loadObjectCounts(it, schema) }
+
+    /** 懒加载：核心组正文（表/视图/物化视图/序列）。 */
+    fun loadCoreObjects(schema: SchemaMeta): SchemaObjects =
+        onConnection { dialect.loadCoreObjects(it, schema) }
+
+    /** 懒加载：单一类型组正文。 */
+    fun loadObjectsForKind(schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
+        onConnection { dialect.loadObjectsForKind(it, schema, kind) }
 }

@@ -9,12 +9,14 @@ import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
 import org.tinylog.Logger
 import java.sql.Connection
-import java.sql.PreparedStatement
 import java.sql.ResultSet
 
 /**
  * PostgreSQL：单 catalog（当前库）、多 schema。
  * 直接用 pg_catalog 查询，比 JDBC getTables 对分区表/物化视图/触发器更可控。
+ *
+ * P6：支持按对象组懒加载——关系类（表/视图/物化视图/序列）作为「核心组」随连接预取，
+ * 例程/聚合/操作符/类型等重目录只取计数，组展开才拉正文（见 [lazyObjectGroups]）。
  */
 object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver") {
 
@@ -86,66 +88,188 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
         ORDER BY f.opfname
     """.trimIndent()
 
+    /**
+     * 一次性取全部组计数（不拉正文）；7 处 `?` 均填 schema 名。
+     * 懒加载下连接阶段每个 schema 只跑这一条 + 一条关系查询。
+     */
+    private val countsSql = """
+        SELECT 'rel' AS k, c.relkind::text AS sub, count(*)::int AS cnt
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ? AND c.relkind IN ('r','p','f','v','m','S')
+        GROUP BY c.relkind
+        UNION ALL
+        SELECT 'trg', '', count(*)::int
+        FROM pg_catalog.pg_trigger t
+        JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ? AND NOT t.tgisinternal
+        UNION ALL
+        SELECT 'proc', p.prokind::text, count(DISTINCT p.proname)::int
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ?
+        GROUP BY p.prokind
+        UNION ALL
+        SELECT 'opr', '', count(DISTINCT o.oprname)::int
+        FROM pg_catalog.pg_operator o
+        JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+        WHERE n.nspname = ?
+        UNION ALL
+        SELECT 'typ', '', count(DISTINCT t.typname)::int
+        FROM pg_catalog.pg_type t
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = ? AND t.typtype IN ('c','e','d','r','m')
+            AND t.typname NOT LIKE '\_%'
+        UNION ALL
+        SELECT 'opc', '', count(DISTINCT c.opcname)::int
+        FROM pg_catalog.pg_opclass c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.opcnamespace
+        WHERE n.nspname = ?
+        UNION ALL
+        SELECT 'opf', '', count(DISTINCT f.opfname)::int
+        FROM pg_catalog.pg_opfamily f
+        JOIN pg_catalog.pg_namespace n ON n.oid = f.opfnamespace
+        WHERE n.nspname = ?
+    """.trimIndent()
+
     override fun loadSchemas(conn: Connection): List<SchemaMeta> =
         queryStrings(conn, schemasSql) { it.getString(1) }
             .map { SchemaMeta(catalog = null, schema = it) }
 
+    // ---------- 懒加载组 ----------
+
+    override val lazyObjectGroups: Boolean get() = true
+
+    /** 核心组：关系对象（表/物化视图/视图/序列），供编辑器补全与树首屏。 */
+    override fun loadCoreObjects(conn: Connection, schema: SchemaMeta): SchemaObjects {
+        val schemaName = schema.schema ?: "public"
+        return SchemaObjects(queryRelations(conn, schemaName))
+    }
+
+    override fun loadObjectCounts(conn: Connection, schema: SchemaMeta): Map<ObjectKind, Int> {
+        val schemaName = schema.schema ?: "public"
+        val out = linkedMapOf<ObjectKind, Int>()
+        fun add(kind: ObjectKind, n: Int) = out.merge(kind, n, Int::plus)
+        runCatching {
+            conn.prepareStatement(countsSql).use { ps ->
+                repeat(7) { ps.setString(it + 1, schemaName) }
+                ps.executeQuery().use { rs ->
+                    while (rs.next()) {
+                        val label = rs.getString(1)
+                        val sub = rs.getString(2)
+                        val cnt = rs.getInt(3)
+                        when (label) {
+                            "rel" -> add(relationKindOf(sub), cnt)
+                            "trg" -> add(ObjectKind.TRIGGER, cnt)
+                            "proc" -> add(routineKindOf(sub), cnt)
+                            "opr" -> add(ObjectKind.OPERATOR, cnt)
+                            "typ" -> add(ObjectKind.TYPE, cnt)
+                            "opc" -> add(ObjectKind.OPERATOR_CLASS, cnt)
+                            "opf" -> add(ObjectKind.OPERATOR_FAMILY, cnt)
+                        }
+                    }
+                }
+            }
+        }.onFailure { Logger.warn(it, "pg loadObjectCounts failed for {}", schemaName) }
+        return out
+    }
+
+    override fun loadObjectsForKind(conn: Connection, schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> {
+        val schemaName = schema.schema ?: "public"
+        return when (kind) {
+            ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW, ObjectKind.SEQUENCE ->
+                queryRelations(conn, schemaName)[kind].orEmpty()
+            ObjectKind.TRIGGER -> queryTriggers(conn, schemaName)
+            ObjectKind.ROUTINE, ObjectKind.AGGREGATE -> queryRoutines(conn, schemaName)[kind].orEmpty()
+            ObjectKind.OPERATOR, ObjectKind.TYPE, ObjectKind.OPERATOR_CLASS, ObjectKind.OPERATOR_FAMILY ->
+                queryCatalogGroups(conn, schemaName)[kind].orEmpty()
+        }
+    }
+
+    /** 全量组织探测（非懒加载调用方 / 兜底用）。 */
     override fun loadObjects(conn: Connection, schema: SchemaMeta): SchemaObjects {
         val schemaName = schema.schema ?: "public"
-        val grouped = mutableMapOf<ObjectKind, MutableList<DbObjectMeta>>()
-        fun bucket(kind: ObjectKind) = grouped.getOrPut(kind) { mutableListOf() }
+        val grouped = linkedMapOf<ObjectKind, MutableList<DbObjectMeta>>()
+        fun merge(map: Map<ObjectKind, List<DbObjectMeta>>) {
+            map.forEach { (k, v) -> grouped.getOrPut(k) { mutableListOf() } += v }
+        }
+        merge(queryRelations(conn, schemaName))
+        val triggers = queryTriggers(conn, schemaName)
+        if (triggers.isNotEmpty()) merge(mapOf(ObjectKind.TRIGGER to triggers))
+        merge(queryRoutines(conn, schemaName))
+        merge(queryCatalogGroups(conn, schemaName))
+        return SchemaObjects(grouped.filterValues { it.isNotEmpty() }.mapValues { (_, v) -> v.sortedBy { it.name } })
+    }
 
+    private fun queryRelations(conn: Connection, schemaName: String): Map<ObjectKind, List<DbObjectMeta>> {
+        val grouped = linkedMapOf<ObjectKind, MutableList<DbObjectMeta>>()
         conn.prepareStatement(relationsSql).use { ps ->
             ps.setString(1, schemaName)
             ps.executeQuery().use { rs ->
                 while (rs.next()) {
                     val name = rs.getString(1) ?: continue
-                    val kind = when (rs.getString(2)) {
-                        "m" -> ObjectKind.MATERIALIZED_VIEW
-                        "v" -> ObjectKind.VIEW
-                        "S" -> ObjectKind.SEQUENCE
-                        else -> ObjectKind.TABLE // r / p / f
-                    }
-                    bucket(kind) += DbObjectMeta(name, kind)
+                    val kind = relationKindOf(rs.getString(2))
+                    grouped.getOrPut(kind) { mutableListOf() } += DbObjectMeta(name, kind)
                 }
             }
         }
+        return grouped.mapValues { (_, v) -> v.sortedBy { it.name } }
+    }
+
+    private fun queryTriggers(conn: Connection, schemaName: String): List<DbObjectMeta> {
+        val out = mutableListOf<DbObjectMeta>()
         runCatching {
             conn.prepareStatement(triggersSql).use { ps ->
                 ps.setString(1, schemaName)
                 ps.executeQuery().use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
-                        bucket(ObjectKind.TRIGGER) += DbObjectMeta(name, ObjectKind.TRIGGER, rs.getString(2))
+                        out += DbObjectMeta(name, ObjectKind.TRIGGER, rs.getString(2))
                     }
                 }
             }
         }.onFailure { Logger.warn(it, "pg triggers query failed for {}", schemaName) }
+        return out.sortedBy { it.name }
+    }
+
+    private fun queryRoutines(conn: Connection, schemaName: String): Map<ObjectKind, List<DbObjectMeta>> {
+        val grouped = linkedMapOf<ObjectKind, MutableList<DbObjectMeta>>()
         runCatching {
             conn.prepareStatement(routinesSql).use { ps ->
                 ps.setString(1, schemaName)
                 ps.executeQuery().use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
-                        val kind = if (rs.getString(2) == "a") ObjectKind.AGGREGATE else ObjectKind.ROUTINE
-                        bucket(kind) += DbObjectMeta(name, kind)
+                        val kind = routineKindOf(rs.getString(2))
+                        grouped.getOrPut(kind) { mutableListOf() } += DbObjectMeta(name, kind)
                     }
                 }
             }
         }.onFailure { Logger.warn(it, "pg routines query failed (prokind 需 PG11+) for {}", schemaName) }
+        return grouped.mapValues { (_, v) -> v.sortedBy { it.name } }
+    }
+
+    /** 操作符 / 类型 / 操作符类 / 操作符族：按 schema 过滤（修复此前未绑定 `?` 导致整块失败的问题）。 */
+    private fun queryCatalogGroups(conn: Connection, schemaName: String): Map<ObjectKind, List<DbObjectMeta>> {
+        val grouped = linkedMapOf<ObjectKind, MutableList<DbObjectMeta>>()
+        fun load(sql: String, kind: ObjectKind) {
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, schemaName)
+                ps.executeQuery().use { rs ->
+                    while (rs.next()) {
+                        rs.getString(1)?.let { name -> grouped.getOrPut(kind) { mutableListOf() } += DbObjectMeta(name, kind) }
+                    }
+                }
+            }
+        }
         runCatching {
-            queryStrings(conn, operatorsSql) { it.getString(1) }
-                .forEach { bucket(ObjectKind.OPERATOR) += DbObjectMeta(it, ObjectKind.OPERATOR) }
-            queryStrings(conn, typesSql) { it.getString(1) }
-                .forEach { bucket(ObjectKind.TYPE) += DbObjectMeta(it, ObjectKind.TYPE) }
-            queryStrings(conn, opClassesSql) { it.getString(1) }
-                .forEach { bucket(ObjectKind.OPERATOR_CLASS) += DbObjectMeta(it, ObjectKind.OPERATOR_CLASS) }
-            queryStrings(conn, opFamiliesSql) { it.getString(1) }
-                .forEach { bucket(ObjectKind.OPERATOR_FAMILY) += DbObjectMeta(it, ObjectKind.OPERATOR_FAMILY) }
+            load(operatorsSql, ObjectKind.OPERATOR)
+            load(typesSql, ObjectKind.TYPE)
+            load(opClassesSql, ObjectKind.OPERATOR_CLASS)
+            load(opFamiliesSql, ObjectKind.OPERATOR_FAMILY)
         }.onFailure { Logger.warn(it, "pg object catalog queries failed for {}", schemaName) }
-        val objects = grouped.mapValues { (_, v) -> v.sortedBy { it.name } }
-            .filterValues { it.isNotEmpty() }
-        return SchemaObjects(objects)
+        return grouped.mapValues { (_, v) -> v.sortedBy { it.name } }
     }
 
     private val columnsSql = """
@@ -264,3 +388,15 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
     override fun sessionContextSql(schema: jdbc.model.SchemaMeta): String? =
         schema.schema?.let { "SET search_path TO ${quoteIdent(it)}" }
 }
+
+/** pg_class.relkind → 对象类型（纯函数，供组计数与关系探测共用）。 */
+internal fun relationKindOf(relkind: String?): ObjectKind = when (relkind) {
+    "m" -> ObjectKind.MATERIALIZED_VIEW
+    "v" -> ObjectKind.VIEW
+    "S" -> ObjectKind.SEQUENCE
+    else -> ObjectKind.TABLE // r / p / f
+}
+
+/** pg_proc.prokind → 对象类型（a 聚合，其余函数/过程/窗口统一归 ROUTINE）。 */
+internal fun routineKindOf(prokind: String?): ObjectKind =
+    if (prokind == "a") ObjectKind.AGGREGATE else ObjectKind.ROUTINE

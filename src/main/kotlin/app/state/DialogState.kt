@@ -22,6 +22,15 @@ sealed interface FolderDialogRequest {
 /** 控制台重命名弹窗请求。 */
 data class ConsoleRenameRequest(val consoleId: String, val currentName: String)
 
+/**
+ * 结果提交前预览（P7）：展示将要执行的参数化 UPDATE（只读、不执行），确认后 [onConfirm]。
+ * [statements] 由 `RowUpdater.renderUpdateSql` 渲染，仅供人工核对定位条件与目标值。
+ */
+data class CommitPreviewRequest(
+    val statements: List<String>,
+    val onConfirm: () -> Unit,
+)
+
 /** 对象定义（DDL）浮窗请求（Ctrl+Q / 树右键）。 */
 data class TableDdlRequest(
     val profile: ConnectionProfile,
@@ -49,6 +58,7 @@ class DialogState {
     var folderDialog by mutableStateOf<FolderDialogRequest?>(null)
     var consoleRename by mutableStateOf<ConsoleRenameRequest?>(null)
     var tableDdl by mutableStateOf<TableDdlRequest?>(null)
+    var commitPreview by mutableStateOf<CommitPreviewRequest?>(null)
     var confirm by mutableStateOf<ConfirmRequest?>(null)
     /** 设置窗口显隐。 */
     var showSettings by mutableStateOf(false)

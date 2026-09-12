@@ -9,13 +9,13 @@
 ## 1. 现状总览（截至当前）
 
 单窗口 JDBC 数据库客户端，主闭环 + 体验打磨 + 工程化均已落地；剩余工作集中在
-**外部数据源扩展**与**发布验证**两条主线，以及若干深化项。
+**发布验证（P8）**一条主线，以及若干可选深化项（集群级目录 / 行锁 / 诊断入口 P9）。
 
 | 维度 | 现状 |
 |---|---|
-| 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数；PG 细分 11 类；组可折叠；展开持久化 |
+| 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数；PG 细分 11 类；组可折叠；展开持久化；**PG 组正文按需懒加载 + 计数前显（P6）** |
 | 编辑执行 | 高亮 + 行号 + 当前行高亮 + 关键字/表/列补全；选中执行、多语句多 Tab；Ctrl+Q DDL；Ctrl+S 保存 |
-| 结果区 | 网格滚动/列宽拖动/单元格选中复制/转置/CSV（含全量流式）；**单元格编辑 + 提交 + 刷新 + 撤销**（Phase 0–3） |
+| 结果区 | 网格滚动/列宽拖动/单元格选中复制/转置/CSV（含全量流式）；**单元格编辑 + 提交（带 UPDATE 预览，P7）+ 刷新 + 撤销**（Phase 0–3） |
 | 查看器 | 长文本弹窗、JSON 树视图高亮折叠、Base64 图片预览 + MD5 |
 | 控制台 | 跨源多标签；独立执行目标；光标记忆（持久化到 `consoles.caret_start/end`）；关闭可重开 |
 | 安全/存储 | app.db SQLite v8（迁移 + FK 级联）；列缓存 v7；密码 AES-256-GCM；连接档案 JSON 导出/导入；控制台正文独立 .sql |
@@ -42,7 +42,8 @@
 - **P1 执行闭环** ✅：长查询取消（Esc）、`sql_history` 落库 + 历史面板（查看/插入光标处）、>1000 行截断提示 + 全量流式 CSV 导出。
 - **P2 编辑/结果体验** ✅：关键字 + 表/视图 + **列名**补全（`app/ui/SqlEditing.kt`，按需拉取 + 磁盘缓存 `column_cache`）、`Ctrl+T` 转置、单元格选中/Ctrl+C/右键复制与「复制本行 → INSERT」、行号/当前行高亮、`Ctrl+Q` DDL（语法高亮）、拖拽到边缘自动滚动。
 - **P3 树深化 + 连接安全** ✅：`ObjectKind` 11 类分组计数（PG 生效，其余库只出自身类型）、密码 AES-256-GCM（密钥 `secret.key` 600，`enc:v1:`，存量明文自动迁移）。
-- **结果可编辑** ✅（Phase 0–3）：`QueryColumn` 来源元数据、`ColumnMeta.primaryKey`（无 PK 回落唯一索引）、`ResultEditPlan`/`RowUpdater` 纯逻辑 + 单测；行内编辑（Ctrl+双击）、长值/多行对话框（Phase 3）、提交（参数化 UPDATE + 单事务 + affected=1 校验）、提交后固定刷新、撤销全部、退出/切换守卫（`DiscardResultEdits`）、未提交琥珀底纹。
+- **P6 树懒加载** ✅：`SchemaObjects.counts` + 方言能力 `lazyObjectGroups`（PG 开启）——schema 展开只取计数 + 核心类型（表/视图/序列），重类型组展开时才拉；非 PG 默认回落全量、行为不变；缓存无迁移。
+- **结果可编辑** ✅（Phase 0–3）：`QueryColumn` 来源元数据、`ColumnMeta.primaryKey`（无 PK 回落唯一索引）、`ResultEditPlan`/`RowUpdater` 纯逻辑 + 单测；行内编辑（Ctrl+双击）、长值/多行对话框（Phase 3）、提交（参数化 UPDATE + 单事务 + affected=1 校验）、**提交前 UPDATE 预览确认（P7）**、提交后固定刷新、撤销全部、退出/切换守卫（`DiscardResultEdits`）、未提交琥珀底纹。
 - **查看器增强** ✅：JSON 识别 + 树视图、Base64 图片 + MD5（`app/dialog/JsonTreeView.kt`、`ViewerDialogs.kt`）。
 - **控制台模型** ✅（原 M4 扩展）：`consoles` v8（closed 隐藏可重开）、每控制台执行目标、光标记忆（v6，防抖 1.5s + 切换/退出强制落库，写光标不动 `updated_at`）。
 - **设置窗口** ✅：顶栏齿轮 → 独立 DialogWindow，编辑器字体族/字号 + 实时预览，`editor.properties` 持久化，版本号 `v<NAME>-<COMMIT>`。
@@ -52,9 +53,9 @@
 
 ## 4. 待实施路线（详细）
 
-优先级逻辑：P4 / P5 已落地；下一步收发布闭环（Deb + 干净环境），
-然后按价值做深化（树大库性能 → 结果编辑打磨 → 诊断入口）。
-剩余阶段状态：P4 ✅ / P5 ✅ / P6–P9 未开始。
+优先级逻辑：P4–P7 已落地；下一步收发布闭环（Deb + 干净环境 → P8），
+再做诊断入口（P9）与两端可选深化（集群级目录 / 行锁）。
+剩余阶段状态：P4 ✅ / P5 ✅ / P6 ✅（按组懒加载）/ P7 部分（预览 ✅，行锁未做）/ P8–P9 未开始。
 
 ### P4 数据源扩展机制（外部驱动，SQL Server / Oracle）✅ 已实现（待真实库人工验收）
 
@@ -110,26 +111,35 @@
 
 ---
 
-### P6 树深化（大库性能 + 集群级对象）
+### P6 树深化（大库性能 + 集群级对象）✅ 按组懒加载已实现
 
-**背景**：组折叠已实现（`DbTreeModels.buildTreeRows` 里对象行只在组展开时渲染），但
-**对象清单仍随 schema 展开一次性拉取**（`loadObjects` 一次返回全部类型）——routines 上千时首屏慢。
-另：集群级对象目录（DataGrip 的 Database Objects / Server Objects）未做。
+**背景**：组折叠早已实现（对象行只在组展开时渲染），但**对象清单仍随 schema 展开一次性拉取**
+（`loadObjects` 一次返回全部类型）——routines 上千时首屏慢。本轮把「清单」也拆成按组懒加载。
 
-**范围**
-1. **按组懒加载**：schema 展开只拉「组 + 计数」，组展开时才拉该类型对象。
-   - 轻量计数：PG 用 `pg_class`/`pg_proc` 按 relkind/prokind `GROUP BY` 一次取全；
-     MySQL 用 `information_schema` 计数；其余库可先按 Generic 计数。
-   - 落点：`jdbc/DbDialect.loadObjects` 拆出 `loadObjectCounts` + `loadObjectsForKind`，
-     `SchemaObjects` 支持按 kind 增量填充；`tree/` 组行空数据时出「加载中/尚未加载」占位；
-     缓存 key 提升为 `(profileId, schema, groupKind)`。
-2. **集群级目录**（可选/低优先）：PG 的 extensions/casts/languages（Database Objects）、
-   roles/tablespaces（Server Objects）；需跨 schema 聚合查询，类型加入 `ObjectKind` 与树顶层分组。
-3. **（观察）表子节点**：表下展开列 / 索引 / 约束（当前列信息只服务补全缓存，不在树展示）。
+**已落地**
+- `SchemaObjects` 新增 `counts: Map<ObjectKind, Int>` 与 `countOf` / `isLoaded` 辅助：
+  支持「有计数、无正文」的增量状态（已加载组以实际条数为准，未加载组用计数）。
+- 方言新增能力开关 `DbDialect.lazyObjectGroups`（默认 false）与三个可覆写方法
+  `loadObjectCounts` / `loadCoreObjects` / `loadObjectsForKind`（**默认回落全量 `loadObjects`**，
+  非懒加载库行为完全不变）。
+- **Postgres 唯一开启懒加载**：counts 走单条 UNION 计数查询；核心类型
+  （表/视图/物化视图/序列，补全与首屏需要）随 schema 展开预取，重类型
+  （触发器/例程/聚合/操作符/类型/操作符类/操作符族）**组展开时才查**；每条查询都绑定 schema 参数
+  （顺带修掉旧版 `queryStrings` 未绑定 `?` 导致目录组静默失败的潜伏 bug）。
+- `ConnectionsState`：懒加载分支（连接就绪时拉 schema + counts + core）、新增 `ensureGroupObjects`
+  与 `groupObjectsLoadingOf`（内存 `groupLoading`）。
+- 树：组行显示 `countOf`（未加载也有计数）；展开未加载组时出「正在加载…」占位，未触发时出「尚未加载」；
+  `Main.kt` 的 `OBJECT_GROUP` 展开回调触发 `ensureGroupObjects`。
+- `MetaCache` 载荷本就按 `SchemaObjects` 序列化（`encodeDefaults=true`），`counts` 自动持久化，**无需迁移**。
 
-**验收**
-- 构造含上千例程的 schema：schema 展开秒回（只出组行 + 计数），展开 routines 组才加载；
-- 缓存命中切换不重复查询；非 PG 库视觉不回退；`gradle smokeJdbc`/`test` 绿。
+**未做（保留，低优先）**
+- 集群级目录（Database Objects：casts/extensions/languages；Server Objects：roles/tablespaces 等）
+  需跨 schema 聚合，未排期。
+- 表子节点（列/索引/约束展开）——列信息仍只服务补全缓存，树不展示。
+
+**验收**：`gradle test`（`SchemaObjects` 计数/占位、PG relkind/prokind 映射、树行计数与占位、
+SQLite 默认计数/按组回落）+ `gradle smokeJdbc` 绿；非 PG 库视觉与行为不变。
+含上千例程的实库人工验收待做。
 
 ---
 
@@ -137,10 +147,14 @@
 
 **已实现**：行内 + 对话框编辑、提交（参数化 + 单事务 + affected=1）、提交后刷新、撤销全部、守卫（见 `doc/EDITABLE_RESULT.md` §13）。
 
+**本轮新增**：提交前 UPDATE 预览（已完成）。
+
 **剩余**
-1. **UPDATE 预览**：提交前弹窗展示 `RowUpdater.renderUpdateSql` 生成的参数化 SQL（及参数列表），
-   确认后再执行；`renderUpdateSql` 已存在，只差 UI 接线与确认弹窗。
-2. **行锁**（可选）：刷新编辑结果时可用 `SELECT … FOR UPDATE`（PG/MySQL/Oracle 支持）降低并发覆盖；
+1. ~~**UPDATE 预览**~~ ✅ 已实现：点「提交」不再直接执行——先弹 `CommitPreviewDialog`
+   （显式尺寸 `DialogWindow`，SQL 高亮只读）展示 `RowUpdater.renderUpdateSql` 渲染的逐行 UPDATE，
+   确认后才真正提交；取消不产生任何修改。`ConsoleState.previewCommit` 为纯只读渲染
+   （与实际提交共用 `buildUpdatePlans`，两者天然一致）。
+2. **行锁**（可选，未做）：刷新编辑结果时可用 `SELECT … FOR UPDATE`（PG/MySQL/Oracle 支持）降低并发覆盖；
    当前靠提交时 `affected==1` 检测（`0`=行被删/改、`>1`=定位不唯一）。需评估对只读查询的副作用。
 3. **明确仍不做**：新增行 / 删除行；富类型（BLOB/图片/JSON 结构）就地编辑仍走查看器。
    若后续要支持，需先设计主键生成、批量删除二次确认与事务边界。

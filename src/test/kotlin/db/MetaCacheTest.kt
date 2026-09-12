@@ -1,5 +1,7 @@
 package db
 
+import jdbc.model.DbObjectMeta
+import jdbc.model.ObjectKind
 import jdbc.model.SchemaMeta
 import jdbc.model.SchemaObjects
 import org.junit.jupiter.api.io.TempDir
@@ -39,6 +41,25 @@ class MetaCacheTest {
         assertEquals(schemas, hit.schemas)
         assertEquals(objects, hit.objects)
         assertFalse(hit.stale)
+    }
+
+    @Test
+    fun `partial counts survive round trip`() {
+        val mc = MetaCache(migratedDb())
+        val p = profile()
+        val partial = mapOf(
+            SchemaMeta(null, "main").key to SchemaObjects(
+                objects = mapOf(ObjectKind.TABLE to listOf(DbObjectMeta("t", ObjectKind.TABLE))),
+                counts = mapOf(ObjectKind.TABLE to 1, ObjectKind.ROUTINE to 1200),
+            ),
+        )
+        mc.save(p, schemas, partial)
+        val hit = mc.load(p)
+        assertNotNull(hit)
+        // counts 随缓存持久化：重开应用后组行仍能直接显示计数，不必重查
+        assertEquals(partial, hit.objects)
+        assertEquals(1200, hit.objects.values.single().countOf(ObjectKind.ROUTINE))
+        assertFalse(hit.objects.values.single().isLoaded(ObjectKind.ROUTINE))
     }
 
     @Test

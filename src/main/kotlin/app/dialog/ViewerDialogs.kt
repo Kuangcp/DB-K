@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
+import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
 import app.ui.applyJsonHighlightRules
 import app.ui.applySqlHighlightRules
@@ -532,6 +533,54 @@ fun CellViewerDialog(
             ) {
                 TextButton(onClick = { onCopy(content, "已复制单元格内容") }) { Text("复制全部") }
                 TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        }
+    }
+}
+
+/**
+ * 结果提交预览（P7）：列出将要执行的参数化 UPDATE（SQL 高亮只读），确认后才真正提交。
+ * 目的：让用户在"行定位条件（WHERE）"与"目标值"上留一个回看机会，避免误改。
+ * 与 [DdlDialog] 一样用**显式尺寸**的 [DialogWindow]（AlertDialog 的 pack-to-content 会破坏滚动）。
+ */
+@Composable
+fun CommitPreviewDialog(
+    request: CommitPreviewRequest,
+    onDismiss: () -> Unit,
+) {
+    val sql = remember(request) { request.statements.joinToString("\n") }
+    DialogWindow(
+        onCloseRequest = onDismiss,
+        state = rememberDialogState(size = DpSize(720.dp, 520.dp)),
+        title = "提交预览 · ${request.statements.size} 条 UPDATE",
+        resizable = true,
+        onPreviewKeyEvent = escapeCloses(onDismiss),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colors.background)
+                .padding(12.dp),
+        ) {
+            Text(
+                "将按主键定位、在同一事务中执行下列语句；任一语句影响行数 ≠ 1 则整体回滚。",
+                style = MaterialTheme.typography.caption,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            SqlCodeText(sql, Modifier.weight(1f).fillMaxWidth())
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(
+                    onClick = {
+                        onDismiss()
+                        request.onConfirm()
+                    },
+                ) { Text("提交", color = MaterialTheme.colors.primary) }
             }
         }
     }

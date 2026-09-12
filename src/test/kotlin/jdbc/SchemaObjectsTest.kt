@@ -69,6 +69,29 @@ class SchemaObjectsTest {
     }
 
     @Test
+    fun `partial load exposes counts without bodies`() {
+        val obj = SchemaObjects(
+            objects = mapOf(ObjectKind.TABLE to listOf(DbObjectMeta("a", ObjectKind.TABLE))),
+            counts = mapOf(ObjectKind.TABLE to 5, ObjectKind.ROUTINE to 1200),
+        )
+        // 已加载组以实际条数为准（最可信），未加载组用计数
+        assertEquals(1, obj.countOf(ObjectKind.TABLE))
+        assertEquals(1200, obj.countOf(ObjectKind.ROUTINE))
+        assertEquals(0, obj.countOf(ObjectKind.VIEW))
+        assertEquals(1201, obj.total)
+        assertTrue(obj.isLoaded(ObjectKind.TABLE))
+        assertFalse(obj.isLoaded(ObjectKind.ROUTINE))
+        assertFalse(obj.isEmpty)
+    }
+
+    @Test
+    fun `zero counts are still empty`() {
+        val obj = SchemaObjects(counts = mapOf(ObjectKind.ROUTINE to 0))
+        assertTrue(obj.isEmpty)
+        assertEquals(0, obj.total)
+    }
+
+    @Test
     fun `previewable kinds are table view materialized view`() {
         assertTrue(ObjectKind.TABLE.isPreviewable())
         assertTrue(ObjectKind.VIEW.isPreviewable())
