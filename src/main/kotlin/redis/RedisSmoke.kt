@@ -3,6 +3,8 @@ package redis
 import db.ConnectionProfile
 import db.DbType
 import engine.model.ObjectKind
+import engine.model.ObjectSearch
+import engine.model.ObjectSearchResult
 import engine.model.SchemaMeta
 import org.tinylog.Logger
 import redis.clients.jedis.exceptions.JedisConnectionException
@@ -74,6 +76,33 @@ fun main() {
         require(preview == "HGETALL smoke:hash") { "预览命令异常：$preview" }
         require(RedisProtocol.dangerousCommand("FLUSHALL") == "FLUSHALL")
         checks += "preview+danger"
+
+        // 搜索：pattern（SCAN MATCH）+ 客户端类型过滤 + TTL
+        val all = session.searchObjects(db0, ObjectKind.KEY, ObjectSearch(pattern = "smoke:*"))
+        require(all.objects.size == 5) { "SCAN MATCH smoke:* = ${all.objects.size}" }
+        require(all.objects.any { it.name == "smoke:str" && it.detail == "string" }) { "缺少 smoke:str" }
+        val onlyString = session.searchObjects(db0, ObjectKind.KEY, ObjectSearch(pattern = "smoke:s*", type = "string"))
+        require(onlyString.objects.map { it.name } == listOf("smoke:str")) { "类型过滤异常：${onlyString.objects.map { it.name }}" }
+        val none = session.searchObjects(db0, ObjectKind.KEY, ObjectSearch(pattern = "nope:*"))
+        require(none.objects.isEmpty() && none.finished) { "空匹配异常：${none.objects.size}" }
+        session.runStatement("SET smoke:ttl v EX 100", null)
+        val ttlKey = session.searchObjects(db0, ObjectKind.KEY, ObjectSearch(pattern = "smoke:ttl")).objects.single()
+        val ttl = ttlKey.ttlSeconds
+        require(ttl != null && ttl in 1..100) { "TTL 异常：$ttl" }
+        checks += "search+type+ttl"
+
+        // 分页游标：造 600 个键，两页合计应完整（去重后）
+        val mset = (1..600).joinToString(" ") { "smoke:p:$it v" }
+        session.runStatement("MSET $mset", null)
+        val page1 = session.searchObjects(db0, ObjectKind.KEY, ObjectSearch(pattern = "smoke:p:*"))
+        val page2 = if (!page1.finished) {
+            session.searchObjects(db0, ObjectKind.KEY, ObjectSearch(pattern = "smoke:p:*", cursor = page1.nextCursor))
+        } else {
+            ObjectSearchResult(emptyList())
+        }
+        val paged = (page1.objects + page2.objects).map { it.name }.toSet()
+        require(paged.size == 600) { "分页合计 ${paged.size} != 600（page1=${page1.objects.size}, finished=${page1.finished}）" }
+        checks += "paging(${page1.objects.size}+${page2.objects.size})"
 
         // 取消 → 惰性重连后仍可执行
         require(session.cancel()) { "cancel 未生效" }

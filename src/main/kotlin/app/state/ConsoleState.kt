@@ -622,6 +622,11 @@ class ConsoleState(
      * （不切换，用连接默认）。目录需已加载（连接后）；加载中时宁可不动也不误切。
      */
     fun sessionContextSqlFor(console: ConsoleRecord, profile: db.ConnectionProfile): String? {
+        // 「命名空间即过滤器」（Redis DB）：执行目标 = 连接级当前 DB，与 console.target 解耦
+        if (connectionsState.flatNamespaceOf(profile.id)) {
+            val ns = connectionsState.activeNamespaceOf(profile.id) ?: return null
+            return connectionsState.sessionOf(profile.id)?.sessionContextSql(ns)
+        }
         val t = console.target
         if (t.isBlank()) return null
         val schemas = connectionsState.schemasOf(profile.id)

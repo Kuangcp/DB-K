@@ -17,6 +17,8 @@ data class BackendCapabilities(
     val sessionContext: Boolean = false,
     /** 对象组按需懒加载（P6）。 */
     val lazyObjectGroups: Boolean = false,
+    /** 命名空间作为「过滤器」而非树层级（如 Redis 的 DB）：树不铺命名空间行，仅看当前一个。 */
+    val namespaceAsFilter: Boolean = false,
     /** 编辑器语言（决定高亮 / 补全 / 语句切分）。 */
     val editorLanguage: EditorLanguage = EditorLanguage.SQL,
 )

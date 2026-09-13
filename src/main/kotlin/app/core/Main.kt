@@ -224,6 +224,14 @@ private fun AppBody(
     }
 
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
+    // Redis key pattern 防抖搜索：输入停 300ms 后才重扫（类型切换立即生效）
+    var keySearchRequest by remember { mutableStateOf<Pair<ConnectionProfile, String>?>(null) }
+    LaunchedEffect(keySearchRequest) {
+        val (p, pattern) = keySearchRequest ?: return@LaunchedEffect
+        delay(300)
+        connectionsState.setObjectFilter(p, pattern, connectionsState.objectSearchOf(p.id).type)
+    }
+
     val rows = buildTreeRows(
         treeState.folders,
         treeState.connections,
@@ -384,7 +392,7 @@ private fun AppBody(
             }
         }
         // 会话型目标（Redis DB / 多 schema）：预览对象的命名空间随之切换
-        if (session.capabilities.sessionContext && row.schema != null) {
+        if (!connectionsState.flatNamespaceOf(p.id) && session.capabilities.sessionContext && row.schema != null) {
             consoleState.setTarget(target.id, row.schema.displayName)
         }
         // setTarget 后重取记录（ConsoleRecord 不可变，旧引用 target 字段仍是空）
@@ -602,6 +610,18 @@ private fun AppBody(
                             }
                         },
                         onImportProfiles = { importProfiles() },
+                        onSelectDb = { p, db ->
+                            val ns = connectionsState.schemasOf(p.id).orEmpty()
+                                .firstOrNull { it.displayName.equals(db, ignoreCase = true) }
+                            if (ns != null) scope.launch { connectionsState.setActiveDb(p, ns) }
+                        },
+                        onSelectKeyType = { p, type ->
+                            scope.launch {
+                                connectionsState.setObjectFilter(p, connectionsState.objectSearchOf(p.id).pattern, type)
+                            }
+                        },
+                        onKeyPatternChange = { p, pattern -> keySearchRequest = p to pattern },
+                        onLoadMoreObjects = { p -> scope.launch { connectionsState.loadMoreObjects(p) } },
                     )
                     TreeSplitter { delta -> treeWidthDp = (treeWidthDp + delta).coerceIn(180f, 680f) }
                     val runState = activeConsole?.let { consoleState.runStateOf(it.id) } ?: ConsoleRunUi()
@@ -633,12 +653,32 @@ private fun AppBody(
                         schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
                         supportsTargetSwitch =
                             activeProfile?.let { connectionsState.sessionOf(it.id)?.capabilities?.sessionContext } == true,
-                        targetSchema = activeConsole?.target.orEmpty(),
+                        targetLabel = if (activeProfile?.let { connectionsState.flatNamespaceOf(it.id) } == true) "DB" else "目标",
+                        targetAllowDefault = activeProfile?.let { !connectionsState.flatNamespaceOf(it.id) } ?: true,
+                        targetSchema = activeProfile?.let { p ->
+                            if (connectionsState.flatNamespaceOf(p.id)) {
+                                connectionsState.activeNamespaceOf(p.id)?.displayName.orEmpty()
+                            } else {
+                                consoleState.activeConsole()?.target.orEmpty()
+                            }
+                        }.orEmpty(),
                         onSelectTarget = { t ->
-                            val c = consoleState.activeConsole()
-                            if (c != null) {
-                                consoleState.setTarget(c.id, t)
-                                toastState.show(if (t.isBlank()) "已恢复默认执行目标（连接库）" else "执行目标已设为：$t")
+                            val p = activeProfile
+                            if (p != null && connectionsState.flatNamespaceOf(p.id)) {
+                                val ns = connectionsState.schemasOf(p.id).orEmpty()
+                                    .firstOrNull { it.displayName.equals(t, ignoreCase = true) }
+                                if (ns != null) {
+                                    scope.launch { connectionsState.setActiveDb(p, ns) }
+                                    toastState.show("已切换到 DB：${ns.displayName}")
+                                }
+                            } else {
+                                val c = consoleState.activeConsole()
+                                if (c != null) {
+                                    consoleState.setTarget(c.id, t)
+                                    toastState.show(
+                                        if (t.isBlank()) "已恢复默认执行目标（连接库）" else "执行目标已设为：$t",
+                                    )
+                                }
                             }
                         },
                         onRenameConsole = { c -> dialogState.consoleRename = ConsoleRenameRequest(c.id, c.name) },

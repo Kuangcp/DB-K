@@ -4,6 +4,7 @@ import db.ConnectionProfile
 import db.FolderRow
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
+import engine.model.ObjectSearch
 import engine.model.SQL_OBJECT_KINDS
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
@@ -12,6 +13,10 @@ import engine.model.displayNoun
 /** 左侧树行类别。M2：连接行之下支持 schema / 对象组 / 对象。 */
 enum class TreeRowKind {
     FOLDER, CONNECTION, SCHEMA, OBJECT_GROUP, DB_OBJECT, PLACEHOLDER,
+    /** Redis 等「命名空间即过滤器」后端的过滤条（DB / 类型 / pattern）。 */
+    FILTER,
+    /** 分页「继续扫描」行（Redis `SCAN` 游标续页）。 */
+    LOAD_MORE,
 }
 
 /** 连接运行状态（供状态点/连接入口展示；树层只做展示判断，不持有连接）。 */
@@ -48,6 +53,18 @@ data class TreeRowInfo(
     val dbObject: DbObjectMeta? = null,
     /** PLACEHOLDER 行：LOADING 显示 spinner，ERROR 红字，INFO 灰字。 */
     val placeholderKind: PlaceholderKind = PlaceholderKind.NONE,
+    /** FILTER 行（Redis 过滤条）。 */
+    val filter: TreeFilterInfo? = null,
+    /** 是否可展开/收起（FILTER/LOAD_MORE/强制展开的键组 = false）。 */
+    val expandable: Boolean = true,
+)
+
+/** 「命名空间即过滤器」后端的过滤条状态：DB 下拉 / 类型下拉 / key pattern。 */
+data class TreeFilterInfo(
+    val dbOptions: List<String>,
+    val db: String,
+    val pattern: String,
+    val type: String?,
 )
 
 /** 连接运行时只读视图：由 app 层 ConnectionsState 实现（compose 快照状态在其内部被读）。 */
@@ -61,6 +78,18 @@ interface ConnectionRuntimeView {
 
     /** 该连接支持的对象组顺序（非 SQL 后端可覆写，如 Redis 仅「键」）。 */
     fun objectGroupsOf(profileId: String): List<ObjectKind> = SQL_OBJECT_KINDS
+
+    /** 命名空间是否作为「过滤器」而非树层级（Redis DB）。 */
+    fun flatNamespaceOf(profileId: String): Boolean = false
+
+    /** 当前查看的命名空间（过滤器模式；SQL 后端为 null）。 */
+    fun activeNamespaceOf(profileId: String): SchemaMeta? = null
+
+    /** 当前对象搜索条件（pattern / 类型）；SQL 后端为默认全量。 */
+    fun objectSearchOf(profileId: String): ObjectSearch = ObjectSearch()
+
+    /** 对象组是否还有下一页（「继续扫描」）。 */
+    fun objectsHasMoreOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean = false
 
     /** 某类型组正文是否正在懒加载（P6；非懒加载实现默认 false）。 */
     fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean = false
@@ -133,6 +162,8 @@ private fun appendConnection(
     val expanded = conn.id in expandedConnectionIds
     val status = runtime.statusOf(conn.id)
     val schemas = runtime.schemasOf(conn.id)
+    val flat = runtime.flatNamespaceOf(conn.id)
+    val activeNs = if (flat) runtime.activeNamespaceOf(conn.id) else null
     out += TreeRowInfo(
         key = connectionRowKey(conn.id),
         kind = TreeRowKind.CONNECTION,
@@ -141,7 +172,11 @@ private fun appendConnection(
         folderId = conn.folderId,
         profile = conn,
         expanded = expanded,
-        childCount = schemas?.size ?: 0,
+        childCount = if (flat) {
+            activeNs?.let { ns -> runtime.objectsOf(conn.id, ns.key)?.totalOf(ObjectKind.KEY) } ?: 0
+        } else {
+            schemas?.size ?: 0
+        },
         connStatus = status,
         message = runtime.statusMessageOf(conn.id),
     )
@@ -165,11 +200,53 @@ private fun appendConnection(
                     out += infoPlaceholder(depth + 1, "p:${conn.id}:schemas", "尚未加载库列表")
                 schemas.isEmpty() ->
                     out += infoPlaceholder(depth + 1, "p:${conn.id}:empty", "该连接下没有可见的库")
+                // 命名空间即过滤器（Redis）：不铺 DB 行，只渲染当前 DB 的过滤条 + 键列表
+                flat -> appendFlatNamespace(out, conn, schemas, depth + 1, expandedGroupKeys, runtime)
                 else -> schemas.forEach { schema ->
                     appendSchema(out, conn, schema, depth + 1, expandedSchemaKeys, expandedGroupKeys, runtime)
                 }
             }
         }
+    }
+}
+
+/** 「命名空间即过滤器」：过滤条（DB / 类型 / pattern）+ 当前 DB 的键列表（恒展开）。 */
+private fun appendFlatNamespace(
+    out: MutableList<TreeRowInfo>,
+    conn: ConnectionProfile,
+    schemas: List<SchemaMeta>,
+    depth: Int,
+    expandedGroupKeys: Set<String>,
+    runtime: ConnectionRuntimeView,
+) {
+    val active = runtime.activeNamespaceOf(conn.id)
+    if (active == null) {
+        out += infoPlaceholder(depth, "p:${conn.id}:ns", "尚未选择库")
+        return
+    }
+    val search = runtime.objectSearchOf(conn.id)
+    out += TreeRowInfo(
+        key = "f:${conn.id}:filter",
+        kind = TreeRowKind.FILTER,
+        depth = depth,
+        name = "",
+        profile = conn,
+        expandable = false,
+        filter = TreeFilterInfo(
+            dbOptions = schemas.map { it.displayName },
+            db = active.displayName,
+            pattern = search.pattern,
+            type = search.type,
+        ),
+    )
+    if (runtime.objectsOf(conn.id, active.key) == null) {
+        out += infoPlaceholder(
+            depth + 1,
+            "p:${conn.id}:keys",
+            runtime.statusMessageOf(conn.id) ?: "尚未加载键",
+        )
+    } else {
+        appendGroups(out, conn, active, depth, expandedGroupKeys, runtime, lockedExpanded = true)
     }
 }
 
@@ -205,45 +282,84 @@ private fun appendSchema(
             out += infoPlaceholder(depth + 1, "$rowKey:load", "尚未加载")
         objects.isEmpty ->
             out += infoPlaceholder(depth + 1, "$rowKey:empty", "（空 schema）")
-        else -> {
-            runtime.objectGroupsOf(conn.id).forEach { kind ->
-                val count = objects.countOf(kind)
-                if (count <= 0) return@forEach
-                val groupKey = "$rowKey:g:${kind.name}"
-                val groupExpanded = groupKey in expandedGroupKeys
-                out += TreeRowInfo(
-                    key = groupKey,
-                    kind = TreeRowKind.OBJECT_GROUP,
-                    depth = depth + 1,
-                    name = kind.displayNoun,
-                    profile = conn,
-                    schema = schema,
-                    groupKind = kind,
-                    expanded = groupExpanded,
-                    childCount = count,
+        else -> appendGroups(out, conn, schema, depth + 1, expandedGroupKeys, runtime, lockedExpanded = false)
+    }
+}
+
+/**
+ * 渲染某命名空间下的对象组与对象（P6 懒加载）。
+ * [lockedExpanded] = true 时组恒展开、不可收起（Redis 只有一个键组，省一次点击），末尾给「继续扫描」。
+ */
+private fun appendGroups(
+    out: MutableList<TreeRowInfo>,
+    conn: ConnectionProfile,
+    schema: SchemaMeta,
+    depth: Int,
+    expandedGroupKeys: Set<String>,
+    runtime: ConnectionRuntimeView,
+    lockedExpanded: Boolean,
+) {
+    val objects = runtime.objectsOf(conn.id, schema.key) ?: return
+    val schemaKey = schemaRowKey(conn.id, schema)
+    val search = runtime.objectSearchOf(conn.id)
+    val filtered = search.pattern != "*" || search.type != null
+    runtime.objectGroupsOf(conn.id).forEach { kind ->
+        // 分页模式：无过滤时用权威总数（DBSIZE）；有过滤时用已加载的匹配数（避免“标题 N 条却一条不列”）
+        val count = if (lockedExpanded && !filtered) objects.totalOf(kind) else objects.countOf(kind)
+        if (count <= 0) {
+            if (lockedExpanded && objects.isLoaded(kind)) {
+                out += infoPlaceholder(
+                    depth,
+                    "$schemaKey:g:${kind.name}:none",
+                    if (filtered) "无匹配的键" else "（无键）",
                 )
-                // 组折叠：对象行只在组展开时列出（大库例程上千条也不拖垮渲染）
-                if (groupExpanded) {
-                    if (!objects.isLoaded(kind)) {
-                        // P6 懒加载：正文未拉取时给占位；上层在展开时触发 ensureGroupObjects
-                        out += if (runtime.groupObjectsLoadingOf(conn.id, schema.key, kind)) {
-                            loadingPlaceholder(depth + 2, "$groupKey:load", "正在加载${kind.displayNoun}…")
-                        } else {
-                            infoPlaceholder(depth + 2, "$groupKey:load", "尚未加载")
-                        }
-                    } else {
-                        objects.forKind(kind).forEach { obj ->
-                            out += TreeRowInfo(
-                                key = "$groupKey:o:${obj.name}",
-                                kind = TreeRowKind.DB_OBJECT,
-                                depth = depth + 2,
-                                name = obj.name,
-                                profile = conn,
-                                schema = schema,
-                                dbObject = obj,
-                            )
-                        }
-                    }
+            }
+            return@forEach
+        }
+        val groupKey = "$schemaKey:g:${kind.name}"
+        val groupExpanded = lockedExpanded || groupKey in expandedGroupKeys
+        out += TreeRowInfo(
+            key = groupKey,
+            kind = TreeRowKind.OBJECT_GROUP,
+            depth = depth,
+            name = kind.displayNoun,
+            profile = conn,
+            schema = schema,
+            groupKind = kind,
+            expanded = groupExpanded,
+            childCount = count,
+            expandable = !lockedExpanded,
+        )
+        if (!groupExpanded) return@forEach
+        // 组折叠：对象行只在组展开时列出（大库例程上千条也不拖垮渲染）
+        when {
+            !objects.isLoaded(kind) && runtime.groupObjectsLoadingOf(conn.id, schema.key, kind) ->
+                // P6 懒加载：正文未拉取时给占位；上层在展开时触发 ensureGroupObjects
+                out += loadingPlaceholder(depth + 1, "$groupKey:load", "正在加载${kind.displayNoun}…")
+            !objects.isLoaded(kind) ->
+                out += infoPlaceholder(depth + 1, "$groupKey:load", "尚未加载")
+            else -> {
+                objects.forKind(kind).forEach { obj ->
+                    out += TreeRowInfo(
+                        key = "$groupKey:o:${obj.name}",
+                        kind = TreeRowKind.DB_OBJECT,
+                        depth = depth + 1,
+                        name = obj.name,
+                        profile = conn,
+                        schema = schema,
+                        dbObject = obj,
+                    )
+                }
+                if (lockedExpanded && runtime.objectsHasMoreOf(conn.id, schema.key, kind)) {
+                    out += TreeRowInfo(
+                        key = "$groupKey:more",
+                        kind = TreeRowKind.LOAD_MORE,
+                        depth = depth + 1,
+                        name = "继续扫描…",
+                        profile = conn,
+                        schema = schema,
+                        groupKind = kind,
+                    )
                 }
             }
         }

@@ -92,6 +92,19 @@ class SchemaObjectsTest {
     }
 
     @Test
+    fun `totalOf prefers authoritative counts for paginated groups`() {
+        val obj = SchemaObjects(
+            objects = mapOf(ObjectKind.KEY to listOf(DbObjectMeta("k", ObjectKind.KEY))),
+            counts = mapOf(ObjectKind.KEY to 42),
+        )
+        // 已加载条数 vs 权威总数（DBSIZE）
+        assertEquals(1, obj.countOf(ObjectKind.KEY))
+        assertEquals(42, obj.totalOf(ObjectKind.KEY))
+        // 无 counts 时回落到已加载条数
+        assertEquals(1, SchemaObjects(objects = obj.objects).totalOf(ObjectKind.KEY))
+    }
+
+    @Test
     fun `previewable kinds include sql objects and redis keys`() {
         assertTrue(ObjectKind.TABLE.isPreviewable())
         assertTrue(ObjectKind.VIEW.isPreviewable())

@@ -172,6 +172,10 @@ fun SqlWorkspace(
     schemas: List<SchemaMeta>?,
     /** 数据源方言是否支持切换执行目标（SQLite 单文件不支持）。 */
     supportsTargetSwitch: Boolean,
+    /** 执行目标切换器的标签（SQL = 「目标」；Redis DB = 「DB」）。 */
+    targetLabel: String = "目标",
+    /** 是否显示「默认（连接库）」选项（Redis DB 不需要）。 */
+    targetAllowDefault: Boolean = true,
     /** 激活控制台已选执行目标库/schema（"" = 连接默认）。 */
     targetSchema: String,
     onSelectTarget: (String) -> Unit,
@@ -329,6 +333,8 @@ fun SqlWorkspace(
                 onSelectProfile = onSelectProfile,
                 onDisconnect = onDisconnect,
                 supportsTargetSwitch = supportsTargetSwitch,
+                targetLabel = targetLabel,
+                targetAllowDefault = targetAllowDefault,
                 schemas = schemas,
                 target = targetSchema,
                 onSelectTarget = onSelectTarget,
@@ -589,6 +595,10 @@ private fun ConnectionNavBar(
     onSelectProfile: (String) -> Unit,
     onDisconnect: () -> Unit,
     supportsTargetSwitch: Boolean,
+    /** 执行目标切换器标签（SQL = 「目标」；Redis DB = 「DB」）。 */
+    targetLabel: String,
+    /** 是否显示「默认（连接库）」选项。 */
+    targetAllowDefault: Boolean,
     /** 该数据源的库/schema 列表（null = 未连接/未加载完成）。 */
     schemas: List<SchemaMeta>?,
     /** 当前控制台已选目标库/schema（"" = 连接默认）。 */
@@ -666,6 +676,8 @@ private fun ConnectionNavBar(
             TargetSwitcher(
                 enabled = status == ConnUiStatus.CONNECTED && schemas != null,
                 loading = status == ConnUiStatus.CONNECTED && schemas == null,
+                title = targetLabel,
+                allowDefault = targetAllowDefault,
                 schemas = schemas.orEmpty(),
                 target = target,
                 onSelectTarget = onSelectTarget,
@@ -685,6 +697,8 @@ private fun ConnectionNavBar(
 private fun TargetSwitcher(
     enabled: Boolean,
     loading: Boolean,
+    title: String,
+    allowDefault: Boolean,
     schemas: List<SchemaMeta>,
     target: String,
     onSelectTarget: (String) -> Unit,
@@ -703,7 +717,7 @@ private fun TargetSwitcher(
                 .padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
             Text(
-                "目标",
+                title,
                 fontSize = 10.5.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
             )
@@ -724,22 +738,24 @@ private fun TargetSwitcher(
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(onClick = {
-                open = false
-                if (target != "") onSelectTarget("")
-            }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (target.isBlank()) "✓ " else "  ",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colors.primary,
-                    )
-                    Text(
-                        "默认（连接库/连接默认 schema）",
-                        fontSize = 13.sp,
-                        color = if (target.isBlank()) MaterialTheme.colors.primary
-                        else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
-                    )
+            if (allowDefault) {
+                DropdownMenuItem(onClick = {
+                    open = false
+                    if (target != "") onSelectTarget("")
+                }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (target.isBlank()) "✓ " else "  ",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colors.primary,
+                        )
+                        Text(
+                            "默认（连接库/连接默认 schema）",
+                            fontSize = 13.sp,
+                            color = if (target.isBlank()) MaterialTheme.colors.primary
+                            else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+                        )
+                    }
                 }
             }
             schemas.forEach { s ->

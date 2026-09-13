@@ -19,10 +19,10 @@
 
 - SQL Server / Oracle：外部驱动机制已实现（`<dataDir>/drivers` 放 jar + 独立 classloader + 方言 + 驱动未加载提示）→ **待放真实驱动 jar 人工验收**（建连 / 展开树 / 查询）；驱动需与 JDK 25 兼容
 - （可选）SQL Server 暂按 schema 建模（跨 database 需改档案的 database）；如需数据库级目录再扩展
-- 已做：Redis 后端（N5）：Jedis 会话实现 `engine.DataSourceSession` + DB 命名空间 + key `SCAN` 懒加载（pipeline `TYPE`）+ 命令台（允许写命令，危险命令二次确认）
-  - 自检：`gradle smokeRedis`（含建连 / 五类键 / SCAN+TYPE / 命令渲染 / 取消重连；连不上 SKIP）；已对无密码、requirepass、ACL user 三种服务端实测通过
-  - 待人工验收：Compose UI 下建 Redis 连接 / 展开键组 / 双击预览 / 危险命令确认弹窗（深色模式）
-- 未做（Redis 可选深化）：专用 value viewer（JSON 树 / TTL 编辑）、Redis 命令补全与语法高亮（`editorLanguage` 能力位已预留）
+- 已做：Redis 后端（N5）：Jedis 会话实现 `engine.DataSourceSession` + 命名空间过滤器（DB 下拉 + 类型下拉 + key 模式搜索，`SCAN MATCH` 游标分页 + pipeline `TYPE`/`TTL` 标注，绕过 MetaCache；浏览状态持久化 `redis.properties`）+ 命令台（允许写命令，危险命令二次确认）
+  - 自检：`gradle smokeRedis`（含建连 / 五类键 / SCAN+TYPE / 命令渲染 / 搜索+类型过滤+TTL / 600 键分页去重 / 取消重连；连不上 SKIP）；已对无密码、requirepass、ACL user 三种服务端实测通过
+  - 待人工验收：Compose UI 下建 Redis 连接 / DB 与类型下拉 / pattern 搜索 / 继续扫描 / 双击预览 / 危险命令确认弹窗（深色模式）
+- 未做（Redis 可选深化）：专用 value viewer（JSON 树 / TTL 编辑）、Redis 命令补全与语法高亮（`editorLanguage` 能力位已预留）、工作台表格式 key 浏览器（方案 B）
 - （远期）Elasticsearch 后端（N6）
 - （远期）SSH 隧道连内网库
 

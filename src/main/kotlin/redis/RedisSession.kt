@@ -8,6 +8,8 @@ import engine.Protocol
 import engine.model.ColumnMeta
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
+import engine.model.ObjectSearch
+import engine.model.ObjectSearchResult
 import engine.model.QueryResult
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
@@ -39,6 +41,7 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
         objectPreview = true,
         sessionContext = true,
         lazyObjectGroups = true,
+        namespaceAsFilter = true,
         editorLanguage = EditorLanguage.REDIS_COMMAND,
     )
 
@@ -115,7 +118,7 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
 
     override fun loadObjects(ns: SchemaMeta): SchemaObjects = onRedis { j ->
         j.select(dbIndexOf(ns))
-        SchemaObjects(objects = mapOf(ObjectKind.KEY to scanKeys(j)))
+        SchemaObjects(objects = mapOf(ObjectKind.KEY to scanKeys(j, ObjectSearch()).objects))
     }
 
     override fun loadObjectCounts(ns: SchemaMeta): Map<ObjectKind, Int> = onRedis { j ->
@@ -127,12 +130,20 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
     override fun loadCoreObjects(ns: SchemaMeta): SchemaObjects = SchemaObjects(objects = emptyMap())
 
     override fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
-        if (kind == ObjectKind.KEY) onRedis { j ->
+        searchObjects(ns, kind, ObjectSearch()).objects
+
+    /**
+     * `SCAN MATCH <pattern>` 分页搜索（键类型：本版 Jedis `ScanParams` 无 `TYPE`，
+     * 统一 pipeline `TYPE` 后**客户端过滤**——用户决策「允许客户端回退」）。
+     * 一轮 = 一次 SCAN + 一次 pipeline（TYPE/TTL）；累计够 [SEARCH_TARGET] 或扫完（cursor=0）即返回。
+     */
+    override fun searchObjects(ns: SchemaMeta, kind: ObjectKind, search: ObjectSearch): ObjectSearchResult {
+        if (kind != ObjectKind.KEY) return ObjectSearchResult(emptyList())
+        return onRedis { j ->
             j.select(dbIndexOf(ns))
-            scanKeys(j)
-        } else {
-            emptyList()
+            scanKeys(j, search)
         }
+    }
 
     override fun loadColumns(ns: SchemaMeta?, table: String): List<ColumnMeta> = emptyList()
 
@@ -190,21 +201,45 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
     private fun dbIndex(raw: String?): Int =
         (raw?.removePrefix("db")?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
 
-    /** SCAN 抓取一页键并 pipeline 标注类型（上限 [KEY_PAGE]，避免大库一次拉爆）。 */
-    private fun scanKeys(j: Jedis): List<DbObjectMeta> {
-        val keys = mutableListOf<String>()
-        var cursor = "0"
-        do {
-            val page = j.scan(cursor, ScanParams().count(SCAN_BATCH).match("*"))
+    /** `SCAN MATCH` 分页 + pipeline 标注 `TYPE`/`TTL`；客户端类型过滤；上限见伴生常量。 */
+    private fun scanKeys(j: Jedis, search: ObjectSearch): ObjectSearchResult {
+        val params = ScanParams().count(SCAN_BATCH).match(search.pattern.ifBlank { "*" })
+        val out = mutableListOf<DbObjectMeta>()
+        val seen = HashSet<String>()
+        var cursor = search.cursor ?: "0"
+        var finished = false
+        var rounds = 0
+        while (!finished && out.size < SEARCH_TARGET && rounds < MAX_ROUNDS) {
+            val page = j.scan(cursor, params)
             cursor = page.cursor
-            keys += page.result
-        } while (cursor != "0" && keys.size < KEY_PAGE)
-        if (keys.isEmpty()) return emptyList()
+            finished = cursor == "0"
+            rounds++
+            if (page.result.isEmpty()) continue
+            val metas = annotate(j, page.result)
+            val matched = if (search.type == null) metas else metas.filter { it.detail.equals(search.type, ignoreCase = true) }
+            // SCAN 可能重复返回同一 key（游标重扫）——按名字去重
+            for (m in matched) if (seen.add(m.name)) out += m
+        }
+        return ObjectSearchResult(
+            objects = out.take(KEY_PAGE),
+            nextCursor = cursor.takeIf { !finished },
+            finished = finished,
+        )
+    }
+
+    /** pipeline 取一批 key 的类型与 TTL（顺序与入参一致）。 */
+    private fun annotate(j: Jedis, keys: List<String>): List<DbObjectMeta> {
         val pipeline = j.pipelined()
         val types = keys.map { pipeline.type(it) }
+        val ttls = keys.map { pipeline.ttl(it) }
         pipeline.sync()
-        return keys.take(KEY_PAGE).zip(types).map { (key, t) ->
-            DbObjectMeta(key, ObjectKind.KEY, detail = runCatching { t.get() }.getOrNull())
+        return keys.mapIndexed { i, key ->
+            DbObjectMeta(
+                name = key,
+                kind = ObjectKind.KEY,
+                detail = runCatching { types[i].get() }.getOrNull(),
+                ttlSeconds = runCatching { ttls[i].get() }.getOrNull()?.takeIf { it >= 0 },
+            )
         }
     }
 
@@ -214,7 +249,13 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
     }
 
     private companion object {
+        /** 单次返回上限（超出后由「继续扫描」翻页）。 */
         const val KEY_PAGE = 1000
+        /** 一次 SCAN 请求的建议条数（COUNT 提示）。 */
         const val SCAN_BATCH = 200
+        /** 单次调用累计够这么多结果就提前返回（避免大 keyspace 长时间阻塞）。 */
+        const val SEARCH_TARGET = 500
+        /** 单次调用最多 SCAN 轮数（每轮 1 次 SCAN + 1 次 pipeline）。 */
+        const val MAX_ROUNDS = 10
     }
 }

@@ -44,7 +44,7 @@ src/main/kotlin/
 │   ├── state/      #   TreeState / ConnectionsState / ConsoleState / DialogState / ColumnCatalog 等
 │   ├── ui/         #   AppTheme、SqlWorkspace、SqlEditing（补全/高亮）、ResultEditPlan、自绘图标
 │   ├── dialog/     #   连接编辑、设置、单字段输入、查看器（SQL/单元格/DDL/提交预览）
-│   └── settings/   #   主题 / 窗口 / 树展开 / 编辑器字体 等 properties 持久化
+│   └── settings/   #   主题 / 窗口 / 树展开 / 编辑器字体 / Redis 浏览状态 等 properties 持久化
 ├── engine/         # 协议无关契约层（叶层，不 import jdbc/db/app/compose/coroutines）
 │   ├── DataSourceSession.kt   # 通用会话接口：元数据 + 执行 + cancel
 │   ├── BackendCapabilities.kt # 能力位（可编辑/SQL 补全/DDL/懒加载/编辑器语言）
@@ -108,6 +108,13 @@ sealed interface UiTreeNode {
 给定 `expandedIds + 元数据缓存`，把可见节点展开成 `List<UiTreeNode>`，单条 `LazyColumn` 每行一个节点（缩进按 depth）。这与 api-x 树（嵌套数据类递归）不同，是 DB 工具更优解。
 
 **懒加载契约**：`DataSource` 展开 → 拉 catalog/schema 列表；`Schema` 展开 → 拉该库的表/视图/触发器名（只读名字，快）；双击/右键表 → 才拉 columns/主键/行预览。避免大库启动即卡。P6 起 `Schema` 展开进一步只取「组计数 + 核心类型」（表/视图/物化视图/序列），重类型组（触发器/例程/…）**组展开时才拉正文**（PG 开启 `DbDialect.lazyObjectGroups`；其余库默认回落全量 `loadObjects`，行为不变）。
+
+**命名空间即过滤器（Redis）**：`BackendCapabilities.namespaceAsFilter=true` 时，树里不出现「库」一级，
+连接节点下直接是 `TreeRowKind.FILTER`（DB 下拉 + 类型下拉 + key 模式输入）与单一「键」组。
+`ConnectionsState.activeNamespaceOf` 是当前 DB 的权威值（树过滤条与工作台 `TargetSwitcher` 双向同步，
+控制台执行目标用连接级 `activeDb`、与 `console.target` 解耦）；`searchObjects` 以 `SCAN MATCH` 游标分页，
+树底「继续扫描（已显示 N）」续拉。浏览状态（DB / pattern / 类型）按连接持久化到 `<dataDir>/redis.properties`
+（`app/settings/RedisPrefs`，属应用级浏览偏好，不入 app.db）。
 
 ### 4.3 JDBC 运行时模型
 
