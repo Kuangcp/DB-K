@@ -214,6 +214,9 @@ private fun AppBody(
     // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
 
+    // 待插入编辑器的文本（预览 / 历史 SQL）：在激活控制台光标/选区处追加，由 SqlWorkspace 消费后清空
+    var pendingInsert by remember { mutableStateOf<String?>(null) }
+
     /** 提交结果单元格修改（真正的写库动作；UI 侧先在 P7 预览弹窗确认）。 */
     fun commitEditsNow(c: ConsoleRecord, p: ConnectionProfile) {
         scope.launch {
@@ -692,6 +695,9 @@ private fun AppBody(
                             activeConsole?.let { consoleState.setText(it.id, t) }
                             lastEditorActivity.set(System.currentTimeMillis())
                         },
+                        insertRequest = pendingInsert,
+                        onInsertRequestConsumed = { pendingInsert = null },
+                        onRequestInsert = { pendingInsert = it },
                         caretOf = consoleState::caretOf,
                         onCaretChange = { id, s, e ->
                             consoleState.setCaret(id, s, e)

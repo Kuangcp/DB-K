@@ -182,6 +182,12 @@ fun SqlWorkspace(
     editorText: String,
     editorDirty: Boolean,
     onTextChange: (String) -> Unit,
+    /** 待插入编辑器的文本（预览 / 历史 SQL）：在激活控制台光标/选区处插入，不覆盖草稿。 */
+    insertRequest: String?,
+    /** 编辑器消费 insertRequest 后回调清空，保证同一文本可再次触发。 */
+    onInsertRequestConsumed: () -> Unit,
+    /** 请求向编辑器插入文本（历史面板「插入到当前控制台」）。 */
+    onRequestInsert: (String) -> Unit,
     /** 读某控制台上次的光标/选区（重启后恢复焦点所在行）。 */
     caretOf: (String) -> Pair<Int, Int>,
     /** 记录控制台光标/选区（内存即时生效，防抖落库）。 */
@@ -244,8 +250,6 @@ fun SqlWorkspace(
     var showHistory by remember { mutableStateOf(false) }
     // 双击历史条目：弹窗查看完整 SQL（复用通用文本查看器，按 SQL 高亮）
     var historyView by remember { mutableStateOf<SqlHistoryRow?>(null) }
-    // 待插入的历史 SQL：在光标/选区处插入（不覆盖整段草稿），由激活控制台的编辑区消费
-    var historyInsert by remember { mutableStateOf<String?>(null) }
     // 打开面板或切换数据源时刷新历史列表
     LaunchedEffect(showHistory, profile?.id) {
         if (showHistory) onRefreshHistory()
@@ -385,12 +389,11 @@ fun SqlWorkspace(
                 onCaretChange(consoleId, v.selection.start, v.selection.end)
             }
         }
-        // 历史 SQL「插入到当前控制台」：在光标/选区处插入（有选区则替换之），不覆盖整段草稿；
-        // 光标落到插入内容之后。在此处做是因为 tfv 是编辑器的权威状态，直接改 tfv 再落盘可
-        // 避开「外部改文本 → LaunchedEffect(editorText) 把光标推到最后」。
-        LaunchedEffect(historyInsert) {
-            val snippet = historyInsert ?: return@LaunchedEffect
-            historyInsert = null
+        // 预览 / 历史 SQL 插入：在光标/选区处插入（有选区则替换之），不覆盖整段草稿；
+        // 光标落到插入内容之后。在此处做是因为 tfv 是编辑器的权威状态。
+        LaunchedEffect(insertRequest) {
+            val snippet = insertRequest ?: return@LaunchedEffect
+            onInsertRequestConsumed()
             val (newText, caret) = insertSnippetAtCaret(
                 cur = tfv.text,
                 selStart = tfv.selection.start,
@@ -493,7 +496,7 @@ fun SqlWorkspace(
             copyToast = "已复制历史 SQL",
             extraAction = if (activeConsole != null) {
                 "插入到当前控制台" to {
-                    historyInsert = row.sqlText
+                    onRequestInsert(row.sqlText)
                     historyView = null
                 }
             } else null,
