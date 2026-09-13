@@ -4,6 +4,7 @@ import engine.model.ColumnMeta
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
 import engine.model.QueryResult
+import engine.model.SQL_OBJECT_KINDS
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
 
@@ -15,7 +16,7 @@ import engine.model.SchemaObjects
  *   这类能力留在具体实现内的独立接口（如 `jdbc.EditableSession`），app 层按能力位判断。
  * - **命名空间**沿用 [SchemaMeta]（SQL schema / Redis DB / ES 集群），对象沿用 [SchemaObjects]。
  *
- * 现有实现：`jdbc.LiveConnection`（协议 [Protocol.JDBC]）。
+ * 现有实现：`jdbc.LiveConnection`（[Protocol.JDBC]）、`redis.RedisSession`（[Protocol.REDIS]）。
  */
 interface DataSourceSession : AutoCloseable {
 
@@ -40,6 +41,9 @@ interface DataSourceSession : AutoCloseable {
     /** 探测某命名空间下的对象（表 / 视图 / 触发器…）。全量实现。 */
     fun loadObjects(ns: SchemaMeta): SchemaObjects
 
+    /** 对象组展示顺序（类型 + 标签由 [ObjectKind] 提供）；非 SQL 后端覆写（如 Redis 仅「键」组）。 */
+    fun objectGroups(): List<ObjectKind> = SQL_OBJECT_KINDS
+
     /** 各对象组的计数（不拉正文）；配合 [capabilities.lazyObjectGroups]。 */
     fun loadObjectCounts(ns: SchemaMeta): Map<ObjectKind, Int>
 
@@ -55,8 +59,8 @@ interface DataSourceSession : AutoCloseable {
     /** 取对象定义（DDL）；null = 取不到。仅当 [capabilities.objectDdl]。 */
     fun objectDdl(ns: SchemaMeta?, name: String): String?
 
-    /** 生成整对象预览语句 / 命令。仅当 [capabilities.objectPreview]。 */
-    fun previewQuery(ns: SchemaMeta?, name: String): String
+    /** 生成整对象预览语句 / 命令（[obj] 携带类型提示，如 Redis 的 key 类型）。仅当 [capabilities.objectPreview]。 */
+    fun previewQuery(ns: SchemaMeta?, obj: DbObjectMeta): String
 
     /** 会话级目标切换 SQL / 命令；null = 无需切换。 */
     fun sessionContextSql(ns: SchemaMeta): String?

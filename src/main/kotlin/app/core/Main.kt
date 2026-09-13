@@ -72,16 +72,18 @@ import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
 import db.ProfileTransfer
-import jdbc.DialectRegistry
-import jdbc.ExternalDrivers
-import jdbc.QueryExecutor
+import engine.Protocol
 import engine.model.ObjectKind
 import engine.model.SchemaMeta
 import engine.model.displayNoun
 import engine.model.isPreviewable
+import jdbc.ExternalDrivers
+import jdbc.QueryExecutor
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import org.tinylog.Logger
@@ -127,7 +129,18 @@ private fun AppRoot(onExit: () -> Unit) {
     val dialogState = remember { DialogState() }
     val toastState = remember { ToastState() }
     val scope = rememberCoroutineScope()
-    val consoleState = remember { ConsoleState(repository, connectionsState, scope) }
+    val consoleState = remember {
+        ConsoleState(repository, connectionsState, scope) { command ->
+            // 危险命令（Redis FLUSHALL 等）：弹确认框，用户选择后继续/取消。
+            suspendCancellableCoroutine { cont ->
+                dialogState.confirm = ConfirmRequest.DangerConfirm(command) { ok ->
+                    dialogState.confirm = null
+                    if (cont.isActive) cont.resume(ok)
+                }
+                cont.invokeOnCancellation { dialogState.confirm = null }
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -254,7 +267,7 @@ private fun AppBody(
                     val s = row.schema
                     val g = row.groupKind
                     if (p != null && s != null && g != null) {
-                        scope.launch { connectionsState.ensureGroupObjects(p, s, g.kind) }
+                        scope.launch { connectionsState.ensureGroupObjects(p, s, g) }
                     }
                 }
             }
@@ -341,15 +354,20 @@ private fun AppBody(
         return "控制台 $n"
     }
 
-    /** 双击表/视图/物化视图 → 预览前 100 行（DialectRegistry.previewSelect）：空控制台直接复用，否则新建命名控制台。 */
+    /** 双击对象 → 预览（SQL 后端 = SELECT 前 100 行；Redis = 按 key 类型的查看命令）：空控制台直接复用，否则新建命名控制台。 */
     fun previewObject(row: TreeRowInfo) {
         val p = row.profile ?: return
         val obj = row.dbObject ?: return
-        if (!obj.kind.isPreviewable()) {
-            toastState.show("该对象类型不支持 SQL 预览")
+        val session = connectionsState.sessionOf(p.id)
+        if (session == null || !session.capabilities.objectPreview) {
+            toastState.show("当前连接不支持对象预览")
             return
         }
-        val sql = DialectRegistry.forProfile(p).previewSelect(row.schema, obj.name)
+        if (!obj.kind.isPreviewable()) {
+            toastState.show("该对象类型不支持预览")
+            return
+        }
+        val sql = session.previewQuery(row.schema, obj)
         val active = consoleState.activeConsole()
         val reuse = active != null && active.connectionId == p.id && consoleState.textOf(active.id).isBlank()
         val target: ConsoleRecord = when {
@@ -365,7 +383,14 @@ private fun AppBody(
                 created
             }
         }
-        scope.launch { consoleState.run(target, p) }
+        // 会话型目标（Redis DB / 多 schema）：预览对象的命名空间随之切换
+        if (session.capabilities.sessionContext && row.schema != null) {
+            consoleState.setTarget(target.id, row.schema.displayName)
+        }
+        // setTarget 后重取记录（ConsoleRecord 不可变，旧引用 target 字段仍是空）
+        val fresh = consoleState.consolesByConnection.values.asSequence()
+            .flatMap { it.asSequence() }.firstOrNull { it.id == target.id } ?: target
+        scope.launch { consoleState.run(fresh, p) }
     }
 
     // 编辑器补全元数据已由 ConnectionsState 在连接建立时统一预取（缓存命中/查库回写），
@@ -389,7 +414,9 @@ private fun AppBody(
         val treeTarget = rows.firstOrNull { it.key == treeState.selectedRowKey }?.let { row ->
             val p = row.profile
             val obj = row.dbObject
-            if (row.kind == TreeRowKind.DB_OBJECT && p != null && obj != null && obj.kind.isPreviewable()) {
+            if (row.kind == TreeRowKind.DB_OBJECT && p != null && obj != null &&
+                p.dbType.protocol == Protocol.JDBC && obj.kind.isPreviewable()
+            ) {
                 TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
             } else {
                 null
@@ -542,7 +569,8 @@ private fun AppBody(
                             val p = row.profile
                             val obj = row.dbObject
                             if (p != null && obj != null) {
-                                writeClipboardText(DialectRegistry.forProfile(p).previewSelect(row.schema, obj.name))
+                                connectionsState.sessionOf(p.id)?.previewQuery(row.schema, obj)
+                                    ?.let { writeClipboardText(it) }
                             }
                         },
                         onAddFolder = { dialogState.folderDialog = FolderDialogRequest.Create(null) },
@@ -604,7 +632,7 @@ private fun AppBody(
                         pendingEditCounts = consoleState.editBuffers.mapValues { it.value.size },
                         schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
                         supportsTargetSwitch =
-                            activeProfile?.let { DialectRegistry.forProfile(it).supportsTargetSwitch } == true,
+                            activeProfile?.let { connectionsState.sessionOf(it.id)?.capabilities?.sessionContext } == true,
                         targetSchema = activeConsole?.target.orEmpty(),
                         onSelectTarget = { t ->
                             val c = consoleState.activeConsole()
@@ -767,6 +795,9 @@ private fun AppBody(
                         completionIdentifiers = completionIdentifiers,
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
+                        completionEnabled = activeProfile?.let {
+                            connectionsState.sessionOf(it.id)?.capabilities?.sqlCompletion
+                        } ?: true,
                         columnCatalog = connectionsState.columns,
                         onCopyText = { text, label ->
                             writeClipboardText(text)
@@ -891,7 +922,10 @@ private fun DialogHost(
     dialogState.confirm?.let { request ->
         ConfirmDialog(
             request = request,
-            onDismiss = { dialogState.confirm = null },
+            onDismiss = {
+                (request as? ConfirmRequest.DangerConfirm)?.onDecision(false)
+                dialogState.confirm = null
+            },
             onConfirm = {
                 when (request) {
                     is ConfirmRequest.DeleteFolder -> treeState.deleteFolder(request.id)
@@ -903,6 +937,7 @@ private fun DialogHost(
                     is ConfirmRequest.DeleteConsole -> consoleState.deleteConsole(request.id)
                     is ConfirmRequest.DiscardResultEdits -> request.onDiscard()
                     is ConfirmRequest.ExportWithPasswords -> request.onConfirm()
+                    is ConfirmRequest.DangerConfirm -> request.onDecision(true)
                 }
                 dialogState.confirm = null
             },

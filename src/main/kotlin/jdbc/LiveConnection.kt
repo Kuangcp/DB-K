@@ -117,7 +117,7 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     override fun objectDdl(ns: SchemaMeta?, name: String): String? =
         onConnection { dialect.tableDdl(it, ns, name) }
 
-    override fun previewQuery(ns: SchemaMeta?, name: String): String = dialect.previewSelect(ns, name)
+    override fun previewQuery(ns: SchemaMeta?, obj: DbObjectMeta): String = dialect.previewSelect(ns, obj.name)
 
     override fun sessionContextSql(ns: SchemaMeta): String? = dialect.sessionContextSql(ns)
 

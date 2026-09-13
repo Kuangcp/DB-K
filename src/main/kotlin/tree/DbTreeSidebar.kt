@@ -67,6 +67,7 @@ import db.ConnectionProfile
 import db.ConsoleRecord
 import db.DbType
 import db.FolderRow
+import engine.Protocol
 import engine.model.ObjectKind
 import engine.model.displayNoun
 import engine.model.isPreviewable
@@ -285,12 +286,21 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
             if (kind == ObjectKind.TRIGGER) {
                 return listOf(TreeMenuItem.Action("复制触发器名") { actions.onCopyName() })
             }
+            val isSql = (row.profile?.dbType?.protocol ?: Protocol.JDBC) == Protocol.JDBC
             buildList {
                 add(TreeMenuItem.Action("复制${kind.displayNoun}名") { actions.onCopyName() })
                 if (kind.isPreviewable()) {
-                    add(TreeMenuItem.Action("预览（前 100 行）") { actions.onPreviewTable() })
-                    add(TreeMenuItem.Action("复制查询（SELECT 预览）") { actions.onCopyQuery() })
-                    add(TreeMenuItem.Action("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
+                    add(
+                        TreeMenuItem.Action(if (isSql) "预览（前 100 行）" else "查看键") {
+                            actions.onPreviewTable()
+                        },
+                    )
+                    add(
+                        TreeMenuItem.Action(if (isSql) "复制查询（SELECT 预览）" else "复制查看命令") {
+                            actions.onCopyQuery()
+                        },
+                    )
+                    if (isSql) add(TreeMenuItem.Action("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
                 }
             }
         }
@@ -795,6 +805,7 @@ fun ObjectKindBadge(kind: ObjectKind?) {
         ObjectKind.TYPE -> "TY" to Color(0xFF5C6BC0)
         ObjectKind.OPERATOR_CLASS -> "OC" to Color(0xFF78909C)
         ObjectKind.OPERATOR_FAMILY -> "OF" to Color(0xFFD84315)
+        ObjectKind.KEY -> "K" to Color(0xFFD82C20)
     }
     Box(
         contentAlignment = Alignment.Center,

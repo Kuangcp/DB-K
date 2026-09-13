@@ -220,6 +220,8 @@ fun SqlWorkspace(
     completionTables: List<CompletionTable> = emptyList(),
     /** 编辑器补全用函数/过程/聚合名（PG 等能探测到的数据源；其余为空）。 */
     completionFunctions: List<String> = emptyList(),
+    /** 是否启用 SQL 补全（非 SQL 后端如 Redis 关掉，避免弹 SQL 关键字）。 */
+    completionEnabled: Boolean = true,
     /** 列元数据会话缓存（异步回填；null = 不做列补全）。 */
     columnCatalog: ColumnCatalog? = null,
     /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
@@ -420,6 +422,7 @@ fun SqlWorkspace(
                         completionIdentifiers = completionIdentifiers,
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
+                        completionEnabled = completionEnabled,
                         columnCatalog = columnCatalog,
                         schemas = schemas.orEmpty(),
                         defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
@@ -991,6 +994,7 @@ private fun EditorPane(
     completionIdentifiers: List<String>,
     completionTables: List<CompletionTable>,
     completionFunctions: List<String>,
+    completionEnabled: Boolean = true,
     columnCatalog: ColumnCatalog?,
     schemas: List<SchemaMeta>,
     defaultSchema: SchemaMeta?,
@@ -1128,7 +1132,7 @@ private fun EditorPane(
             aliases = aliasItems,
             functions = functionItems,
             objects = objectItems,
-            includeKeywords = qualified == null && (!forceComplete || word.text.isNotEmpty()),
+            includeKeywords = completionEnabled && qualified == null && (!forceComplete || word.text.isNotEmpty()),
         )
         else -> emptyList()
     }

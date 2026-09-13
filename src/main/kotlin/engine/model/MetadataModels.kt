@@ -26,10 +26,21 @@ data class SchemaMeta(
 enum class ObjectKind {
     TABLE, VIEW, TRIGGER, MATERIALIZED_VIEW, SEQUENCE,
     ROUTINE, AGGREGATE, OPERATOR, TYPE, OPERATOR_CLASS, OPERATOR_FAMILY,
+    /** 非 SQL 后端（如 Redis）的通用键对象。 */
+    KEY,
 }
 
-/** 双击/菜单可 SQL 预览的对象类型（SELECT 语义成立的：表、视图、物化视图）。 */
-val PREVIEWABLE_KINDS = setOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW)
+/** SQL 后端的对象组顺序（表 / 视图 / …）；非 SQL 后端自行提供 [engine.DataSourceSession.objectGroups]。 */
+val SQL_OBJECT_KINDS: List<ObjectKind> = listOf(
+    ObjectKind.TABLE, ObjectKind.MATERIALIZED_VIEW, ObjectKind.VIEW, ObjectKind.TRIGGER,
+    ObjectKind.SEQUENCE, ObjectKind.ROUTINE, ObjectKind.AGGREGATE, ObjectKind.OPERATOR,
+    ObjectKind.TYPE, ObjectKind.OPERATOR_CLASS, ObjectKind.OPERATOR_FAMILY,
+)
+
+/** 双击/菜单可预览的对象类型：SQL = 表/视图/物化视图；非 SQL = Redis 键（[ObjectKind.KEY]）。 */
+val PREVIEWABLE_KINDS = setOf(
+    ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW, ObjectKind.KEY,
+)
 
 fun ObjectKind.isPreviewable(): Boolean = this in PREVIEWABLE_KINDS
 
@@ -47,6 +58,7 @@ val ObjectKind.displayNoun: String
         ObjectKind.TYPE -> "类型"
         ObjectKind.OPERATOR_CLASS -> "操作符类"
         ObjectKind.OPERATOR_FAMILY -> "操作符族"
+        ObjectKind.KEY -> "键"
     }
 
 /**
@@ -71,6 +83,8 @@ data class DbObjectMeta(
     val kind: ObjectKind,
     /** TRIGGER 时其所属表名。 */
     val tableName: String? = null,
+    /** 后端自定义提示（如 Redis key 类型），供预览/展示用。 */
+    val detail: String? = null,
 )
 
 /**

@@ -194,10 +194,10 @@ class DbTreeRowsTest {
         )
         // connection + schema + TABLES 组 + VIEWS 组
         assertEquals(4, out.size)
-        assertEquals(ObjectGroupKind.TABLES, out[2].groupKind)
+        assertEquals(ObjectKind.TABLE, out[2].groupKind)
         assertEquals(1, out[2].childCount)
         assertFalse(out[2].expanded)
-        assertEquals(ObjectGroupKind.VIEWS, out[3].groupKind)
+        assertEquals(ObjectKind.VIEW, out[3].groupKind)
         assertEquals(1, out[3].childCount)
     }
 
@@ -209,7 +209,7 @@ class DbTreeRowsTest {
             connections = listOf(conn("c1")),
             expandedConnectionIds = setOf("c1"),
             expandedSchemaKeys = setOf("s:c1:$key"),
-            expandedGroupKeys = setOf("s:c1:$key:g:TABLES"),
+            expandedGroupKeys = setOf("s:c1:$key:g:TABLE"),
             runtime = FakeRuntime().apply {
                 statuses["c1"] = ConnUiStatus.CONNECTED
                 schemasByProfile["c1"] = listOf(schema)
@@ -245,9 +245,9 @@ class DbTreeRowsTest {
         )
         // connection + schema + TABLES 组 + ROUTINES 组（正文未加载但计数已知）
         assertEquals(4, out.size)
-        assertEquals(ObjectGroupKind.TABLES, out[2].groupKind)
+        assertEquals(ObjectKind.TABLE, out[2].groupKind)
         assertEquals(1, out[2].childCount)
-        assertEquals(ObjectGroupKind.ROUTINES, out[3].groupKind)
+        assertEquals(ObjectKind.ROUTINE, out[3].groupKind)
         assertEquals(1200, out[3].childCount)
     }
 
@@ -265,7 +265,7 @@ class DbTreeRowsTest {
             connections = listOf(conn("c1")),
             expandedConnectionIds = setOf("c1"),
             expandedSchemaKeys = setOf("s:c1:$key"),
-            expandedGroupKeys = setOf("s:c1:$key:g:ROUTINES"),
+            expandedGroupKeys = setOf("s:c1:$key:g:ROUTINE"),
             runtime = runtime(loading),
         )
         val loadingRow = build(true)[3]

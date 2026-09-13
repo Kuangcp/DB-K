@@ -12,6 +12,7 @@ import engine.model.ColumnMeta
 import engine.model.ObjectKind
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
+import engine.model.SQL_OBJECT_KINDS
 import jdbc.LiveConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,7 +37,8 @@ internal fun friendlySqlError(t: Throwable?): String {
 
 /**
  * 连接运行时状态：profileId -> ConnRuntime。
- * 每条连接一个 LiveConnection（单线程串行 JDBC），所有探测/执行经 Dispatchers.IO。
+ * 每条连接一个 `DataSourceSession`（按协议由 `SessionFactory` 创建：JDBC = `LiveConnection`
+ * 单线程串行，Redis = `RedisSession`），所有探测/执行经 Dispatchers.IO。
  * UI 可观察状态全部是 compose snapshot（status/schemas/objects…），
  * 方法为 suspend，由 UI 协程调用（内部切 IO 后再写回 snapshot 状态）。
  *
@@ -52,7 +54,7 @@ class ConnectionsState(
 ) : ConnectionRuntimeView {
 
     private class ConnRuntime(val profile: ConnectionProfile) {
-        val live: DataSourceSession = LiveConnection(profile)
+        val live: DataSourceSession = SessionFactory.create(profile)
         /** 编辑器列补全专用的独立元数据连接（懒建；不排队在执行线程后，也不受 sessionContextSql 影响）。 */
         var metaLive: DataSourceSession? = null
         // 仅 ConnectionsState（外层）修改；对外只经 ConnectionRuntimeView 只读暴露
@@ -113,6 +115,9 @@ class ConnectionsState(
 
     override fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean =
         runtimes[profileId]?.groupLoading?.get(groupLoadingKey(schemaKey, kind)) == true
+
+    override fun objectGroupsOf(profileId: String): List<ObjectKind> =
+        runtimes[profileId]?.live?.objectGroups() ?: SQL_OBJECT_KINDS
 
     // ---------- 连接 / 元数据（suspend；UI 协程调用，内部切 IO） ----------
 
@@ -329,7 +334,7 @@ class ConnectionsState(
         table: String,
     ): List<ColumnMeta> = withContext(Dispatchers.IO) {
         val rt = runtime(profile)
-        val live = rt.metaLive ?: LiveConnection(profile).also { rt.metaLive = it }
+        val live = rt.metaLive ?: SessionFactory.create(profile).also { rt.metaLive = it }
         if (!live.isOpen) live.open()
         live.loadColumns(schema, table)
     }
@@ -345,7 +350,7 @@ class ConnectionsState(
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val rt = runtime(profile)
-            val live = rt.metaLive ?: LiveConnection(profile).also { rt.metaLive = it }
+            val live = rt.metaLive ?: SessionFactory.create(profile).also { rt.metaLive = it }
             if (!live.isOpen) live.open()
             live.objectDdl(schema, name)
         }.fold(

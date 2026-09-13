@@ -150,9 +150,14 @@ fun ConfirmDialog(
             "导出含密码" to
                 "导出的文件将包含连接的**明文密码**，任何拿到该文件的人都能直接读取。\n\n建议仅在可信环境使用；确定继续吗？"
         }
+        is ConfirmRequest.DangerConfirm -> {
+            "危险命令确认" to
+                "即将执行「${request.command}」，该命令可能清空数据或中断服务且不可恢复。\n\n确定继续吗？"
+        }
     }
     val confirmLabel = when (request) {
         is ConfirmRequest.DiscardResultEdits, is ConfirmRequest.ExportWithPasswords -> "继续"
+        is ConfirmRequest.DangerConfirm -> "执行"
         else -> "删除"
     }
     AlertDialog(

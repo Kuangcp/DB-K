@@ -30,6 +30,8 @@ dependencies {
     implementation("com.h2database:h2:2.3.232")
     // ClickHouse（jdbc:clickhouse://host:8123/db，HTTP 协议，默认端口 8123）
     implementation("com.clickhouse:clickhouse-jdbc:0.7.2")
+    // Redis（N5 多协议后端：Jedis 阻塞客户端，契合现有阻塞 API + app 层 IO 包裹模型）
+    implementation("redis.clients:jedis:5.2.0")
     // SQL 编辑器语法高亮（api-x 同源：NeoUtils Highlight Compose）
     implementation("com.neoutils.highlight:highlight-compose:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
@@ -66,6 +68,17 @@ tasks.register<JavaExec>("smokeJdbc") {
     description = "Verify JDBC dialects against embedded/temp databases"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("jdbc.JdbcSmokeKt")
+}
+
+// Redis 后端自检：gradle smokeRedis （需可连的 Redis；连不上则 SKIP）
+tasks.register<JavaExec>("smokeRedis") {
+    group = "verification"
+    description = "Verify the Redis backend against a running server (skips if unreachable)"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("redis.RedisSmokeKt")
+    listOf("dbk.redisHost", "dbk.redisPort", "dbk.redisUser", "dbk.redisPassword").forEach { key ->
+        System.getProperty(key)?.let { systemProperty(key, it) }
+    }
 }
 
 // 生成版本信息（含 git commit hash），设置窗口左下角展示（与 api-x 同源）

@@ -44,9 +44,9 @@
 
 | 能力域 | 已完成 |
 |---|---|
-| 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
-| 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数（PG 11 类）；组折叠 + **按组懒加载**；展开持久化 |
-| 编辑器 | 高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` |
+| 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）+ **Redis（N5）**；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
+| 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数（**组类型由会话提供，JDBC 11 类 / Redis 仅「键」**）；组折叠 + **按组懒加载**；展开持久化 |
+| 编辑器 | 高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全（非 SQL 后端关闭）；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` |
 | 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / CSV（含全量流式）；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销** |
 | 查看器 | 长文本弹窗、JSON 树 + 高亮、Base64 图片预览、MD5 |
 | 控制台 | 跨源多标签、独立执行目标（库/schema）、光标记忆、关闭可重开 |
@@ -64,7 +64,7 @@
 
 | 能力域 | Navicat | DataGrip | db-k | 差距 / 决策 |
 |---|---|---|---|---|
-| 数据源数量 | ✅（含 NoSQL） | ✅（JDBC 20+） | ◐ 8 JDBC | **NoSQL 纳入（Redis/ES）→ §7** |
+| 数据源数量 | ✅（含 NoSQL） | ✅（JDBC 20+） | ◐ 8 JDBC + Redis | **NoSQL 纳入（Redis ✅ / ES 待做）→ §7** |
 | SSH 隧道 / SSL | ✅ | ✅ | ❌ | SSH 延后；SSL 待 N10 |
 | 对象树导航 | ✅ | ✅ | ◐ | 缺表子节点、搜索过滤（N9） |
 | 对象设计器 | ✅ GUI | ◐ 表编辑器 + DDL | ◐ 只读 DDL | **只做 DDL 编辑，不做 GUI（决策 5）** |
@@ -91,7 +91,7 @@
 ## 6. 新一轮路线（按优先级）
 
 优先级原则：**日常查询闭环（N1–N3）→ 多协议数据源（N4–N6）→ 对象与数据流转（N7–N9）→ 连接/运维（N10–N11）→ 发布（N12）**。
-每阶段独立可交付、可单独验收。N4（后端抽象）已完成，为 N5 Redis / N6 ES 铺好接口。
+每阶段独立可交付、可单独验收。N4（后端抽象）/ N5（Redis）已完成，为 N6 ES 铺好接口。
 
 ### 第一优先：日常查询闭环
 
@@ -133,10 +133,26 @@
 - **行为零变化**：`compileKotlin / test / smokeJdbc` 全绿；新增 `JdbcSessionContractTest` 锁定契约与能力位。
 - **验收**：✅ 无功能差异（待后续 Redis/ES 实现同一接口时验证扩展点）。
 
-#### N5 Redis 后端（只读浏览 + 命令台）
-- 连接（host/port/password/db）→ 命名空间 = DB → 对象 = key（`SCAN` 游标懒加载，复用 P6 思路）；
-  按类型渲染 value；控制台执行原生命令（危险命令二次确认）。
-- **验收**：能浏览并查看 string/hash/list/set/zset；命令台可跑 `GET/INFO` 等只读命令。
+#### N5 Redis 后端（命令台 + key 浏览）✅ 已实现
+- 新包 `redis/`：`RedisSession`（Jedis 5.2，阻塞式，实现 `engine.DataSourceSession`，所有调用串行到
+  单线程执行器，`cancel()` 跨线程断连后重连）+ `RedisProtocol`（纯逻辑：按行切命令 / 引号分词 /
+  回复→二维结果渲染，可单测）。
+- **对象组数据驱动**（N5 顺带重构）：`ObjectKind` 新增 `KEY` + `SQL_OBJECT_KINDS`；
+  `DataSourceSession.objectGroups()` 由会话提供，树不再硬编码组枚举（`ObjectGroupKind` 删除，
+  `TreeRowInfo.groupKind: ObjectKind?`），JDBC 维持原 11 组，Redis 仅「键」组。
+- 命名空间 = DB（`CONFIG GET databases` 探测，失败回落 db0–db15）；连库只取 `DBSIZE` 计数，
+  键组**完全懒加载**（展开触发 `SCAN` 游标分页，上限 1000 + pipeline `TYPE` 标注类型）。
+- 双击 key → 按类型生成查看命令（`GET`/`HGETALL`/`LRANGE`/`SMEMBERS`/`ZRANGE`/`XRANGE`），
+  控制台目标切到该 DB 执行；命令台可跑任意原生命令（含写命令），回复统一转二维网格
+  （`HGETALL`/`CONFIG` 双列，嵌套数组扁平化，nil/空集合占位）。
+- **危险命令二次确认**：`RedisProtocol.dangerousCommand`（`FLUSHALL`/`FLUSHDB`/`SHUTDOWN`/
+  `SWAPDB`/`DEBUG`/`SCRIPT`/`REPLICAOF`）；`ConsoleState` 注入 suspend 钩子 → 复用 `ConfirmDialog`。
+- 接线：`app/state/SessionFactory` 按 `dbType.protocol` 创建会话（唯一知道所有实现的地方）；
+  `ConsoleState` 按协议切分语句（SQL `;` / Redis 按行）；`sqlCompletion` 能力位关闭 Redis 的 SQL 关键字补全；
+  连接编辑弹窗「测试连接」改走 `SessionFactory`，Redis 显示「连接串」而非 JDBC URL。
+- **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `RedisProtocolTest`（9）、`RedisSessionTest`（3）、
+  `SessionFactoryTest`（2）；新增 `gradle smokeRedis` 真服务端自检（建连 / 五类键 / SCAN+TYPE / 命令渲染 /
+  取消重连），已对无密码、`requirepass`、ACL user 三种服务端实测通过。⚠️ Compose UI 交互待人工验收。
 
 #### N6 Elasticsearch 后端（索引浏览 + DSL 查询）
 - 连接（URL / 账号 / API key）→ 命名空间 = 集群 → 对象 = index/alias；
@@ -236,13 +252,14 @@ interface DataSourceSession : AutoCloseable {
   Redis → key/value/ttl 网格 + value viewer。
 - 编辑器：按 `editorLanguage` 切换高亮/补全（Redis 命令补全；ES 用现成 JSON 高亮）。
 
-### 7.4 Redis 设计要点
-- **连接**：host / port / password / db。
-- **客户端选型**：倾向 **Jedis**（阻塞式，契合现有「阻塞 API + app 层 IO 包裹」模型）；Lettuce 需 Netty，暂不引。
-- **浏览**：`SCAN` 游标分页 + `TYPE`；对象组 = key 类型（string/hash/list/set/zset/stream）。
-- **查看**：hash → 字段网格；list/set/zset → 行列表；string → 文本 / JSON / 图片（复用查看器）。
-- **命令台**：原生命令 → 结果转网格/文本；危险命令（`FLUSHALL` / `FLUSHDB` / `KEYS`）二次确认或禁用。
-- **只读优先**：第一版不提供写命令的安全网，但允许用户显式执行写命令（需确认）。
+### 7.4 Redis 设计要点（已实现，见 N5）
+- **连接**：host / port / password（支持 ACL user）/ db；无 JDBC URL，编辑弹窗显示 `redis://host:port/db`。
+- **客户端选型**：**Jedis**（阻塞式，契合「阻塞 API + app 层 IO 包裹」）；Lettuce 需 Netty，暂不引。
+- **浏览**：`SCAN` 游标分页 + pipeline `TYPE`；对象组只有一个「键」，连库只取 `DBSIZE`。
+- **查看**：双击 key 按类型生成查看命令，在控制台出二维网格（非表格值走占位/扁平化文本）。
+- **命令台**：任意原生命令（含写命令），回复统一转二维结果；危险命令二次确认。
+- **未做**：专用 value viewer（JSON 树 / 图片 / TTL 编辑）、命令补全、Redis 命令语法高亮
+  （`editorLanguage` 能力位已预留）。
 
 ### 7.5 Elasticsearch 设计要点
 - **连接**：URL / 用户名密码 / API key（HTTPS 支持）。
@@ -266,9 +283,9 @@ interface DataSourceSession : AutoCloseable {
 | # | 问题 | 影响 |
 |---|---|---|
 | Q1 | 「全能 IDE」是否要 ER 图 / 权限管理 / schema diff？（当前列在可选深化） | 决定是否从「可选」升为独立阶段 |
-| Q2 | Redis 客户端：Jedis（倾向）还是 Lettuce？ | N5 依赖与线程模型 |
+| Q2 | Redis 客户端：Jedis（倾向）还是 Lettuce？ | ✅ 已定：Jedis（N5 已实现） |
 | Q3 | ES：走 `HttpClient`（倾向）还是官方 `elasticsearch-java`？兼容 ES 7.x / 8.x 哪些？ | N6 依赖与兼容面 |
-| Q4 | Redis/ES 控制台是否允许写命令（SET/DEL/PUT/POST）？还是第一版纯只读？ | N5/N6 安全模型 |
+| Q4 | Redis/ES 控制台是否允许写命令（SET/DEL/PUT/POST）？还是第一版纯只读？ | ✅ 已定：允许写命令 + 危险命令二次确认（N5） |
 | Q5 | Excel 导出确认引入 Apache POI？体积 / 许可可接受吗？ | N8 依赖 |
 | Q6 | Redis TLS / ES HTTPS 是否 N5/N6 就要求？（SSH 已延后，TLS 场景不同） | 连接层设计 |
 

@@ -51,11 +51,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ConnectionEditorRequest
+import app.state.SessionFactory
 import app.state.friendlySqlError
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
-import jdbc.DialectRegistry
 import jdbc.ExternalDrivers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -123,7 +123,12 @@ fun ConnectionEditorDialog(
     var testing by remember(request) { mutableStateOf(false) }
     var testPassed by remember(request) { mutableStateOf<Boolean?>(null) }
     var testMessage by remember(request) { mutableStateOf("") }
-    val canTest = database.isNotBlank() && (isEmbedded || host.isNotBlank())
+    val isRedis = dbType == DbType.REDIS
+    val canTest = if (isRedis) {
+        host.isNotBlank()
+    } else {
+        database.isNotBlank() && (isEmbedded || host.isNotBlank())
+    }
 
     fun runTestConnection() {
         if (testing) return
@@ -134,8 +139,8 @@ fun ConnectionEditorDialog(
             val profile = build()
             val failure = withContext(Dispatchers.IO) {
                 runCatching {
-                    // 建连成功即代表可达+认证通过；立即释放
-                    DialectRegistry.forType(profile.dbType).openConnection(profile).use { }
+                    // 建连成功即代表可达+认证通过；立即释放（协议无关：走 SessionFactory）
+                    SessionFactory.create(profile).use { it.open() }
                     null
                 }.exceptionOrNull()?.let { friendlySqlError(it) }
             }
@@ -219,11 +224,11 @@ fun ConnectionEditorDialog(
                         },
                     )
                 }
-                FormRow(if (isEmbedded) "文件路径" else "数据库") {
+                FormRow(if (isEmbedded) "文件路径" else if (isRedis) "DB 序号" else "数据库") {
                     CompactField(
                         value = database,
                         onValueChange = { database = it },
-                        placeholder = if (isEmbedded) "/path/to/demo.db" else dbType.label.lowercase(),
+                        placeholder = if (isEmbedded) "/path/to/demo.db" else if (isRedis) "0" else dbType.label.lowercase(),
                     )
                 }
                 if (!isEmbedded) {
@@ -252,9 +257,9 @@ fun ConnectionEditorDialog(
                         )
                     }
                 }
-                if (!isEmbedded && database.isNotBlank()) {
+                if (!isEmbedded && (database.isNotBlank() || isRedis)) {
                     Text(
-                        "JDBC URL：${build().urlPreview()}",
+                        if (isRedis) "连接串：${build().urlPreview()}" else "JDBC URL：${build().urlPreview()}",
                         style = MaterialTheme.typography.caption,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.padding(top = 2.dp),

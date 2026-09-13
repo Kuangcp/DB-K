@@ -11,13 +11,13 @@ import app.ui.buildUpdatePlans
 import db.ConsoleRecord
 import db.ConnectionsRepository
 import db.SqlHistoryRow
+import engine.Protocol
 import engine.model.QueryColumn
 import engine.model.QueryResult
 import engine.model.SchemaMeta
 import jdbc.CellValue
 import jdbc.DialectRegistry
 import jdbc.RowUpdater
-import jdbc.splitSqlStatements
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.tinylog.Logger
+import redis.RedisProtocol
 import tree.ConnUiStatus
 
 /**
@@ -74,6 +75,8 @@ class ConsoleState(
     private val scope: CoroutineScope,
     /** 慢操作调度器；测试注入虚拟时间调度器以确定性推进防抖/执行。 */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** 危险命令（Redis FLUSHALL 等）执行前的二次确认钩子；返回是否继续；null = 不拦截。 */
+    private val confirmDangerous: (suspend (String) -> Boolean)? = null,
 ) {
 
     /** profileId -> 该数据源全部控制台（首次访问同步载入）。 */
@@ -659,7 +662,7 @@ class ConsoleState(
             )
             return
         }
-        val statements = splitSqlStatements(target)
+        val statements = SessionFactory.splitStatements(profile, target)
         if (statements.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
                 outcomes = listOf(StatementOutcome(sql = target, error = "没有可执行的 SQL（选中内容全是注释/空白）")),
@@ -698,6 +701,12 @@ class ConsoleState(
         // 逐条执行；出错即停（后续语句不执行），每条独立写历史
         val outcomes = mutableListOf<StatementOutcome>()
         for (stmt in statements) {
+            // Redis 危险命令：执行前二次确认（由 UI 注入钩子）。
+            val danger = if (session.protocol == Protocol.REDIS) RedisProtocol.dangerousCommand(stmt) else null
+            if (danger != null && confirmDangerous?.invoke(danger) == false) {
+                outcomes += StatementOutcome(stmt, error = "已取消执行危险命令「$danger」")
+                break
+            }
             val stmtStarted = System.currentTimeMillis()
             val result = withContext(ioDispatcher) {
                 runCatching { session.runStatement(stmt, contextSql) }

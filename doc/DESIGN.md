@@ -54,16 +54,17 @@ src/main/kotlin/
 ├── jdbc/           # JDBC 后端：方言、LiveConnection（实现 DataSourceSession）、QueryExecutor、RowUpdater
 │   ├── DbDialect.kt（接口 + GenericDialect）+ 各库方言
 │   └── EditableSession.kt     # JDBC 专属写回能力（主键定位 + 参数化 UPDATE）
+├── redis/          # Redis 后端（N5）：RedisSession（实现 DataSourceSession）+ RedisProtocol（命令切分/回复渲染）
 └── tree/           # 树形模型（UI 树节点）+ DbTreeSidebar 组件
 ```
 
 **分层纪律**：
 - `engine/` 是**协议无关叶层**：JDBC / Redis / ES 都实现它的 `DataSourceSession`；
   它不依赖 `jdbc`/`db`/`app`，也不依赖 compose/coroutines（阻塞 API，由 app 层包 `Dispatchers.IO`）；
-- `jdbc/`、`tree/`、`db/` 不依赖 compose，纯 Kotlin + JDK，逻辑可单测；
+- `jdbc/`、`redis/`、`tree/`、`db/` 不依赖 compose，纯 Kotlin + JDK，逻辑可单测；
 - JDBC 专属概念（主键写回、DDL、事务）留在 `jdbc/`（如 `EditableSession`），不进入通用层；新增协议按能力位降级；
-- `app/` 允许 import 所有层，负责状态与调用编排；
-- 依赖方向单向：`app → (engine, db, jdbc, tree)`，`jdbc → engine`，`db → engine/model`，`engine` 不反向依赖。
+- `app/` 允许 import 所有层，负责状态与调用编排；**后端选择集中在 `app/state/SessionFactory`**（按 `dbType.protocol`）；
+- 依赖方向单向：`app → (engine, db, jdbc, redis, tree)`，`jdbc/redis → engine`，`db → engine/model`，`engine` 不反向依赖。
 
 ---
 

@@ -51,6 +51,9 @@ sealed interface ConfirmRequest {
 
     /** 导出含明文密码前的风险确认；[onConfirm] 为确认后的导出动作。 */
     class ExportWithPasswords(val onConfirm: () -> Unit) : ConfirmRequest
+
+    /** 危险命令（Redis FLUSHALL 等）执行前的二次确认；[onDecision] 回传用户选择。 */
+    class DangerConfirm(val command: String, val onDecision: (Boolean) -> Unit) : ConfirmRequest
 }
 
 class DialogState {

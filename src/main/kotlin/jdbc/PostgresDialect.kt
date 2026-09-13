@@ -184,6 +184,7 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
             ObjectKind.ROUTINE, ObjectKind.AGGREGATE -> queryRoutines(conn, schemaName)[kind].orEmpty()
             ObjectKind.OPERATOR, ObjectKind.TYPE, ObjectKind.OPERATOR_CLASS, ObjectKind.OPERATOR_FAMILY ->
                 queryCatalogGroups(conn, schemaName)[kind].orEmpty()
+            ObjectKind.KEY -> emptyList()
         }
     }
 

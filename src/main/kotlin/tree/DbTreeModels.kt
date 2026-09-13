@@ -4,8 +4,10 @@ import db.ConnectionProfile
 import db.FolderRow
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
+import engine.model.SQL_OBJECT_KINDS
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
+import engine.model.displayNoun
 
 /** 左侧树行类别。M2：连接行之下支持 schema / 对象组 / 对象。 */
 enum class TreeRowKind {
@@ -14,22 +16,6 @@ enum class TreeRowKind {
 
 /** 连接运行状态（供状态点/连接入口展示；树层只做展示判断，不持有连接）。 */
 enum class ConnUiStatus { DISCONNECTED, CONNECTING, CONNECTED, ERROR }
-
-/** 对象组（schema 下的展示分组）。条目顺序 = 展示顺序；kind 与该组对象类型一一对应。
- * 各库只产出自己支持的类型（Map 里没有的类型整组不显示）。 */
-enum class ObjectGroupKind(val label: String, val kind: ObjectKind) {
-    TABLES("表", ObjectKind.TABLE),
-    MATERIALIZED_VIEWS("物化视图", ObjectKind.MATERIALIZED_VIEW),
-    VIEWS("视图", ObjectKind.VIEW),
-    TRIGGERS("触发器", ObjectKind.TRIGGER),
-    SEQUENCES("序列", ObjectKind.SEQUENCE),
-    ROUTINES("函数与过程", ObjectKind.ROUTINE),
-    AGGREGATES("聚合", ObjectKind.AGGREGATE),
-    OPERATORS("操作符", ObjectKind.OPERATOR),
-    TYPES("类型", ObjectKind.TYPE),
-    OPERATOR_CLASSES("操作符类", ObjectKind.OPERATOR_CLASS),
-    OPERATOR_FAMILIES("操作符族", ObjectKind.OPERATOR_FAMILY),
-}
 
 enum class PlaceholderKind { NONE, LOADING, ERROR, INFO }
 
@@ -56,8 +42,8 @@ data class TreeRowInfo(
     val message: String? = null,
     /** SCHEMA 行。 */
     val schema: SchemaMeta? = null,
-    /** OBJECT_GROUP 行。 */
-    val groupKind: ObjectGroupKind? = null,
+    /** OBJECT_GROUP 行：该组的对象类型（label 取 [ObjectKind.displayNoun]）。 */
+    val groupKind: ObjectKind? = null,
     /** DB_OBJECT 行。 */
     val dbObject: DbObjectMeta? = null,
     /** PLACEHOLDER 行：LOADING 显示 spinner，ERROR 红字，INFO 灰字。 */
@@ -72,6 +58,9 @@ interface ConnectionRuntimeView {
     fun schemasLoadingOf(profileId: String): Boolean
     fun objectsOf(profileId: String, schemaKey: String): SchemaObjects?
     fun objectsLoadingOf(profileId: String, schemaKey: String): Boolean
+
+    /** 该连接支持的对象组顺序（非 SQL 后端可覆写，如 Redis 仅「键」）。 */
+    fun objectGroupsOf(profileId: String): List<ObjectKind> = SQL_OBJECT_KINDS
 
     /** 某类型组正文是否正在懒加载（P6；非懒加载实现默认 false）。 */
     fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean = false
@@ -217,20 +206,19 @@ private fun appendSchema(
         objects.isEmpty ->
             out += infoPlaceholder(depth + 1, "$rowKey:empty", "（空 schema）")
         else -> {
-            ObjectGroupKind.entries.forEach { group ->
-                val kind = group.kind
+            runtime.objectGroupsOf(conn.id).forEach { kind ->
                 val count = objects.countOf(kind)
                 if (count <= 0) return@forEach
-                val groupKey = "$rowKey:g:${group.name}"
+                val groupKey = "$rowKey:g:${kind.name}"
                 val groupExpanded = groupKey in expandedGroupKeys
                 out += TreeRowInfo(
                     key = groupKey,
                     kind = TreeRowKind.OBJECT_GROUP,
                     depth = depth + 1,
-                    name = group.label,
+                    name = kind.displayNoun,
                     profile = conn,
                     schema = schema,
-                    groupKind = group,
+                    groupKind = kind,
                     expanded = groupExpanded,
                     childCount = count,
                 )
@@ -239,7 +227,7 @@ private fun appendSchema(
                     if (!objects.isLoaded(kind)) {
                         // P6 懒加载：正文未拉取时给占位；上层在展开时触发 ensureGroupObjects
                         out += if (runtime.groupObjectsLoadingOf(conn.id, schema.key, kind)) {
-                            loadingPlaceholder(depth + 2, "$groupKey:load", "正在加载${group.label}…")
+                            loadingPlaceholder(depth + 2, "$groupKey:load", "正在加载${kind.displayNoun}…")
                         } else {
                             infoPlaceholder(depth + 2, "$groupKey:load", "尚未加载")
                         }

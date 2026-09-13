@@ -92,10 +92,11 @@ class SchemaObjectsTest {
     }
 
     @Test
-    fun `previewable kinds are table view materialized view`() {
+    fun `previewable kinds include sql objects and redis keys`() {
         assertTrue(ObjectKind.TABLE.isPreviewable())
         assertTrue(ObjectKind.VIEW.isPreviewable())
         assertTrue(ObjectKind.MATERIALIZED_VIEW.isPreviewable())
+        assertTrue(ObjectKind.KEY.isPreviewable())
         assertFalse(ObjectKind.TRIGGER.isPreviewable())
         assertFalse(ObjectKind.SEQUENCE.isPreviewable())
         assertFalse(ObjectKind.ROUTINE.isPreviewable())

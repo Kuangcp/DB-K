@@ -1,5 +1,7 @@
 package db
 
+import engine.Protocol
+
 /**
  * 目标数据库类型。存储层枚举，连接档案持久化用其 name；
  * jdbc 层的方言注册表与 UI 层的徽章展示都依赖它。
@@ -28,6 +30,16 @@ enum class DbType(
     // 外部驱动：官方红底白字
     SQLSERVER("SQL Server", "MS", 1433, "com.microsoft.sqlserver.jdbc.SQLServerDriver", 0xFFCC2927, externalDriver = true),
     ORACLE("Oracle", "OR", 1521, "oracle.jdbc.OracleDriver", 0xFFC74634, externalDriver = true),
+    // 非 JDBC：Redis 后端（N5），driverClass 不适用
+    REDIS("Redis", "RD", 6379, "", 0xFFD82C20),
+    ;
+
+    /** 数据源协议：决定由哪个后端实现 `engine.DataSourceSession`。 */
+    val protocol: Protocol
+        get() = when (this) {
+            REDIS -> Protocol.REDIS
+            else -> Protocol.JDBC
+        }
 }
 
 /** 本地 JDBC 连接档案（存储模型，对应 connections 表一行）。 */
@@ -62,8 +74,10 @@ data class ConnectionProfile(
             DbType.SQLSERVER -> "jdbc:sqlserver://$host:$p;databaseName=$database"
             // Oracle thin：database 为 service name（非 SID）
             DbType.ORACLE -> "jdbc:oracle:thin:@$host:$p/$database"
+            // Redis 无 JDBC URL；仅作编辑弹窗预览（实际连接走 Jedis）
+            DbType.REDIS -> "redis://$host:$p/${database.ifBlank { "0" }}"
         }
-        if (dbType == DbType.SQLITE) return base
+        if (dbType == DbType.SQLITE || dbType == DbType.REDIS) return base
         // 拼接参数；ClickHouse 默认关 HTTP 压缩：驱动默认 compress=true，期望 ClickHouse-LZ4
         // 帧（0x82…），但经反代/网关/内网转发链路常返回未压缩体导致 “Magic is not correct”。
         // 用户在“附加参数”显式写 compress=… 时尊重其选择。
