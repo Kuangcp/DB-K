@@ -108,6 +108,12 @@ src/main/kotlin/
 - [x] P6 树按组懒加载：schema 只取计数 + 核心类型，重类型组展开时才拉（PostgreSQL）
 - [x] P7 可编辑结果后续：提交前 UPDATE 预览确认
 - [x] P9 诊断入口：设置窗口展示并打开日志 / 数据目录
+- [ ] P8 发布验证（Deb / AppImage 干净环境，MSI）——已降为最低优先
+
+下一轮路线（对标 Navicat / DataGrip，详见 [Roadmap.md](Roadmap.md) §5）：
+N1 结果网格排序/筛选/取更多 → N2 编辑器格式化/查找替换 → N3 事务与增删行 →
+N4 表结构管理 → N5 导入导出扩展 → N6 树导航增强 → N7 SSH/SSL 与驱动管理 →
+N8 执行计划与运维面板 → N9 发布验证。
 
 ## 文档
 
