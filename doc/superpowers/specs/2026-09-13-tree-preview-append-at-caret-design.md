@@ -43,8 +43,9 @@
 校验 session / capabilities / obj.kind.isPreviewable()   // 不变
 sql = session.previewQuery(row.schema, obj)
 target = consoleState.activateForProfile(p.id)           // 复用「判断是否已有控制台」
-if (session.capabilities.sessionContext && row.schema != null)
-    consoleState.setTarget(target.id, row.schema.displayName)   // Redis DB 命名空间，不变
+// Redis DB 是连接级过滤器（flatNamespaceOf），执行目标与 console.target 解耦，不在此写
+if (!connectionsState.flatNamespaceOf(p.id) && session.capabilities.sessionContext && row.schema != null)
+    consoleState.setTarget(target.id, row.schema.displayName)
 pendingInsert = sql                                      // 请求编辑器在光标处插入
 ```
 
@@ -94,7 +95,7 @@ pendingInsert = sql                                      // 请求编辑器在�
 - **不自动执行**：无 run 调用；用户手动执行。
 - **关闭的控制台**：由 `activateForProfile` 重开最近改动者，不新建。
 - **无任何控制台**：`activateForProfile` 新建「控制台 1」，随后在其光标（空文本 = 0）处插入。
-- **Redis**：同样追加预览命令；`sessionContext` 的 `setTarget` 保留。
+- **Redis**：同样追加预览命令，但**不写 `console.target`**；`setTarget` 仅对非 `flatNamespaceOf` 的会话型后端生效（Redis DB 是连接级过滤器）。
 - **连接不可用/不支持预览/对象类型不可预览**：校验与提示不变。
 - 不改 `DdlTarget`、右键菜单、「打开控制台」等其它入口。
 
@@ -120,3 +121,11 @@ pendingInsert = sql                                      // 请求编辑器在�
 - 不做「预览 SQL 自动执行」开关。
 - 不做「插入后自动滚动到插入位置」（现有行为即可；如需另议）。
 - 不改历史 SQL 的插入语义（保持只插入不执行）。
+
+## 执行期修订（2026-09-13）
+
+- 本 spec / 对应 plan 的编写早于「Redis 命名空间降为连接级过滤器（`flatNamespaceOf`）」的合并，
+  原稿未含该守卫。
+- 人工决策：保留 `!connectionsState.flatNamespaceOf(p.id)` 守卫，`setTarget` 仅对非 flat-namespace
+  的会话型后端生效；Redis 路径仍追加预览命令，但不写 `console.target`。
+- 实现以 `src/main/kotlin/app/core/Main.kt` 的 `previewObject` 为准。
