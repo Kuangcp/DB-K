@@ -1,10 +1,16 @@
 package jdbc
 
 import db.ConnectionProfile
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaObjects
-import jdbc.model.SchemaMeta
+import engine.BackendCapabilities
+import engine.DataSourceSession
+import engine.EditorLanguage
+import engine.Protocol
+import engine.model.ColumnMeta
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.QueryResult
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import java.sql.Connection
 import java.sql.Statement
 import java.util.concurrent.Callable
@@ -13,15 +19,29 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 /**
- * 一条运行中的 JDBC 连接：懒建 java.sql.Connection + 单线程执行器，
- * 保证所有 JDBC 调用在一条专用线程上串行执行（驱动线程安全性不必假设）。
+ * JDBC 后端实现（[DataSourceSession] 的 JDBC 版）：一条运行中的连接 =
+ * 懒建 `java.sql.Connection` + 单线程执行器，保证所有 JDBC 调用在一条专用线程上串行执行
+ * （驱动线程安全性不必假设）。
  *
- * 本层不依赖 compose/coroutines：方法均为阻塞式，由调用方（app 层）放到
- * Dispatchers.IO 执行。
+ * 本层不依赖 compose/coroutines：方法均为阻塞式，由调用方（app 层）放到 `Dispatchers.IO` 执行。
+ * 通用契约在 `engine.DataSourceSession`；JDBC 专属的写回能力见 [EditableSession]。
  */
-class LiveConnection(private val profile: ConnectionProfile) {
+class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession, EditableSession {
 
     private val dialect: DbDialect = DialectRegistry.forProfile(profile)
+
+    override val profileId: String = profile.id
+    override val protocol: Protocol = Protocol.JDBC
+
+    override val capabilities: BackendCapabilities = BackendCapabilities(
+        editableResult = true,
+        sqlCompletion = true,
+        objectDdl = true,
+        objectPreview = true,
+        sessionContext = dialect.supportsTargetSwitch,
+        lazyObjectGroups = dialect.lazyObjectGroups,
+        editorLanguage = EditorLanguage.SQL,
+    )
 
     @Volatile
     private var conn: Connection? = null
@@ -34,17 +54,17 @@ class LiveConnection(private val profile: ConnectionProfile) {
         Thread(r, "jdbc-${profile.id.take(6)}").apply { isDaemon = true }
     }
 
-    val isOpen: Boolean get() = conn?.isClosed == false
+    override val isOpen: Boolean get() = conn?.isClosed == false
 
     /** 建立连接（幂等：已连接则跳过）。阻塞，勿在 UI 线程调用。 */
-    fun open() {
+    override fun open() {
         if (conn?.isClosed == false) return
         val fresh = dialect.openConnection(profile)
         conn = fresh
     }
 
     /** 关闭连接并丢弃。 */
-    fun close() {
+    override fun close() {
         runCatching { conn?.close() }
         conn = null
     }
@@ -60,7 +80,7 @@ class LiveConnection(private val profile: ConnectionProfile) {
         }
     }
 
-    /** 登记/注销当前执行语句（由 QueryExecutor 在语句生命周期内回调）。 */
+    /** 登记/注销当前执行语句（由 [QueryExecutor] 在语句生命周期内回调）。 */
     fun registerStatement(st: Statement?) {
         currentStmt = st
     }
@@ -70,27 +90,48 @@ class LiveConnection(private val profile: ConnectionProfile) {
      * 返回是否发出了取消请求；正在排队尚未开始的执行不在内。
      * 驱动忽略 cancel 时，等待中的查询仍会按其自身超时（30s）结束。
      */
-    fun cancelCurrentQuery(): Boolean {
+    override fun cancel(): Boolean {
         val st = currentStmt ?: return false
         return runCatching { st.cancel(); true }.getOrDefault(false)
     }
 
-    // ---------- 便捷元数据入口（内部一律串行到连接线程） ----------
+    // ---------- 元数据（内部一律串行到连接线程） ----------
 
-    fun loadSchemas(): List<SchemaMeta> = onConnection { dialect.loadSchemas(it) }
+    override fun loadNamespaces(): List<SchemaMeta> = onConnection { dialect.loadSchemas(it) }
 
-    fun loadObjects(schema: SchemaMeta): SchemaObjects =
-        onConnection { dialect.loadObjects(it, schema) }
+    override fun loadObjects(ns: SchemaMeta): SchemaObjects =
+        onConnection { dialect.loadObjects(it, ns) }
 
-    /** 懒加载：组计数（不拉正文）。 */
-    fun loadObjectCounts(schema: SchemaMeta): Map<ObjectKind, Int> =
-        onConnection { dialect.loadObjectCounts(it, schema) }
+    override fun loadObjectCounts(ns: SchemaMeta): Map<ObjectKind, Int> =
+        onConnection { dialect.loadObjectCounts(it, ns) }
 
-    /** 懒加载：核心组正文（表/视图/物化视图/序列）。 */
-    fun loadCoreObjects(schema: SchemaMeta): SchemaObjects =
-        onConnection { dialect.loadCoreObjects(it, schema) }
+    override fun loadCoreObjects(ns: SchemaMeta): SchemaObjects =
+        onConnection { dialect.loadCoreObjects(it, ns) }
 
-    /** 懒加载：单一类型组正文。 */
-    fun loadObjectsForKind(schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
-        onConnection { dialect.loadObjectsForKind(it, schema, kind) }
+    override fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
+        onConnection { dialect.loadObjectsForKind(it, ns, kind) }
+
+    override fun loadColumns(ns: SchemaMeta?, table: String): List<ColumnMeta> =
+        onConnection { dialect.loadColumns(it, ns, table) }
+
+    override fun objectDdl(ns: SchemaMeta?, name: String): String? =
+        onConnection { dialect.tableDdl(it, ns, name) }
+
+    override fun previewQuery(ns: SchemaMeta?, name: String): String = dialect.previewSelect(ns, name)
+
+    override fun sessionContextSql(ns: SchemaMeta): String? = dialect.sessionContextSql(ns)
+
+    // ---------- 执行 ----------
+
+    override fun runStatement(statement: String, sessionContextSql: String?): QueryResult =
+        onConnection { conn ->
+            QueryExecutor.applyContext(conn, sessionContextSql)
+            QueryExecutor.execute(conn, statement) { st -> registerStatement(st) }
+        }
+
+    override fun applyUpdatePlans(plans: List<UpdatePlan>, sessionContextSql: String?): Int =
+        onConnection { conn ->
+            QueryExecutor.applyContext(conn, sessionContextSql)
+            RowUpdater.executeBatch(conn, plans, dialect) { st -> registerStatement(st) }
+        }
 }

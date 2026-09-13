@@ -1,8 +1,8 @@
 package jdbc
 
 import db.DbType
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

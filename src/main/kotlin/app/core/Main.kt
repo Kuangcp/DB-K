@@ -75,10 +75,10 @@ import db.ProfileTransfer
 import jdbc.DialectRegistry
 import jdbc.ExternalDrivers
 import jdbc.QueryExecutor
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.displayNoun
-import jdbc.model.isPreviewable
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.displayNoun
+import engine.model.isPreviewable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -741,7 +741,7 @@ private fun AppBody(
                                     val contextSql = consoleState.sessionContextSqlFor(c, p)
                                     val outcome = withContext(Dispatchers.IO) {
                                         runCatching {
-                                            val live = connectionsState.liveConnection(p.id)
+                                            val live = connectionsState.jdbcConnection(p.id)
                                                 ?: error("连接已断开，请重连后再导出")
                                             live.onConnection { conn ->
                                                 QueryExecutor.applyContext(conn, contextSql)

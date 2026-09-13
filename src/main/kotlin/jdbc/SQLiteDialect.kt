@@ -1,10 +1,10 @@
 package jdbc
 
 import db.DbType
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import java.sql.Connection
 
 /**

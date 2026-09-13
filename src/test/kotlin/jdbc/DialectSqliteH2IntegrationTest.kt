@@ -2,7 +2,7 @@ package jdbc
 
 import db.ConnectionProfile
 import db.DbType
-import jdbc.model.ObjectKind
+import engine.model.ObjectKind
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.sql.DriverManager

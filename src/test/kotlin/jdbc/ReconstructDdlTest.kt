@@ -1,7 +1,7 @@
 package jdbc
 
-import jdbc.model.ColumnMeta
-import jdbc.model.SchemaMeta
+import engine.model.ColumnMeta
+import engine.model.SchemaMeta
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

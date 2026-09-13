@@ -1,7 +1,7 @@
 package db
 
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.tinylog.Logger

@@ -40,25 +40,30 @@ SQL Server / Oracle 走**外部驱动目录** `<dataDir>/drivers`（Oracle 驱�
 ```
 src/main/kotlin/
 ├── app/            # 应用层：Compose UI 组合 + 状态（可 import 一切）
-│   ├── core/       #   Main.kt：Window + 全局快捷键 + 副作用动作 AppActions
-│   ├── state/      #   TreeState / ConnectionsState / EditorState /
-│   │               #   ResultState / HistoryState / DialogState / ThemeState
-│   ├── ui/         #   AppTheme、通用组件（分割条、Toast、空态、状态点）
-│   ├── dialog/     #   ConnectionEditorDialog、新建文件夹、关于
-│   └── editor/     #   SqlEditor、ResultPanel、顶部工具栏
-├── db/             # 元数据层：AppPaths / AppDatabase(migrate) / ConnectionsRepository
-├── jdbc/           # 运行时层：方言、连接生命周期、元数据探测、查询执行（禁止 import compose）
-│   ├── dialect/    #   DbDialect 接口 + Generic + Postgres/MySql/MariaDb/SQLite/H2/ClickHouse/SqlServer/Oracle
-│   ├── LiveConnection.kt / MetadataLoader.kt / QueryExecutor.kt
-│   └── model/      #   SchemaTree / TableInfo / ColumnInfo / RunOutcome 等纯模型
+│   ├── core/       #   Main.kt：Window + 全局快捷键 + 副作用动作（CsvExport / DesktopOpen / 日志）
+│   ├── state/      #   TreeState / ConnectionsState / ConsoleState / DialogState / ColumnCatalog 等
+│   ├── ui/         #   AppTheme、SqlWorkspace、SqlEditing（补全/高亮）、ResultEditPlan、自绘图标
+│   ├── dialog/     #   连接编辑、设置、单字段输入、查看器（SQL/单元格/DDL/提交预览）
+│   └── settings/   #   主题 / 窗口 / 树展开 / 编辑器字体 等 properties 持久化
+├── engine/         # 协议无关契约层（叶层，不 import jdbc/db/app/compose/coroutines）
+│   ├── DataSourceSession.kt   # 通用会话接口：元数据 + 执行 + cancel
+│   ├── BackendCapabilities.kt # 能力位（可编辑/SQL 补全/DDL/懒加载/编辑器语言）
+│   ├── Protocol.kt            # Protocol(JDBC/REDIS/ELASTICSEARCH) + EditorLanguage
+│   └── model/                 # SchemaMeta / SchemaObjects / ColumnMeta / QueryResult 等纯模型
+├── db/             # 元数据存储层：AppPaths / AppDatabase(migrate) / ConnectionsRepository / 各类 Prefs
+├── jdbc/           # JDBC 后端：方言、LiveConnection（实现 DataSourceSession）、QueryExecutor、RowUpdater
+│   ├── DbDialect.kt（接口 + GenericDialect）+ 各库方言
+│   └── EditableSession.kt     # JDBC 专属写回能力（主键定位 + 参数化 UPDATE）
 └── tree/           # 树形模型（UI 树节点）+ DbTreeSidebar 组件
 ```
 
 **分层纪律**：
-- `jdbc/` 与 `tree/` 不依赖 compose，纯 Kotlin + JDK，逻辑可单测；
-- `db/`（元数据）也不依赖 compose；
+- `engine/` 是**协议无关叶层**：JDBC / Redis / ES 都实现它的 `DataSourceSession`；
+  它不依赖 `jdbc`/`db`/`app`，也不依赖 compose/coroutines（阻塞 API，由 app 层包 `Dispatchers.IO`）；
+- `jdbc/`、`tree/`、`db/` 不依赖 compose，纯 Kotlin + JDK，逻辑可单测；
+- JDBC 专属概念（主键写回、DDL、事务）留在 `jdbc/`（如 `EditableSession`），不进入通用层；新增协议按能力位降级；
 - `app/` 允许 import 所有层，负责状态与调用编排；
-- 依赖方向单向：`app → (db, jdbc, tree)`。
+- 依赖方向单向：`app → (engine, db, jdbc, tree)`，`jdbc → engine`，`db → engine/model`，`engine` 不反向依赖。
 
 ---
 

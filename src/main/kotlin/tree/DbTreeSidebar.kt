@@ -67,9 +67,9 @@ import db.ConnectionProfile
 import db.ConsoleRecord
 import db.DbType
 import db.FolderRow
-import jdbc.model.ObjectKind
-import jdbc.model.displayNoun
-import jdbc.model.isPreviewable
+import engine.model.ObjectKind
+import engine.model.displayNoun
+import engine.model.isPreviewable
 
 /** 行上下文动作（闭包已绑定具体行）。 */
 class RowActions(

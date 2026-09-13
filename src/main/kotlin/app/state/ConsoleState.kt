@@ -11,13 +11,12 @@ import app.ui.buildUpdatePlans
 import db.ConsoleRecord
 import db.ConnectionsRepository
 import db.SqlHistoryRow
+import engine.model.QueryColumn
+import engine.model.QueryResult
+import engine.model.SchemaMeta
 import jdbc.CellValue
 import jdbc.DialectRegistry
-import jdbc.QueryColumn
-import jdbc.QueryExecutor
-import jdbc.QueryResult
 import jdbc.RowUpdater
-import jdbc.model.SchemaMeta
 import jdbc.splitSqlStatements
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -264,19 +263,17 @@ class ConsoleState(
                 IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: "连接不可用"),
             )
         }
-        val live = connectionsState.liveConnection(profile.id)
+        val session = connectionsState.sessionOf(profile.id)
             ?: return Result.failure(IllegalStateException("连接已断开"))
+        if (session !is jdbc.EditableSession || !session.capabilities.editableResult) {
+            return Result.failure(IllegalStateException("当前数据源不支持写回"))
+        }
         val dialect = DialectRegistry.forProfile(profile)
         val contextSql = sessionContextSqlFor(console, profile)
 
         resultBusy[console.id] = true
         val outcome = withContext(ioDispatcher) {
-            runCatching {
-                live.onConnection { conn ->
-                    QueryExecutor.applyContext(conn, contextSql)
-                    RowUpdater.executeBatch(conn, plans, dialect) { st -> live.registerStatement(st) }
-                }
-            }
+            runCatching { session.applyUpdatePlans(plans, contextSql) }
         }
         resultBusy[console.id] = false
 
@@ -325,7 +322,7 @@ class ConsoleState(
             connectionsState.ensureConnectionReady(profile)
         }
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) return
-        val live = connectionsState.liveConnection(profile.id) ?: return
+        val session = connectionsState.sessionOf(profile.id) ?: return
         val contextSql = sessionContextSqlFor(console, profile)
 
         runGens[console.id] = (runGens[console.id] ?: 0L) + 1
@@ -333,12 +330,7 @@ class ConsoleState(
         lastStableSlots[console.id] = ui
         resultBusy[console.id] = true
         val res = withContext(ioDispatcher) {
-            runCatching {
-                live.onConnection { conn ->
-                    QueryExecutor.applyContext(conn, contextSql)
-                    QueryExecutor.execute(conn, stmt) { st -> live.registerStatement(st) }
-                }
-            }
+            runCatching { session.runStatement(stmt, contextSql) }
         }
         resultBusy[console.id] = false
         if (runGens[console.id] != gen) return
@@ -639,7 +631,7 @@ class ConsoleState(
             )
             return null
         }
-        return DialectRegistry.forProfile(profile).sessionContextSql(hit)
+        return connectionsState.sessionOf(profile.id)?.sessionContextSql(hit)
     }
 
     /**
@@ -687,8 +679,8 @@ class ConsoleState(
             )
             return
         }
-        val live = connectionsState.liveConnection(profile.id)
-        if (live == null) {
+        val session = connectionsState.sessionOf(profile.id)
+        if (session == null) {
             runSlots[console.id] = ConsoleRunUi(
                 outcomes = listOf(StatementOutcome(sql = target, error = "连接已断开")),
             )
@@ -708,12 +700,7 @@ class ConsoleState(
         for (stmt in statements) {
             val stmtStarted = System.currentTimeMillis()
             val result = withContext(ioDispatcher) {
-                runCatching {
-                    live.onConnection { conn ->
-                        QueryExecutor.applyContext(conn, contextSql)
-                        QueryExecutor.execute(conn, stmt) { st -> live.registerStatement(st) }
-                    }
-                }
+                runCatching { session.runStatement(stmt, contextSql) }
             }
             if (runGens[console.id] != gen) return // 已被取消/新执行覆盖：丢弃迟到结果
             result.onSuccess { r ->

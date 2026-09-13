@@ -5,7 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import db.ConnectionProfile
 import db.FolderRow
-import jdbc.model.SchemaMeta
+import engine.model.SchemaMeta
 
 /** 连接档案编辑弹窗请求。 */
 sealed interface ConnectionEditorRequest {

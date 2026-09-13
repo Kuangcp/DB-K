@@ -2,11 +2,11 @@ package jdbc
 
 import db.ConnectionProfile
 import db.DbType
-import jdbc.model.ColumnMeta
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.ColumnMeta
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import org.tinylog.Logger
 import java.sql.Connection
 import java.sql.ResultSet
@@ -385,7 +385,7 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
     }
 
     /** PG 的 schema 即执行作用域：search_path 指向所选 schema（引号保大小写）。 */
-    override fun sessionContextSql(schema: jdbc.model.SchemaMeta): String? =
+    override fun sessionContextSql(schema: engine.model.SchemaMeta): String? =
         schema.schema?.let { "SET search_path TO ${quoteIdent(it)}" }
 }
 

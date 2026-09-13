@@ -1,8 +1,8 @@
 package app.ui
 
 import jdbc.CellValue
-import jdbc.QueryColumn
-import jdbc.QueryResult
+import engine.model.QueryColumn
+import engine.model.QueryResult
 import java.sql.Types
 import kotlin.test.Test
 import kotlin.test.assertEquals

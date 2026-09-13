@@ -60,7 +60,7 @@ import app.ui.sqlSyntaxPalette
 import com.neoutils.highlight.compose.remember.rememberAnnotatedString
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import db.ConnectionProfile
-import jdbc.model.SchemaMeta
+import engine.model.SchemaMeta
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

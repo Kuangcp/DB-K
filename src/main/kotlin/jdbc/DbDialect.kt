@@ -2,11 +2,11 @@ package jdbc
 
 import db.ConnectionProfile
 import db.DbType
-import jdbc.model.ColumnMeta
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaObjects
-import jdbc.model.SchemaMeta
+import engine.model.ColumnMeta
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaObjects
+import engine.model.SchemaMeta
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.ResultSet

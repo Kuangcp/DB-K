@@ -113,10 +113,10 @@ src/main/kotlin/
 - [ ] P8 发布验证（Deb / AppImage 干净环境，MSI）——已降为最低优先
 
 下一轮路线（对标 Navicat / DataGrip，详见 [Roadmap.md](Roadmap.md) §6）：
-N1 结果排序/筛选/取更多 → N2 编辑器格式化/查找替换 → N3 增行/删行 →
-**N4 后端抽象重构 → N5 Redis → N6 Elasticsearch** →
-N7 DDL 编辑执行 → N8 导出 JSON/SQL INSERT/Excel → N9 树导航 →
-N10 SSL/驱动管理 → N11 EXPLAIN/会话锁 → N12 发布验证（最低）。
+- [x] N4 后端抽象重构：`engine.DataSourceSession` 契约 + JDBC 为首个实现（`EditableSession` 隔离写回）
+- [ ] N1 结果排序/筛选/取更多 → N2 编辑器格式化/查找替换 → N3 增行/删行 →
+  **N5 Redis → N6 Elasticsearch** → N7 DDL 编辑执行 → N8 导出 JSON/SQL INSERT/Excel →
+  N9 树导航 → N10 SSL/驱动管理 → N11 EXPLAIN/会话锁 → N12 发布验证（最低）。
 
 ## 文档
 

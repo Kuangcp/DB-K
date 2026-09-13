@@ -7,12 +7,12 @@ import androidx.compose.runtime.setValue
 import db.ColumnCache
 import db.ConnectionProfile
 import db.MetaCache
-import jdbc.DialectRegistry
+import engine.DataSourceSession
+import engine.model.ColumnMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import jdbc.LiveConnection
-import jdbc.model.ColumnMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.tinylog.Logger
@@ -52,9 +52,9 @@ class ConnectionsState(
 ) : ConnectionRuntimeView {
 
     private class ConnRuntime(val profile: ConnectionProfile) {
-        val live = LiveConnection(profile)
+        val live: DataSourceSession = LiveConnection(profile)
         /** 编辑器列补全专用的独立元数据连接（懒建；不排队在执行线程后，也不受 sessionContextSql 影响）。 */
-        var metaLive: LiveConnection? = null
+        var metaLive: DataSourceSession? = null
         // 仅 ConnectionsState（外层）修改；对外只经 ConnectionRuntimeView 只读暴露
         var status by mutableStateOf(ConnUiStatus.DISCONNECTED)
         var statusMessage by mutableStateOf<String?>(null)
@@ -293,12 +293,15 @@ class ConnectionsState(
         }
     }
 
-    /** 供查询执行引擎取连接句柄（连接必须在 CONNECTED 才非空）。 */
-    fun liveConnection(profileId: String): LiveConnection? = runtimes[profileId]?.live
+    /** 供查询执行引擎取通用会话句柄（连接必须在 CONNECTED 才非空）。 */
+    fun sessionOf(profileId: String): DataSourceSession? = runtimes[profileId]?.live
+
+    /** JDBC 专属路径（全量流式 CSV 导出等）需要具体实现时使用。 */
+    fun jdbcConnection(profileId: String): LiveConnection? = runtimes[profileId]?.live as? LiveConnection
 
     /** 向某连接的当前执行语句发起取消（UI 取消按钮 / Esc）。 */
     fun cancelCurrentQuery(profileId: String): Boolean =
-        runtimes[profileId]?.live?.cancelCurrentQuery() ?: false
+        runtimes[profileId]?.live?.cancel() ?: false
 
     /** 档案被删除：丢运行时并清磁盘缓存行。 */
     fun forget(profileId: String) {
@@ -328,7 +331,7 @@ class ConnectionsState(
         val rt = runtime(profile)
         val live = rt.metaLive ?: LiveConnection(profile).also { rt.metaLive = it }
         if (!live.isOpen) live.open()
-        live.onConnection { conn -> DialectRegistry.forProfile(profile).loadColumns(conn, schema, table) }
+        live.loadColumns(schema, table)
     }
 
     /**
@@ -344,7 +347,7 @@ class ConnectionsState(
             val rt = runtime(profile)
             val live = rt.metaLive ?: LiveConnection(profile).also { rt.metaLive = it }
             if (!live.isOpen) live.open()
-            live.onConnection { conn -> DialectRegistry.forProfile(profile).tableDdl(conn, schema, name) }
+            live.objectDdl(schema, name)
         }.fold(
             onSuccess = { ddl ->
                 if (ddl.isNullOrBlank()) {
@@ -384,10 +387,10 @@ class ConnectionsState(
         rt: ConnRuntime,
     ): Triple<List<SchemaMeta>, Map<String, SchemaObjects>, String?> {
         val live = rt.live
-        val schemas = live.loadSchemas()
+        val schemas = live.loadNamespaces()
         val objects = linkedMapOf<String, SchemaObjects>()
         val failed = mutableListOf<String>()
-        val lazy = DialectRegistry.forProfile(rt.profile).lazyObjectGroups
+        val lazy = live.capabilities.lazyObjectGroups
         schemas.forEach { s ->
             runCatching {
                 // 懒加载方言：只取组计数 + 关系类核心组（补全/首屏用）；重目录组展开时再拉。

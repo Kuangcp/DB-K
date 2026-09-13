@@ -17,7 +17,9 @@ import app.ui.sqlQualifiedPrefix
 import app.ui.statementRangeAt
 import app.ui.transposeResult
 import org.tinylog.Logger
-import jdbc.model.ObjectKind
+import engine.model.ObjectKind
+import engine.model.QueryColumn
+import engine.model.QueryResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
@@ -113,7 +115,7 @@ private fun smokeColumnCompletion() {
     check(q.qualifier == "u" && q.wordText == "na")
     check(sqlQualifiedPrefix("SELECT 1.5", 10) == null)
 
-    val publicSchema = jdbc.model.SchemaMeta(catalog = null, schema = "public")
+    val publicSchema = engine.model.SchemaMeta(catalog = null, schema = "public")
     check(scope.tables[0].matchesQualifier("u"))
     check(scope.tables[0].matchesQualifier("public.users"))
     check(resolveTableRef(scope.tables[1], listOf(CompletionTable("orders", publicSchema)), listOf(publicSchema), null) == publicSchema)
@@ -385,21 +387,21 @@ private fun smokeDbStore(dir: Path) {
         val cacheProfile = repo.getConnection(pid)!!
         val mc = db.MetaCache(dbFile)
         val schemas = listOf(
-            jdbc.model.SchemaMeta("smoke", null),
-            jdbc.model.SchemaMeta("aux", "public"),
+            engine.model.SchemaMeta("smoke", null),
+            engine.model.SchemaMeta("aux", "public"),
         )
         val objects = mapOf(
-            schemas[0].key to jdbc.model.SchemaObjects(mapOf(
+            schemas[0].key to engine.model.SchemaObjects(mapOf(
                 ObjectKind.TABLE to listOf(
-                    jdbc.model.DbObjectMeta("t1", ObjectKind.TABLE),
-                    jdbc.model.DbObjectMeta("t2", ObjectKind.TABLE),
+                    engine.model.DbObjectMeta("t1", ObjectKind.TABLE),
+                    engine.model.DbObjectMeta("t2", ObjectKind.TABLE),
                 ),
             )),
-            schemas[1].key to jdbc.model.SchemaObjects(mapOf(
-                ObjectKind.TABLE to listOf(jdbc.model.DbObjectMeta("accounts", ObjectKind.TABLE)),
-                ObjectKind.MATERIALIZED_VIEW to listOf(jdbc.model.DbObjectMeta("mv1", ObjectKind.MATERIALIZED_VIEW)),
-                ObjectKind.SEQUENCE to listOf(jdbc.model.DbObjectMeta("seq1", ObjectKind.SEQUENCE)),
-                ObjectKind.TRIGGER to listOf(jdbc.model.DbObjectMeta("trg_ins", ObjectKind.TRIGGER, "accounts")),
+            schemas[1].key to engine.model.SchemaObjects(mapOf(
+                ObjectKind.TABLE to listOf(engine.model.DbObjectMeta("accounts", ObjectKind.TABLE)),
+                ObjectKind.MATERIALIZED_VIEW to listOf(engine.model.DbObjectMeta("mv1", ObjectKind.MATERIALIZED_VIEW)),
+                ObjectKind.SEQUENCE to listOf(engine.model.DbObjectMeta("seq1", ObjectKind.SEQUENCE)),
+                ObjectKind.TRIGGER to listOf(engine.model.DbObjectMeta("trg_ins", ObjectKind.TRIGGER, "accounts")),
             )),
         )
         mc.save(cacheProfile, schemas, objects)
@@ -415,8 +417,8 @@ private fun smokeDbStore(dir: Path) {
         val cc = db.ColumnCache(dbFile)
         val ckey = db.columnObjectKey(schemas[0], "accounts")
         val ccols = listOf(
-            jdbc.model.ColumnMeta("id", "INTEGER", nullable = false, ordinal = 1),
-            jdbc.model.ColumnMeta("name", "TEXT", nullable = true, ordinal = 2),
+            engine.model.ColumnMeta("id", "INTEGER", nullable = false, ordinal = 1),
+            engine.model.ColumnMeta("name", "TEXT", nullable = true, ordinal = 2),
         )
         cc.save(cacheProfile, ckey, ccols)
         check(cc.load(cacheProfile, ckey)?.columns == ccols) { "列缓存读写回环失败" }
@@ -445,7 +447,7 @@ private fun smokeRowUpdater(dir: Path) {
             st.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
             st.execute("INSERT INTO users VALUES (1, 'alice', 30), (2, 'bob', 40)")
         }
-        val schema = jdbc.model.SchemaMeta(null, "main")
+        val schema = engine.model.SchemaMeta(null, "main")
         val cols = SQLiteDialect.loadColumns(conn, schema, "users")
         check(cols.first { it.name == "id" }.primaryKey) { "id 应标记为主键" }
         check(!cols.first { it.name == "name" }.primaryKey) { "name 不应是主键" }
@@ -537,10 +539,10 @@ private fun smokeExternalDrivers(dir: Path) {
             .urlPreview() == "jdbc:oracle:thin:@localhost:1521/XEPDB1",
     )
     check(
-        SqlServerDialect.previewSelect(jdbc.model.SchemaMeta(null, "dbo"), "t") == "SELECT TOP 100 * FROM [dbo].[t]",
+        SqlServerDialect.previewSelect(engine.model.SchemaMeta(null, "dbo"), "t") == "SELECT TOP 100 * FROM [dbo].[t]",
     )
     check(
-        OracleDialect.previewSelect(jdbc.model.SchemaMeta(null, "HR"), "EMP") ==
+        OracleDialect.previewSelect(engine.model.SchemaMeta(null, "HR"), "EMP") ==
             "SELECT * FROM \"HR\".\"EMP\" FETCH FIRST 100 ROWS ONLY",
     )
     Logger.info("[external-drivers] scan/load/connect + SQLServer/Oracle url PASS", "PASS")

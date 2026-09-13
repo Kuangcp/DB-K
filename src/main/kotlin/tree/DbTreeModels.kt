@@ -2,10 +2,10 @@ package tree
 
 import db.ConnectionProfile
 import db.FolderRow
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 
 /** 左侧树行类别。M2：连接行之下支持 schema / 对象组 / 对象。 */
 enum class TreeRowKind {

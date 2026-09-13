@@ -1,8 +1,8 @@
 package app.ui
 
-import jdbc.QueryColumn
-import jdbc.QueryResult
-import jdbc.model.SchemaMeta
+import engine.model.QueryColumn
+import engine.model.QueryResult
+import engine.model.SchemaMeta
 
 /*
  * SQL 编辑器补全 / 结果交互的纯逻辑（app.ui 层但无 compose 依赖，便于后续单测）。

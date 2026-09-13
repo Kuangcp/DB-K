@@ -2,11 +2,11 @@ package app.ui
 
 import jdbc.CellValue
 import jdbc.ColumnValue
-import jdbc.QueryColumn
-import jdbc.QueryResult
+import engine.model.QueryColumn
+import engine.model.QueryResult
 import jdbc.UpdatePlan
 import jdbc.isBinarySqlType
-import jdbc.model.SchemaMeta
+import engine.model.SchemaMeta
 
 /**
  * 查询结果可编辑性的纯逻辑（无 compose 依赖，便于单测）。对应 `doc/EDITABLE_RESULT.md` §2。

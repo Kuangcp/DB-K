@@ -1,4 +1,4 @@
-package jdbc.model
+package engine.model
 
 import kotlinx.serialization.Serializable
 

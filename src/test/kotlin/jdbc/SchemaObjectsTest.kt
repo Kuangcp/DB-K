@@ -1,9 +1,9 @@
 package jdbc
 
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaObjects
-import jdbc.model.isPreviewable
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaObjects
+import engine.model.isPreviewable
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

@@ -1,6 +1,6 @@
 package db
 
-import jdbc.model.SchemaMeta
+import engine.model.SchemaMeta
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.sql.DriverManager

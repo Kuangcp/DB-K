@@ -1,7 +1,7 @@
 package app.core
 
 import jdbc.QueryExecutor
-import jdbc.QueryResult
+import engine.model.QueryResult
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter

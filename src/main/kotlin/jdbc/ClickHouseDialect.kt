@@ -1,9 +1,9 @@
 package jdbc
 
 import db.DbType
-import jdbc.model.ColumnMeta
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.ColumnMeta
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import org.tinylog.Logger
 import java.sql.Connection
 

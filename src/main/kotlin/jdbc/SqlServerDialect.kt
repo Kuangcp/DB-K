@@ -1,7 +1,7 @@
 package jdbc
 
 import db.DbType
-import jdbc.model.SchemaMeta
+import engine.model.SchemaMeta
 import org.tinylog.Logger
 import java.sql.Connection
 

@@ -5,8 +5,8 @@ import db.ColumnCacheStore
 import db.ConnectionProfile
 import db.DbType
 import db.columnObjectKey
-import jdbc.model.ColumnMeta
-import jdbc.model.SchemaMeta
+import engine.model.ColumnMeta
+import engine.model.SchemaMeta
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -9,8 +9,8 @@ import db.DbType
 import db.MetaCache
 import java.sql.Types
 import jdbc.CellValue
-import jdbc.QueryColumn
-import jdbc.QueryResult
+import engine.model.QueryColumn
+import engine.model.QueryResult
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher

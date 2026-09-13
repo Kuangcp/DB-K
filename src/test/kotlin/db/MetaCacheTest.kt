@@ -1,9 +1,9 @@
 package db
 
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.sql.DriverManager

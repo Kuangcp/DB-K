@@ -1,7 +1,7 @@
 package db
 
-import jdbc.model.ColumnMeta
-import jdbc.model.SchemaMeta
+import engine.model.ColumnMeta
+import engine.model.SchemaMeta
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.sql.DriverManager

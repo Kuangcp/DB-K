@@ -1,8 +1,8 @@
 package app.ui
 
-import jdbc.QueryColumn
-import jdbc.QueryResult
-import jdbc.model.SchemaMeta
+import engine.model.QueryColumn
+import engine.model.QueryResult
+import engine.model.SchemaMeta
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

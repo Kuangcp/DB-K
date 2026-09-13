@@ -124,8 +124,8 @@ import db.ConnectionProfile
 import db.SqlHistoryRow
 import jdbc.CellValue
 import jdbc.QueryExecutor
-import jdbc.QueryResult
-import jdbc.model.SchemaMeta
+import engine.model.QueryResult
+import engine.model.SchemaMeta
 import tree.ConnUiStatus
 import tree.TypeBadge
 

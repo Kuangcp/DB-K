@@ -1,7 +1,7 @@
 package app.core
 
-import jdbc.QueryColumn
-import jdbc.QueryResult
+import engine.model.QueryColumn
+import engine.model.QueryResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

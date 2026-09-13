@@ -5,8 +5,8 @@ import db.ColumnCache
 import db.ColumnCacheStore
 import db.ConnectionProfile
 import db.columnObjectKey
-import jdbc.model.ColumnMeta
-import jdbc.model.SchemaMeta
+import engine.model.ColumnMeta
+import engine.model.SchemaMeta
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex

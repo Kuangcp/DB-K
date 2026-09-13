@@ -13,10 +13,13 @@
 
 ## 分层
 
-- `app/` → 依赖 `db/`、`tree/`、`jdbc/`（UI 编排、snapshot 状态）
-- `tree/` → 依赖 `jdbc/model`、`db` 领域类型（只做行派生与渲染，不碰 compose 状态之外的东西）
-- `db/` → 自有 SQLite 存储（connections/folders/sql_history）
-- `jdbc/` → JDBC 运行时；**禁止 import compose/coroutines**（阻塞 API，由 app 层以 `Dispatchers.IO` 包裹）
+- `app/` → 依赖 `db/`、`tree/`、`jdbc/`、`engine/`（UI 编排、snapshot 状态）
+- `tree/` → 依赖 `engine/model`、`db` 领域类型（只做行派生与渲染，不碰 compose 状态之外的东西）
+- `db/` → 自有 SQLite 存储（connections/folders/sql_history）；依赖 `engine/model`
+- `jdbc/` → JDBC 后端（`LiveConnection` 实现 `engine.DataSourceSession`）；**禁止 import compose/coroutines**
+- `engine/` → **协议无关契约层**（`DataSourceSession` / `BackendCapabilities` / `Protocol` + `engine/model`）：
+  **纯叶层，不得 import `jdbc`/`db`/`app`/compose/coroutines**；新数据源（Redis / ES）实现同一接口，
+  JDBC 专属能力（主键写回等）另立接口（如 `jdbc.EditableSession`），不污染通用层。
 - 状态即 snapshot：UI 可观察状态一律 `mutableStateOf`，读写经 `app/state` 的类方法
 
 ## 主题适配（主题切换 / 深色可读性）★ 必读

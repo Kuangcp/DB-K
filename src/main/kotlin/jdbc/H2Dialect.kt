@@ -8,6 +8,6 @@ import db.DbType
  */
 object H2Dialect : GenericDialect(DbType.H2, "org.h2.Driver") {
     /** H2 的 schema 即作用域：SET SCHEMA 切过去（引号保大小写）。 */
-    override fun sessionContextSql(schema: jdbc.model.SchemaMeta): String? =
+    override fun sessionContextSql(schema: engine.model.SchemaMeta): String? =
         schema.schema?.let { "SET SCHEMA ${quoteIdent(it)}" }
 }

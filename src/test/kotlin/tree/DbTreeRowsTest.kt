@@ -3,10 +3,10 @@ package tree
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
-import jdbc.model.DbObjectMeta
-import jdbc.model.ObjectKind
-import jdbc.model.SchemaMeta
-import jdbc.model.SchemaObjects
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
+import engine.model.SchemaMeta
+import engine.model.SchemaObjects
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

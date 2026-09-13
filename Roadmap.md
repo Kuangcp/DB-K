@@ -91,7 +91,7 @@
 ## 6. 新一轮路线（按优先级）
 
 优先级原则：**日常查询闭环（N1–N3）→ 多协议数据源（N4–N6）→ 对象与数据流转（N7–N9）→ 连接/运维（N10–N11）→ 发布（N12）**。
-每阶段独立可交付、可单独验收。
+每阶段独立可交付、可单独验收。N4（后端抽象）已完成，为 N5 Redis / N6 ES 铺好接口。
 
 ### 第一优先：日常查询闭环
 
@@ -122,10 +122,16 @@
 
 ### 第二优先：多协议后端（NoSQL，设计见 §7）
 
-#### N4 后端抽象重构（行为不变）
-- 将 `LiveConnection` + `DbDialect` 的能力抽到 `engine/` 的 `DataSourceSession` 接口，JDBC 变成其一个实现；
-  纯重构 + 全测试回归，**外部行为零变化**。
-- **验收**：`compileKotlin / test / smokeJdbc` 全绿且无功能差异。
+#### N4 后端抽象重构（行为不变）✅ 已实现
+- 新增 `engine/` 协议无关契约层：`DataSourceSession`（元数据 + `runStatement` + `cancel`）、
+  `BackendCapabilities` 能力位、`Protocol` / `EditorLanguage`；中立模型移到 `engine/model`
+  （`SchemaMeta` / `SchemaObjects` / `ColumnMeta` / `QueryResult` 等，`engine` 不反向依赖 `jdbc`/`db`）。
+- `LiveConnection` 实现 `DataSourceSession`；JDBC 专属写回另立 `jdbc.EditableSession`
+  （`applyUpdatePlans`），app 层按能力位判断，不再直接碰 `Connection`。
+- `ConnectionsState` 改持 `DataSourceSession`（新增 `sessionOf`，JDBC 专属路径用 `jdbcConnection`）；
+  `ConsoleState` 的执行/刷新/提交经会话接口，`runStatement` 内部封装 context 切换与 cancel 登记。
+- **行为零变化**：`compileKotlin / test / smokeJdbc` 全绿；新增 `JdbcSessionContractTest` 锁定契约与能力位。
+- **验收**：✅ 无功能差异（待后续 Redis/ES 实现同一接口时验证扩展点）。
 
 #### N5 Redis 后端（只读浏览 + 命令台）
 - 连接（host/port/password/db）→ 命名空间 = DB → 对象 = key（`SCAN` 游标懒加载，复用 P6 思路）；
