@@ -385,8 +385,11 @@ private fun AppBody(
         // 复用该数据源已有控制台（优先最近激活；全关闭则重开最近改动；都没有则新建 控制台 1）——
         // 不因双击而重复新建控制台。
         val target = consoleState.activateForProfile(p.id) ?: return
-        // 会话型目标（Redis DB / 多 schema）：预览对象的命名空间随之切换
-        if (session.capabilities.sessionContext && row.schema != null) {
+        // 会话型目标（多 schema）：预览对象的命名空间随之切换；
+        // Redis DB 是连接级过滤器（flatNamespaceOf），执行目标与 console.target 解耦，不在此写
+        if (!connectionsState.flatNamespaceOf(p.id) &&
+            session.capabilities.sessionContext && row.schema != null
+        ) {
             consoleState.setTarget(target.id, row.schema.displayName)
         }
         // 交给编辑器在目标控制台光标/选区处插入，不自动执行
