@@ -32,7 +32,7 @@
 | ClickHouse | 内置驱动（HTTP，默认端口 8123） | 默认关压缩，兼容反向代理链路 |
 | SQL Server | **外部驱动**（`drivers/`） | `mssql-jdbc` jar 放入数据目录 `drivers/` |
 | Oracle | **外部驱动**（`drivers/`） | `ojdbc` jar 放入数据目录 `drivers/`（license 限制，不内置） |
-| Redis | 内置 Jedis（非 JDBC） | 命名空间 = DB，对象 = key（`SCAN` 懒加载，pipeline `TYPE`）；命令台可跑任意原生命令 |
+| Redis | 内置 Jedis（非 JDBC） | 命名空间 = DB 以**过滤条**呈现（DB 下拉 + 类型下拉 + key 模式搜索）；键 = `SCAN MATCH` 游标分页 + pipeline `TYPE`/`TTL`；命令台可跑任意原生命令 |
 
 > **外部驱动**：把驱动 jar（及它自带的依赖 jar）放进数据目录下的 `drivers/` 目录
 > （Linux `~/.local/share/db-k/drivers/`，可用 `-Ddbk.driversDir=<dir>` 覆盖），**重启应用**后生效。
@@ -115,7 +115,7 @@ src/main/kotlin/
 
 下一轮路线（对标 Navicat / DataGrip，详见 [Roadmap.md](Roadmap.md) §6）：
 - [x] N4 后端抽象重构：`engine.DataSourceSession` 契约 + JDBC 为首个实现（`EditableSession` 隔离写回）
-- [x] N5 Redis 后端：Jedis 会话实现 + 数据驱动对象组（`ObjectKind.KEY`）+ `SCAN` 懒加载 + 危险命令确认
+- [x] N5 Redis 后端：Jedis 会话实现 + 数据驱动对象组（`ObjectKind.KEY`）+ 命名空间过滤器（DB/类型/key 模式搜索，`SCAN` 游标分页）+ 危险命令确认
 - [ ] N1 结果排序/筛选/取更多 → N2 编辑器格式化/查找替换 → N3 增行/删行 →
   N6 Elasticsearch → N7 DDL 编辑执行 → N8 导出 JSON/SQL INSERT/Excel →
   N9 树导航 → N10 SSL/驱动管理 → N11 EXPLAIN/会话锁 → N12 发布验证（最低）。

@@ -3,6 +3,8 @@ package engine
 import engine.model.ColumnMeta
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
+import engine.model.ObjectSearch
+import engine.model.ObjectSearchResult
 import engine.model.QueryResult
 import engine.model.SQL_OBJECT_KINDS
 import engine.model.SchemaMeta
@@ -52,6 +54,13 @@ interface DataSourceSession : AutoCloseable {
 
     /** 单一类型组的正文（组展开时调用）。 */
     fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta>
+
+    /**
+     * 对象搜索（支持 pattern / 类型过滤 / 游标分页）。默认忽略搜索条件，退回 [loadObjectsForKind]。
+     * 仅当 [capabilities.lazyObjectGroups] 且后端支持搜索（如 Redis `SCAN MATCH`）时才有分页意义。
+     */
+    fun searchObjects(ns: SchemaMeta, kind: ObjectKind, search: ObjectSearch): ObjectSearchResult =
+        ObjectSearchResult(loadObjectsForKind(ns, kind))
 
     /** 探测单表列清单（编辑器补全 / 结果编辑定位）。 */
     fun loadColumns(ns: SchemaMeta?, table: String): List<ColumnMeta>

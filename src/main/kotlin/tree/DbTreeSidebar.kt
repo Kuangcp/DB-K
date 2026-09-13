@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
@@ -32,10 +33,13 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,11 +51,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -68,6 +74,7 @@ import db.ConsoleRecord
 import db.DbType
 import db.FolderRow
 import engine.Protocol
+import engine.model.DbObjectMeta
 import engine.model.ObjectKind
 import engine.model.displayNoun
 import engine.model.isPreviewable
@@ -100,6 +107,14 @@ class RowActions(
     val onPreviewTable: () -> Unit = {},
     /** DB_OBJECT 行（表/视图/物化视图）：浮窗查看对象定义 DDL。 */
     val onViewDdl: () -> Unit = {},
+    /** FILTER 行：切换 DB（Redis）。 */
+    val onSelectDb: (String) -> Unit = {},
+    /** FILTER 行：切换 key 类型过滤（null = 全部）。 */
+    val onSelectKeyType: (String?) -> Unit = {},
+    /** FILTER 行：key pattern 变化（调用方防抖）。 */
+    val onKeyPatternChange: (String) -> Unit = {},
+    /** LOAD_MORE 行：「继续扫描」下一页。 */
+    val onLoadMore: () -> Unit = {},
 )
 
 /** 每层缩进宽度（dp）与行首/行尾内边距。
@@ -165,6 +180,14 @@ fun DbTreeSidebar(
     onExportProfilesWithPasswords: () -> Unit = {},
     /** 连接档案导入（合并，不覆盖现有）。 */
     onImportProfiles: () -> Unit = {},
+    /** 过滤条：切换 DB（Redis）。 */
+    onSelectDb: (ConnectionProfile, String) -> Unit = { _, _ -> },
+    /** 过滤条：切换 key 类型过滤（null = 全部）。 */
+    onSelectKeyType: (ConnectionProfile, String?) -> Unit = { _, _ -> },
+    /** 过滤条：key pattern 变化（调用方防抖后再扫）。 */
+    onKeyPatternChange: (ConnectionProfile, String) -> Unit = { _, _ -> },
+    /** 「继续扫描」：拉取下一页键（Redis `SCAN` 游标）。 */
+    onLoadMoreObjects: (ConnectionProfile) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
@@ -191,7 +214,7 @@ fun DbTreeSidebar(
                         TreeRowView(
                             row = row,
                             selected = row.key == selectedKey,
-                            canExpand = when (row.kind) {
+                            canExpand = row.expandable && when (row.kind) {
                                 TreeRowKind.FOLDER -> row.childCount > 0
                                 TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
                                 TreeRowKind.SCHEMA -> true
@@ -222,6 +245,10 @@ fun DbTreeSidebar(
                                 onCreateConsole = { row.profile?.let(onCreateConsoleForProfile) },
                                 onPreviewTable = { onPreviewObject(row) },
                                 onViewDdl = { onViewObjectDef(row) },
+                                onSelectDb = { db -> row.profile?.let { onSelectDb(it, db) } },
+                                onSelectKeyType = { t -> row.profile?.let { onSelectKeyType(it, t) } },
+                                onKeyPatternChange = { p -> row.profile?.let { onKeyPatternChange(it, p) } },
+                                onLoadMore = { row.profile?.let(onLoadMoreObjects) },
                             ),
                         )
                     }
@@ -590,8 +617,8 @@ private fun TreeRowView(
     val doubleTapMs = LocalViewConfiguration.current.doubleTapTimeoutMillis
     var lastClickMs by remember { mutableStateOf(0L) }
     val menu = rowMenu(row, actions)
-    // 组行可点击（单击选中、箭头/双击展开折叠），仅占位符行不可交互
-    val clickable = row.kind != TreeRowKind.PLACEHOLDER
+    // 组行可点击（单击选中、箭头/双击展开折叠）；占位符与过滤条不可整行点击（控件自己处理）
+    val clickable = row.kind != TreeRowKind.PLACEHOLDER && row.kind != TreeRowKind.FILTER
 
     val baseModifier = Modifier
         .fillMaxWidth()
@@ -603,6 +630,8 @@ private fun TreeRowView(
             val double = lastClickMs != 0L && now - lastClickMs < doubleTapMs
             lastClickMs = if (double) 0L else now
             when {
+                // 单击「继续扫描」：拉下一页键
+                row.kind == TreeRowKind.LOAD_MORE -> actions.onLoadMore()
                 // 双击连接行：未连接/失败 → 连接（CONNECTING 忽略，避免重复触发）
                 double && row.kind == TreeRowKind.CONNECTION && row.connStatus != ConnUiStatus.CONNECTED ->
                     if (row.connStatus == ConnUiStatus.CONNECTING) onSelect() else onToggle()
@@ -616,7 +645,11 @@ private fun TreeRowView(
         .padding(start = (ROW_START_PAD_DP + row.depth * INDENT_PER_DEPTH_DP).dp, end = 6.dp)
         .padding(vertical = if (row.kind == TreeRowKind.OBJECT_GROUP) 1.dp else 3.dp)
 
-    val content: @Composable () -> Unit = {
+    val content: @Composable () -> Unit = content@{
+        if (row.kind == TreeRowKind.FILTER) {
+            FilterBar(row, actions)
+            return@content
+        }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             when (row.kind) {
                 TreeRowKind.FOLDER -> {
@@ -685,8 +718,34 @@ private fun TreeRowView(
                                 modifier = Modifier.padding(start = 4.dp),
                             )
                         }
+                        keySuffix(row.dbObject)?.let {
+                            Text(
+                                it,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.38f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
                     }
                 }
+                TreeRowKind.LOAD_MORE -> {
+                    Text(
+                        "↻",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colors.primary.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(start = 3.dp),
+                    )
+                    Text(
+                        row.name,
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colors.primary.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 5.dp),
+                    )
+                }
+                TreeRowKind.FILTER -> Unit // 由 content 开头的 early-return 渲染
                 TreeRowKind.PLACEHOLDER -> {
                     when (row.placeholderKind) {
                         PlaceholderKind.LOADING -> CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.5.dp)
@@ -786,6 +845,131 @@ private fun ExpandArrow(expanded: Boolean, onClick: () -> Unit) {
             tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
             modifier = Modifier.size(16.dp),
         )
+    }
+}
+
+/** Redis key 行后缀：`类型 · TTL`（非 KEY 对象返回 null）。 */
+private fun keySuffix(obj: DbObjectMeta?): String? {
+    if (obj == null || obj.kind != ObjectKind.KEY) return null
+    val type = obj.detail ?: "?"
+    val ttl = obj.ttlSeconds?.let(::ttlLabel) ?: "永久"
+    return "$type · $ttl"
+}
+
+private fun ttlLabel(seconds: Long): String = when {
+    seconds < 60 -> "${seconds}s"
+    seconds < 3600 -> "${seconds / 60}m"
+    seconds < 86400 -> "${seconds / 3600}h"
+    else -> "${seconds / 86400}d"
+}
+
+/** key 类型过滤选项（首项 = 全部）。 */
+private val KEY_TYPE_OPTIONS = listOf("全部", "string", "hash", "list", "set", "zset", "stream")
+
+/** Redis 过滤条：DB 下拉 + 类型下拉 + key pattern 搜索（`SCAN MATCH`）。 */
+@Composable
+private fun FilterBar(row: TreeRowInfo, actions: RowActions) {
+    val filter = row.filter ?: return
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilterDropdown(label = "DB", value = filter.db, options = filter.dbOptions, onSelect = actions.onSelectDb)
+            Spacer(Modifier.width(6.dp))
+            FilterDropdown(
+                label = "类型",
+                value = filter.type ?: "全部",
+                options = KEY_TYPE_OPTIONS,
+                onSelect = { actions.onSelectKeyType(if (it == "全部") null else it) },
+            )
+        }
+        // "*" 是内部“无过滤”表示，UI 上以空 + 占位提示呈现
+        val display = if (filter.pattern == "*") "" else filter.pattern
+        var text by remember(row.key, filter.db) { mutableStateOf(display) }
+        LaunchedEffect(display) { if (text != display) text = display }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 3.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
+                .padding(horizontal = 6.dp),
+        ) {
+            Icon(
+                Icons.Filled.Search, null,
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+                modifier = Modifier.size(13.dp),
+            )
+            BasicTextField(
+                value = text,
+                onValueChange = {
+                    text = it
+                    actions.onKeyPatternChange(it)
+                },
+                singleLine = true,
+                textStyle = TextStyle(fontSize = 11.5.sp, color = MaterialTheme.colors.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colors.primary),
+                modifier = Modifier.weight(1f).padding(horizontal = 4.dp, vertical = 4.dp),
+                decorationBox = { inner ->
+                    Box {
+                        if (text.isEmpty()) {
+                            Text(
+                                "key 模式，如 user:*",
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                                maxLines = 1,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+            if (text.isNotEmpty()) {
+                Icon(
+                    Icons.Filled.Close, "清空",
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+                    modifier = Modifier.size(13.dp).clickable {
+                        text = ""
+                        actions.onKeyPatternChange("")
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** 紧凑下拉（过滤条用）：左侧小标签 + 当前值 + 下箭头。 */
+@Composable
+private fun FilterDropdown(label: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
+                .clickable { open = true }
+                .padding(start = 6.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+        ) {
+            Text(label, fontSize = 10.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f))
+            Spacer(Modifier.width(3.dp))
+            Text(value, fontSize = 11.5.sp, color = MaterialTheme.colors.onSurface, maxLines = 1)
+            Icon(
+                Icons.Filled.KeyboardArrowDown, null,
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.size(13.dp),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEach { opt ->
+                DropdownMenuItem(onClick = { open = false; onSelect(opt) }) {
+                    Text(
+                        opt,
+                        fontSize = 12.sp,
+                        color = if (opt == value) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface,
+                    )
+                }
+            }
+        }
     }
 }
 

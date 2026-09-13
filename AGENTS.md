@@ -104,7 +104,8 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
    consoles（元数据 + 光标）/ sql_history / meta_cache。加字段 = `AppDatabase` 版本 +1 的迁移
    + repository 读写 + 模型字段（如 `ConsoleRecord`），删实体靠 FK 级联清理，别手写清理。
 2. **应用/窗口级全局偏好 → `<dataDir>/*.properties`（`app/settings/*Prefs`）**：theme、window、
-   tree-expand、editor（编辑器字体/字号）。都是标量、无查询/级联需求；新增同类项合并进已有文件，别每项开一个文件。
+   tree-expand、editor（编辑器字体/字号）、redis（按连接的 DB/pattern/类型）。都是标量、无查询/级联需求；
+   新增同类项合并进已有文件，别每项开一个文件。
 3. **大块正文 → 独立文件**，DB 只存路径（`consoles/<id>.sql`）。
 4. **纯瞬态 → 只放内存**：结果集（`runSlots`）、补全弹层、错误文案等，可随时重建，不落盘。
 5. **外部 JDBC 驱动 jar → `<dataDir>/drivers/`**（`-Ddbk.driversDir` 可覆盖），独立 classloader 加载（`jdbc/ExternalDrivers.kt`），启动时 `ensureLoaded()`，新增 jar 需重启。

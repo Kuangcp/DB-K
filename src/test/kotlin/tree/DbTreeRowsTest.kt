@@ -5,6 +5,7 @@ import db.DbType
 import db.FolderRow
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
+import engine.model.ObjectSearch
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
 import kotlin.test.Test
@@ -22,6 +23,11 @@ private class FakeRuntime : ConnectionRuntimeView {
     val objectsBySchema = mutableMapOf<Pair<String, String>, SchemaObjects?>()
     val objectsLoading = mutableMapOf<String, Boolean>()
     val groupLoading = mutableMapOf<Triple<String, String, ObjectKind>, Boolean>()
+    val flat = mutableMapOf<String, Boolean>()
+    val activeNs = mutableMapOf<String, SchemaMeta>()
+    val searches = mutableMapOf<String, ObjectSearch>()
+    val hasMore = mutableMapOf<Pair<String, ObjectKind>, Boolean>()
+    val groups = mutableMapOf<String, List<ObjectKind>>()
 
     override fun statusOf(profileId: String) = statuses[profileId] ?: ConnUiStatus.DISCONNECTED
     override fun statusMessageOf(profileId: String) = messages[profileId]
@@ -31,6 +37,12 @@ private class FakeRuntime : ConnectionRuntimeView {
     override fun objectsLoadingOf(profileId: String, schemaKey: String) = objectsLoading[profileId] ?: false
     override fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind) =
         groupLoading[Triple(profileId, schemaKey, kind)] ?: false
+    override fun flatNamespaceOf(profileId: String) = flat[profileId] ?: false
+    override fun activeNamespaceOf(profileId: String) = activeNs[profileId]
+    override fun objectSearchOf(profileId: String) = searches[profileId] ?: ObjectSearch()
+    override fun objectsHasMoreOf(profileId: String, schemaKey: String, kind: ObjectKind) =
+        hasMore[profileId to kind] ?: false
+    override fun objectGroupsOf(profileId: String) = groups[profileId] ?: engine.model.SQL_OBJECT_KINDS
 }
 
 class DbTreeRowsTest {
@@ -296,5 +308,99 @@ class DbTreeRowsTest {
         assertEquals(ConnUiStatus.CONNECTED, connRow.connStatus)
         assertEquals(1, connRow.childCount)
         assertNull(connRow.message)
+    }
+
+    @Test
+    fun `flat namespace renders filter and keys without schema rows`() {
+        val db0 = SchemaMeta(null, "db0")
+        val runtime = FakeRuntime().apply {
+            statuses["r1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["r1"] = listOf(db0, SchemaMeta(null, "db1"))
+            flat["r1"] = true
+            activeNs["r1"] = db0
+            groups["r1"] = listOf(ObjectKind.KEY)
+            searches["r1"] = ObjectSearch(pattern = "user:*", type = "hash")
+            objectsBySchema["r1" to db0.key] = SchemaObjects(
+                objects = mapOf(
+                    ObjectKind.KEY to listOf(DbObjectMeta("user:1", ObjectKind.KEY, detail = "hash", ttlSeconds = 120)),
+                ),
+                counts = mapOf(ObjectKind.KEY to 42),
+            )
+            hasMore["r1" to ObjectKind.KEY] = true
+        }
+        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS, database = "0")
+        val out = rows(
+            connections = listOf(redis),
+            expandedConnectionIds = setOf("r1"),
+            runtime = runtime,
+        )
+        assertEquals(0, out.count { it.kind == TreeRowKind.SCHEMA })
+        val filter = out.single { it.kind == TreeRowKind.FILTER }.filter!!
+        assertEquals(listOf("db0", "db1"), filter.dbOptions)
+        assertEquals("db0", filter.db)
+        assertEquals("user:*", filter.pattern)
+        assertEquals("hash", filter.type)
+        val group = out.single { it.kind == TreeRowKind.OBJECT_GROUP }
+        assertEquals(ObjectKind.KEY, group.groupKind)
+        assertEquals("键", group.name)
+        // 有过滤时标题计数 = 已加载的匹配数（不是 DBSIZE）
+        assertEquals(1, group.childCount)
+        assertFalse(group.expandable)
+        assertTrue(group.expanded)
+        assertEquals("user:1", out.single { it.kind == TreeRowKind.DB_OBJECT }.name)
+        assertEquals("继续扫描…", out.single { it.kind == TreeRowKind.LOAD_MORE }.name)
+    }
+
+    @Test
+    fun `flat namespace uses authoritative total when unfiltered`() {
+        val db0 = SchemaMeta(null, "db0")
+        val runtime = FakeRuntime().apply {
+            statuses["r1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["r1"] = listOf(db0)
+            flat["r1"] = true
+            activeNs["r1"] = db0
+            groups["r1"] = listOf(ObjectKind.KEY)
+            objectsBySchema["r1" to db0.key] = SchemaObjects(
+                objects = mapOf(ObjectKind.KEY to listOf(DbObjectMeta("k1", ObjectKind.KEY, detail = "string"))),
+                counts = mapOf(ObjectKind.KEY to 42),
+            )
+        }
+        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS)
+        val out = rows(connections = listOf(redis), expandedConnectionIds = setOf("r1"), runtime = runtime)
+        val group = out.single { it.kind == TreeRowKind.OBJECT_GROUP }
+        assertEquals(42, group.childCount)
+    }
+
+    @Test
+    fun `flat namespace shows no-match hint when filter empties result`() {
+        val db0 = SchemaMeta(null, "db0")
+        val runtime = FakeRuntime().apply {
+            statuses["r1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["r1"] = listOf(db0)
+            flat["r1"] = true
+            activeNs["r1"] = db0
+            groups["r1"] = listOf(ObjectKind.KEY)
+            searches["r1"] = ObjectSearch(pattern = "nope:*")
+            objectsBySchema["r1" to db0.key] = SchemaObjects(
+                objects = mapOf(ObjectKind.KEY to emptyList()),
+                counts = mapOf(ObjectKind.KEY to 42),
+            )
+        }
+        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS)
+        val out = rows(connections = listOf(redis), expandedConnectionIds = setOf("r1"), runtime = runtime)
+        assertEquals(0, out.count { it.kind == TreeRowKind.OBJECT_GROUP })
+        assertTrue(out.any { it.kind == TreeRowKind.PLACEHOLDER && it.name == "无匹配的键" })
+    }
+
+    @Test
+    fun `flat namespace without active db shows hint`() {
+        val runtime = FakeRuntime().apply {
+            statuses["r1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["r1"] = listOf(SchemaMeta(null, "db0"))
+            flat["r1"] = true
+        }
+        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS)
+        val out = rows(connections = listOf(redis), expandedConnectionIds = setOf("r1"), runtime = runtime)
+        assertEquals("尚未选择库", out.single { it.kind == TreeRowKind.PLACEHOLDER }.name)
     }
 }

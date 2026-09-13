@@ -140,11 +140,21 @@
 - **对象组数据驱动**（N5 顺带重构）：`ObjectKind` 新增 `KEY` + `SQL_OBJECT_KINDS`；
   `DataSourceSession.objectGroups()` 由会话提供，树不再硬编码组枚举（`ObjectGroupKind` 删除，
   `TreeRowInfo.groupKind: ObjectKind?`），JDBC 维持原 11 组，Redis 仅「键」组。
-- 命名空间 = DB（`CONFIG GET databases` 探测，失败回落 db0–db15）；连库只取 `DBSIZE` 计数，
-  键组**完全懒加载**（展开触发 `SCAN` 游标分页，上限 1000 + pipeline `TYPE` 标注类型）。
+- **命名空间即过滤器（Redis 浏览重构）**：`BackendCapabilities.namespaceAsFilter=true` 时，DB 不再是树的一级，
+  连接节点下直接是「过滤条（DB 下拉 + 类型下拉 + key 模式搜索）+ 键组」；同时只有**一个当前 DB**
+  （`ConnectionsState.activeNamespaceOf` 为权威值，树过滤条与工作台 TargetSwitcher 双向同步）。
+  切 DB 只保留该 DB 的键缓存并重扫；pattern 输入 300ms 防抖后重扫（`SCAN MATCH`）。
+- **键搜索 / 分页 / 标注**：`DataSourceSession.searchObjects(ns, KEY, ObjectSearch)` 返回
+  `ObjectSearchResult(objects, nextCursor, finished)`；`RedisSession` 用 `SCAN MATCH ... COUNT 200`
+  分批扫描（去重），凑够 500 条或扫完为止，超过则树底「继续扫描（已显示 N）」按游标续拉；
+  每页 pipeline `TYPE`+`TTL` 标注行尾「类型 · TTL」。类型过滤在客户端完成（Jedis 5.2 `ScanParams` 无 `TYPE`）。
+  过滤条的 DB/pattern/类型按连接持久化到 `<dataDir>/redis.properties`（`app/settings/RedisPrefs`）。
+- 命名空间列表 = DB（`CONFIG GET databases` 探测，失败回落 db0–db15）；连库只取 `DBSIZE` 计数，
+  键组完全懒加载（仅在选中 DB 时拉首页），且**键易变、绕过 `MetaCache`**。
 - 双击 key → 按类型生成查看命令（`GET`/`HGETALL`/`LRANGE`/`SMEMBERS`/`ZRANGE`/`XRANGE`），
-  控制台目标切到该 DB 执行；命令台可跑任意原生命令（含写命令），回复统一转二维网格
-  （`HGETALL`/`CONFIG` 双列，嵌套数组扁平化，nil/空集合占位）。
+  控制台目标解析见 `ConsoleState.sessionContextSqlFor`：flat 协议用连接级 `activeDb`，与 `console.target` 解耦
+  （Redis 工作台隐藏 TargetSwitcher 的「默认」项，标签显示「DB」）；命令台可跑任意原生命令（含写命令），
+  回复统一转二维网格（`HGETALL`/`CONFIG` 双列，嵌套数组扁平化，nil/空集合占位）。
 - **危险命令二次确认**：`RedisProtocol.dangerousCommand`（`FLUSHALL`/`FLUSHDB`/`SHUTDOWN`/
   `SWAPDB`/`DEBUG`/`SCRIPT`/`REPLICAOF`）；`ConsoleState` 注入 suspend 钩子 → 复用 `ConfirmDialog`。
 - 接线：`app/state/SessionFactory` 按 `dbType.protocol` 创建会话（唯一知道所有实现的地方）；
@@ -152,7 +162,8 @@
   连接编辑弹窗「测试连接」改走 `SessionFactory`，Redis 显示「连接串」而非 JDBC URL。
 - **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `RedisProtocolTest`（9）、`RedisSessionTest`（3）、
   `SessionFactoryTest`（2）；新增 `gradle smokeRedis` 真服务端自检（建连 / 五类键 / SCAN+TYPE / 命令渲染 /
-  取消重连），已对无密码、`requirepass`、ACL user 三种服务端实测通过。⚠️ Compose UI 交互待人工验收。
+  搜索+类型过滤+TTL / 600 键分页去重 / 取消重连），已对无密码、`requirepass`、ACL user 三种服务端实测通过。
+  ⚠️ Compose UI 交互待人工验收。
 
 #### N6 Elasticsearch 后端（索引浏览 + DSL 查询）
 - 连接（URL / 账号 / API key）→ 命名空间 = 集群 → 对象 = index/alias；
@@ -246,7 +257,7 @@ interface DataSourceSession : AutoCloseable {
   （走现有查看器 / JSON 树），作为 `StatementOutcome` 的一种形态。
 
 ### 7.3 树与结果如何复用
-- 树：命名空间沿用 `SchemaMeta`（Redis = `db0..db15`，ES = 集群名）；对象沿用 `SchemaObjects` + `ObjectKind`
+- 树：命名空间沿用 `SchemaMeta`（Redis = `db0..db15` 但以过滤条呈现，ES = 集群名）；对象沿用 `SchemaObjects` + `ObjectKind`
   （Redis key 类型 / ES index），懒加载沿用 P6 的 `lazyGroups`。
 - 结果：ES 文档 → 行 = 文档、列 = `_id/_score/_source`（`_source` 可双击进 JSON 树）；
   Redis → key/value/ttl 网格 + value viewer。
@@ -255,11 +266,13 @@ interface DataSourceSession : AutoCloseable {
 ### 7.4 Redis 设计要点（已实现，见 N5）
 - **连接**：host / port / password（支持 ACL user）/ db；无 JDBC URL，编辑弹窗显示 `redis://host:port/db`。
 - **客户端选型**：**Jedis**（阻塞式，契合「阻塞 API + app 层 IO 包裹」）；Lettuce 需 Netty，暂不引。
-- **浏览**：`SCAN` 游标分页 + pipeline `TYPE`；对象组只有一个「键」，连库只取 `DBSIZE`。
+- **浏览（命名空间即过滤器）**：DB 不进树层级，而是连接下的过滤条（DB 下拉 + 类型下拉 + key 模式搜索）；
+  `SCAN MATCH` 游标分页，「继续扫描」续拉；每页 pipeline `TYPE`+`TTL` 作文本后缀；
+  同时只查看一个 DB（`activeDb`），树与工作台同步。
 - **查看**：双击 key 按类型生成查看命令，在控制台出二维网格（非表格值走占位/扁平化文本）。
 - **命令台**：任意原生命令（含写命令），回复统一转二维结果；危险命令二次确认。
 - **未做**：专用 value viewer（JSON 树 / 图片 / TTL 编辑）、命令补全、Redis 命令语法高亮
-  （`editorLanguage` 能力位已预留）。
+  （`editorLanguage` 能力位已预留）、工作台内表格式 key 浏览器（方案 B，暂不做）。
 
 ### 7.5 Elasticsearch 设计要点
 - **连接**：URL / 用户名密码 / API key（HTTPS 支持）。

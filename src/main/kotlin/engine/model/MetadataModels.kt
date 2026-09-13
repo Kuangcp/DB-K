@@ -85,6 +85,29 @@ data class DbObjectMeta(
     val tableName: String? = null,
     /** 后端自定义提示（如 Redis key 类型），供预览/展示用。 */
     val detail: String? = null,
+    /** 剩余 TTL 秒（Redis 等；null / <0 = 无过期或未知）。 */
+    val ttlSeconds: Long? = null,
+)
+
+/**
+ * 对象搜索条件（非 SQL 后端用；SQL 后端忽略）。
+ * @param pattern  glob 模式（Redis `SCAN MATCH`；`*` 为全部）
+ * @param type     类型过滤（Redis key 类型；null = 全部）
+ * @param cursor   分页游标（null = 首屏；由上次结果的 [ObjectSearchResult.nextCursor] 回传）
+ */
+data class ObjectSearch(
+    val pattern: String = "*",
+    val type: String? = null,
+    val cursor: String? = null,
+)
+
+/** 一次对象搜索的结果（非 SQL 后端分页）。 */
+data class ObjectSearchResult(
+    val objects: List<DbObjectMeta>,
+    /** 继续翻页的游标；null = 已扫完。 */
+    val nextCursor: String? = null,
+    /** 本次是否把游标范围内全部扫完（`SCAN` 返回 0）。 */
+    val finished: Boolean = true,
 )
 
 /**
@@ -114,6 +137,9 @@ data class SchemaObjects(
 
     /** 展示计数：已加载组取实际条数（最可信），否则取 [counts]。 */
     fun countOf(kind: ObjectKind): Int = objects[kind]?.size ?: counts[kind] ?: 0
+
+    /** 权威总数：优先 [counts]（分页加载时正文可能只有一页，但总数仍取自 DBSIZE 等计数）。 */
+    fun totalOf(kind: ObjectKind): Int = counts[kind] ?: objects[kind]?.size ?: 0
 
     /** 该组正文是否已加载（false 且 [countOf] > 0 表示可懒加载）。 */
     fun isLoaded(kind: ObjectKind): Boolean = objects.containsKey(kind)

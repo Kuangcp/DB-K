@@ -30,6 +30,7 @@ class RedisSessionTest {
         assertTrue(s.capabilities.objectPreview)
         assertTrue(s.capabilities.sessionContext)
         assertTrue(s.capabilities.lazyObjectGroups)
+        assertTrue(s.capabilities.namespaceAsFilter)
         assertEquals(listOf(ObjectKind.KEY), s.objectGroups())
         assertFalse(s.isOpen)
     }
