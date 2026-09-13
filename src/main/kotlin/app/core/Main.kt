@@ -365,7 +365,10 @@ private fun AppBody(
         return "控制台 $n"
     }
 
-    /** 双击对象 → 预览（SQL 后端 = SELECT 前 100 行；Redis = 按 key 类型的查看命令）：空控制台直接复用，否则新建命名控制台。 */
+    /**
+     * 双击对象 → 预览（SQL 后端 = SELECT 前 100 行；Redis = 按 key 类型的查看命令）：
+     * 追加到该数据源最后打开控制台的光标/选区处，不新建、不覆盖草稿、不自动执行。
+     */
     fun previewObject(row: TreeRowInfo) {
         val p = row.profile ?: return
         val obj = row.dbObject ?: return
@@ -379,29 +382,15 @@ private fun AppBody(
             return
         }
         val sql = session.previewQuery(row.schema, obj)
-        val active = consoleState.activeConsole()
-        val reuse = active != null && active.connectionId == p.id && consoleState.textOf(active.id).isBlank()
-        val target: ConsoleRecord = when {
-            active != null && reuse -> {
-                consoleState.setText(active.id, sql)
-                active
-            }
-            else -> {
-                val name = suggestConsoleName(p)
-                val created = consoleState.createConsole(p.id, name)
-                consoleState.setText(created.id, sql)
-                toastState.show("已新建控制台「$name」，可右键标签重命名")
-                created
-            }
-        }
+        // 复用该数据源已有控制台（优先最近激活；全关闭则重开最近改动；都没有则新建 控制台 1）——
+        // 不因双击而重复新建控制台。
+        val target = consoleState.activateForProfile(p.id) ?: return
         // 会话型目标（Redis DB / 多 schema）：预览对象的命名空间随之切换
-        if (!connectionsState.flatNamespaceOf(p.id) && session.capabilities.sessionContext && row.schema != null) {
+        if (session.capabilities.sessionContext && row.schema != null) {
             consoleState.setTarget(target.id, row.schema.displayName)
         }
-        // setTarget 后重取记录（ConsoleRecord 不可变，旧引用 target 字段仍是空）
-        val fresh = consoleState.consolesByConnection.values.asSequence()
-            .flatMap { it.asSequence() }.firstOrNull { it.id == target.id } ?: target
-        scope.launch { consoleState.run(fresh, p) }
+        // 交给编辑器在目标控制台光标/选区处插入，不自动执行
+        pendingInsert = sql
     }
 
     // 编辑器补全元数据已由 ConnectionsState 在连接建立时统一预取（缓存命中/查库回写），
