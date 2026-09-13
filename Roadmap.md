@@ -1,221 +1,287 @@
 # db-k Roadmap（对标 Navicat / DataGrip 的发展计划）
 
-> 本文回答三个问题：**现在有什么（§3）→ 对比成熟客户端差在哪（§4）→ 接下来按什么顺序补（§5）**。
-> 已完成阶段（旧 M0–M5 / P1–P9）压成速览，明细留在 git 历史与 `doc/`。
+> 本文回答三个问题：**已定方向（§2）→ 现在有什么 / 差在哪（§3–§5）→ 接下来按什么顺序补（§6）**。
+> 多协议后端（Redis / Elasticsearch）的详细设计单独成章（§7）。
 > 每阶段验收仍须过 `AGENTS.md` 验证习惯（compileKotlin / test / smokeJdbc / 人工 UI 验收）。
-> 零散即时事项在 `TODO.md`；架构与数据模型依据在 `doc/DESIGN.md`。
 
 ---
 
-## 1. 定位（先对齐目标，再谈路线）
+## 1. 定位
 
-**纯 JDBC、单窗口、桌面轻客户端**：把「连接 → 写 SQL → 看结果 → 改数据」这一条日常闭环做到顺滑，
-数据全部落本机、不依赖服务端。对标 Navicat / DataGrip 时**取其日常高频能力，不追其全功能 IDE 体量**。
-
-两个锚点：
-- **Navicat**：易用、数据操作与导入导出强、对象设计器（GUI）。
-- **DataGrip**：SQL 编辑/重构/计划强、结果集交互强、多数据源与运维面板。
-
-> 若定位改为「全能 IDE」，则 §5 的 N4（表设计器）、N8（运维面板）等权重会显著上升——
-> 见 §6 待定问题 Q1。
+**全能 IDE 方向**：在「连接 → 写 SQL/命令 → 看结果 → 改数据」日常闭环之上，向成熟产品（Navicat / DataGrip）看齐，
+但**有意识砍掉重投入项**（不做 GUI 表设计器、暂不做手动事务、SSH 隧道延后），把资源压在
+**查询/结果交互、行级写操作、多协议数据源（NoSQL）**上。
 
 ---
 
-## 2. 里程碑状态
+## 2. 已定方向（本轮决策记录）
+
+| # | 决策点 | 结论 |
+|---|---|---|
+| 1 | 产品定位 | **全能 IDE**（但见下） |
+| 2 | 结果排序 / 筛选 / 取更多 | **客户端优先**；仅「取更多」才谨慎注入分页并提示不确定性 |
+| 3 | 手动事务（BEGIN/COMMIT） | **暂不做**（无实际操作场景）；行写入沿用「提交时内部单事务」 |
+| 4 | 行级写操作 | **做增行 / 删行**，与改格一致按**主键定位**，无主键表只读 |
+| 5 | 对象管理 | 只做 **DDL 编辑 + 执行**，**不做 GUI 表设计器** |
+| 6 | 导入导出 | 导出新增 **JSON / SQL INSERT / Excel**（CSV 已有）；导入后置 |
+| 7 | SSH 隧道 | **延后**，以后再说 |
+| 8 | 执行计划 | **原始结果表**即可，不做可视化 |
+| 9 | NoSQL | **纳入范围**，优先 **Redis → Elasticsearch**（设计见 §7） |
+| 10 | 发布验证（原 P8） | **最低优先**，按需触发 |
+
+---
+
+## 3. 里程碑状态
 
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
-| M0 脚手架 | ✅ | — |
-| M1 元数据+树 | ✅ | — |
-| M2 JDBC 运行时 | ✅ | 6 内置数据源 + 外部驱动（SQL Server / Oracle） |
-| M3 编辑执行 | ✅ | 取消 / 历史 / 多语句多 Tab |
-| M4 体验打磨 | ✅ | 补全 / 结果编辑 / 查看器 / 设置 / 多控制台 |
-| M5 打包发布 | ⏳ 配置就绪 | AppImage 已产出；Deb / 干净环境未验证（已降为最低优先，见 N9） |
+| M0–M4 | ✅ | 脚手架 → 元数据树 → JDBC 运行时 → 编辑执行 → 体验打磨 |
+| M5 打包发布 | ⏳ 配置就绪 | AppImage 已产出；Deb / 干净环境未验证（最低优先，见 N12） |
 
 ---
 
-## 3. 已完成能力速览（压缩）
+## 4. 已完成能力速览（压缩）
 
 | 能力域 | 已完成 |
 |---|---|
 | 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
 | 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数（PG 11 类）；组折叠 + **按组懒加载**；展开持久化 |
-| 编辑器 | 语法高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` 保存 |
+| 编辑器 | 高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` |
 | 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / CSV（含全量流式）；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销** |
 | 查看器 | 长文本弹窗、JSON 树 + 高亮、Base64 图片预览、MD5 |
 | 控制台 | 跨源多标签、独立执行目标（库/schema）、光标记忆、关闭可重开 |
 | 连接与存储 | app.db SQLite v8（迁移 + FK 级联）、列缓存、密码 AES-256-GCM、连接档案 JSON 导入导出、正文独立 `.sql` |
-| 设置与诊断 | 深浅主题持久化、编辑器字体字号、日志 / 数据目录入口（无桌面环境复制路径） |
+| 设置与诊断 | 深浅主题持久化、编辑器字体字号、日志/数据目录入口 |
 | 工程 | 单测（jdbc/tree/db/app.state/app.ui）+ `smokeJdbc`；Deb / AppImage / MSI 打包配置 |
 
-> 外部驱动（SQL Server / Oracle）与含上千例程的大库懒加载，**待真实环境人工验收**。
+> 外部驱动（SQL Server / Oracle）与大库懒加载**待真实环境人工验收**。
 
 ---
 
-## 4. 对标矩阵（Navicat / DataGrip / db-k）
+## 5. 对标矩阵（Navicat / DataGrip / db-k）
 
-图例：✅ 完整 ｜ ◐ 部分 ｜ ❌ 无
+图例：✅ 完整 ｜ ◐ 部分 ｜ ❌ 无 ｜ 🚫 明确不做
 
-| 能力域 | Navicat | DataGrip | db-k | 差距要点 |
+| 能力域 | Navicat | DataGrip | db-k | 差距 / 决策 |
 |---|---|---|---|---|
-| 数据源数量 | ✅（含 NoSQL） | ✅（JDBC 20+） | ◐ 8 | 靠外部驱动目录可扩展；NoSQL 非 JDBC |
-| SSH 隧道 / SSL | ✅ | ✅ | ❌ | 连内网库刚需 |
-| 对象树导航 | ✅ | ✅ | ◐ | 缺表子节点（列/索引/外键）、搜索过滤 |
-| 对象设计器 | ✅ GUI | ◐ 表编辑器 + DDL | ❌ | 只读 DDL |
-| SQL 补全 | ✅ | ✅ | ◐ | 关键字/表/列已够日常，缺上下文感知 |
-| SQL 格式化 / 折叠 | ✅ | ✅ | ❌ | — |
-| 查找 / 替换编辑器 | ✅ | ✅ | ❌ | — |
-| 保存查询 / 片段 | ✅ | ✅ | ❌ | `saved_queries` 未做 |
-| 执行计划（EXPLAIN） | ✅ 可视化 | ✅ 计划树 | ◐ 仅执行 | 无计划可视化 |
-| 结果排序 / 筛选 | ✅ | ✅ | ❌ | 高频操作 |
-| 分页 / 取更多 | ✅ | ✅ | ❌ | 现固定 1000 行截断 |
-| 增 / 删行 | ✅ | ✅ | ❌ | 只支持改格 |
-| 手动事务 | ✅ | ✅ | ❌ | 现 autocommit + 单元格内部事务 |
-| 导入 | ✅ 多格式 | ✅ | ❌ | — |
-| 导出 | ✅ 多格式 | ✅ 多格式 | ◐ CSV | 缺 JSON / SQL / Excel 等 |
-| 表结构设计 | ✅ | ✅ | ❌ | — |
-| Schema / 数据对比同步 | ✅ | ◐ schema diff | ❌ | — |
-| 用户 / 权限管理 | ✅ | ✅ | ❌ | — |
-| 会话 / 锁监控 | ✅ | ✅ | ❌ | — |
-| 多窗口 | ✅ | ✅ | ◐ 多控制台 | 单窗口多标签 |
+| 数据源数量 | ✅（含 NoSQL） | ✅（JDBC 20+） | ◐ 8 JDBC | **NoSQL 纳入（Redis/ES）→ §7** |
+| SSH 隧道 / SSL | ✅ | ✅ | ❌ | SSH 延后；SSL 待 N10 |
+| 对象树导航 | ✅ | ✅ | ◐ | 缺表子节点、搜索过滤（N9） |
+| 对象设计器 | ✅ GUI | ◐ 表编辑器 + DDL | ◐ 只读 DDL | **只做 DDL 编辑，不做 GUI（决策 5）** |
+| SQL 补全 | ✅ | ✅ | ◐ | 已达日常够用 |
+| SQL 格式化 / 折叠 | ✅ | ✅ | ❌ | N2 |
+| 查找 / 替换编辑器 | ✅ | ✅ | ❌ | N2 |
+| 保存查询 / 片段 | ✅ | ✅ | ❌ | 可选深化 |
+| 执行计划 | ✅ 可视化 | ✅ 计划树 | ◐ 仅执行 | **只做原始结果表（决策 8）→ N11** |
+| 结果排序 / 筛选 | ✅ | ✅ | ❌ | N1（客户端优先） |
+| 分页 / 取更多 | ✅ | ✅ | ❌ | N1 |
+| 增 / 删行 | ✅ | ✅ | ❌ | N3（主键定位） |
+| 手动事务 | ✅ | ✅ | 🚫 暂不做 | 决策 3 |
+| 导入 | ✅ 多格式 | ✅ | ❌ | 后置 |
+| 导出 | ✅ 多格式 | ✅ | ◐ CSV | N8：+JSON / SQL INSERT / Excel |
+| 表结构设计 | ✅ GUI | ✅ | 🚫 GUI | 用 DDL 编辑替代（决策 5） |
+| Schema / 数据对比 | ✅ | ◐ | ❌ | 可选深化 |
+| 用户 / 权限 | ✅ | ✅ | ❌ | 可选深化 |
+| 会话 / 锁监控 | ✅ | ✅ | ❌ | N11 顺带 |
+| 多窗口 | ✅ | ✅ | ◐ 多控制台 | 可选深化 |
 | 深浅主题 | ✅ | ✅ | ✅ | — |
 
-**结论**：db-k 已在「连接 + 查询 + 结果编辑」主闭环上追平可用的基础体验；
-差距集中在 **结果集交互（排序/筛选/分页）→ SQL 编辑器专业度 → 写操作与事务 → 对象管理 → 数据流转与运维**。
-
 ---
 
-## 5. 新一轮路线（按优先级）
+## 6. 新一轮路线（按优先级）
 
-优先级原则：**先把日常查询/分析闭环做顺（N1–N3）→ 再补对象与数据流转（N4–N6）→ 最后连接/运维（N7–N8）**；
-发布验证（N9）降为最低，按需触发。每阶段独立可交付、可单独验收。
+优先级原则：**日常查询闭环（N1–N3）→ 多协议数据源（N4–N6）→ 对象与数据流转（N7–N9）→ 连接/运维（N10–N11）→ 发布（N12）**。
+每阶段独立可交付、可单独验收。
 
 ### 第一优先：日常查询闭环
 
 #### N1 结果网格交互（排序 / 筛选 / 取更多）
-- **对标**：DataGrip 结果集排序、按列筛选、`Fetch more`；Navicat 网格排序/筛选。
-- **目标**：1000 行窗口内**客户端**排序/筛选零延迟；「取更多」再按需向服务端拉下一段。
+- **对标**：DataGrip 排序 / 按列筛选 / `Fetch more`；Navicat 网格排序筛选。
 - **要点**
-  1. 客户端排序（多列、稳定排序）+ 每列筛选 + 顶部快速过滤框（纯视图层，不重跑 SQL）。
-  2. 行号列（可选）、结果内查找定位。
+  1. 客户端排序（多列、稳定）+ 每列筛选 + 顶部快速过滤（纯视图层，不重跑 SQL）；
+  2. 行号列、结果内查找定位；
   3. 「取更多」：按方言注入分页（`LIMIT/OFFSET`、`OFFSET … FETCH`、`TOP`、`ROWNUM`/`FETCH FIRST`），
-     追加而非替换；无 `ORDER BY` 时提示「顺序不保证」。
-  4. 编辑 overlay 与排序/筛选视图的坐标映射（避免改错行）——**关键正确性点**。
-- **待定**：排序/筛选是否始终客户端？是否允许重写用户 SQL 做分页？（§6 Q2）
-- **验收**：排序/筛选不触发重新执行；「取更多」追加且编辑坐标不错位；深色可读。
+     **追加不替换**；无 `ORDER BY` 时提示「顺序不保证」；仅此操作才重写 SQL（决策 2）；
+  4. **编辑 overlay 与排序/筛选视图的坐标映射**——关键正确性点。
+- **验收**：排序/筛选不触发重新执行；取更多追加且编辑坐标不错位；深色可读。
 
 #### N2 SQL 编辑器专业度（格式化 / 查找替换 / 折叠）
-- **对标**：DataGrip 格式化、查找替换（正则）、代码折叠、多光标；Navicat 格式化。
+- **对标**：DataGrip 格式化、查找替换（正则）、代码折叠。
+- **要点**：SQL 格式化（缩进 / 关键字大小写 / 换行，优先自研轻量以免重依赖）；编辑器内查找替换（正则、循环、选区）；
+  代码折叠（按语句 / 括号 / CTE）。
+- **验收**：格式化不改变语义（smoke 样例 round-trip）；查找替换可撤销。
+
+#### N3 行级写操作（增行 / 删行）
+- **对标**：Navicat / DataGrip 网格增删行。
 - **要点**
-  1. SQL 格式化（缩进/关键字大小写/换行策略），尽量自研轻量实现避免重依赖；
-  2. 编辑器内查找 / 替换（含正则、循环、选区限定）；
-  3. 代码折叠（按语句/括号/CTE）；
-  4. （可选）多光标 / 列选择。
-- **待定**：格式化自研还是引第三方库？折叠是否与高亮共用同一套解析？（§6 Q3）
-- **验收**：格式化不改变 SQL 语义（smoke 样例 round-trip）；查找替换可撤销；深色可读。
+  1. 结果网格「插入行 / 删除行」，pending 状态 + 提交；
+  2. 与改格共用提交管线（单事务 + `affected==1` 校验）；预览扩展 INSERT / DELETE；
+  3. **主键定位**：无主键 / 主键不在结果列 → 整表只读（复用 `buildEditPlan` 判定）；
+  4. 删除批量二次确认；不引入用户手动事务（决策 3）。
+- **验收**：增删行提交前不入库；无主键表不可增删；失败整体回滚。
 
-#### N3 事务与写操作（手动事务 / 增删行）
-- **对标**：DataGrip 事务模式 + Commit/Rollback；Navicat 增删行。
-- **要点**
-  1. 每控制台事务模式（自动提交 / 手动）；工具栏 Commit / Rollback + 未提交状态指示；
-  2. 结果网格增行 / 删行：pending 状态、批量提交、删除二次确认；
-  3. 提交预览（现有 `CommitPreviewDialog`）扩展到 INSERT / DELETE；
-  4. 断言定位键（无主键的表如何增删 —— 明确「不可编辑」或走全列匹配）。
-- **待定**：手动事务与单元格编辑的内部事务如何共存？跨控制台是否共享连接？（§6 Q4）
-- **验收**：手动事务下多条执行后 Rollback 生效；增删行提交前不入库；失败整体回滚。
+### 第二优先：多协议后端（NoSQL，设计见 §7）
 
-### 第二优先：对象与数据流转
+#### N4 后端抽象重构（行为不变）
+- 将 `LiveConnection` + `DbDialect` 的能力抽到 `engine/` 的 `DataSourceSession` 接口，JDBC 变成其一个实现；
+  纯重构 + 全测试回归，**外部行为零变化**。
+- **验收**：`compileKotlin / test / smokeJdbc` 全绿且无功能差异。
 
-#### N4 表结构管理（DDL 编辑 → 表设计器）
-- **对标**：Navicat 表设计器；DataGrip `Modify Table` + DDL。
-- **要点**（分两档，先 A 后 B）
-  - **A（轻）**：DDL 编辑器与执行（现有 DDL 查看升级为「编辑并执行」）。
-  - **B（重）**：GUI 表设计器（列/类型/NOT NULL/默认值/主键/索引/外键）→ 生成方言化 `ALTER`。
-- **待定**：先做到哪一档？GUI 设计器投入大，是否列入计划？（§6 Q5）
-- **验收**：生成的 DDL/ALTER 可在演示库执行且幂等可预览。
+#### N5 Redis 后端（只读浏览 + 命令台）
+- 连接（host/port/password/db）→ 命名空间 = DB → 对象 = key（`SCAN` 游标懒加载，复用 P6 思路）；
+  按类型渲染 value；控制台执行原生命令（危险命令二次确认）。
+- **验收**：能浏览并查看 string/hash/list/set/zset；命令台可跑 `GET/INFO` 等只读命令。
 
-#### N5 导入导出扩展
-- **对标**：两者均支持多格式导入导出。
-- **要点**
-  1. 导出：JSON / SQL INSERT / Markdown / HTML；（可选）Excel。
-  2. 导入：CSV 向导（列映射、类型推断、预览、事务 + 错误报告）。
-- **待定**：Excel 是否引入 Apache POI（体积/许可）？导入失败策略？（§6 Q6）
-- **验收**：导出文件可被第三方工具读回；导入支持预览与回滚。
+#### N6 Elasticsearch 后端（索引浏览 + DSL 查询）
+- 连接（URL / 账号 / API key）→ 命名空间 = 集群 → 对象 = index/alias；
+  `_mapping` 展开字段；控制台输入 JSON DSL（复用 JSON 高亮）→ `_search` 结果入网格；`from/size` 复用 N1。
+- **验收**：能列出索引、看映射、跑简单 DSL 查询并分页。
 
-#### N6 树导航增强
-- **对标**：对象树子节点 + 搜索；DataGrip「Search Everywhere」。
-- **要点**
-  1. 表子节点：列 / 索引 / 外键 / 触发器（按需懒加载，复用列缓存 `column_cache`）；
-  2. 树内搜索 / 过滤（按名跳转）；
-  3. 集群级目录（DB Objects / Server Objects：extensions、roles、tablespaces 等跨 schema 聚合）。
-- **待定**：子节点加载粒度；搜索是本地缓存还是查库？（§6 Q7）
+### 第三优先：对象与数据流转
+
+#### N7 对象管理：DDL 编辑与执行
+- 现有 DDL 查看升级为「编辑并执行」（`Ctrl+Q` 查看 → 可切换到可编辑 DDL 窗口，执行走当前控制台）。
+- **不做** GUI 表设计器（决策 5）。DDL 由方言 `tableDdl` 生成初稿，用户自行修改。
+- **验收**：编辑后的 DDL 可在演示库执行；失败有可读错误。
+
+#### N8 导出扩展：JSON / SQL INSERT / Excel
+- 结果区导出格式新增 JSON、SQL INSERT（可指定表名/批量大小）、Excel（Apache POI）。
+- CSV 已支持（含全量流式）；导入（CSV 向导）后置。
+- **待定**：POI 体积/许可确认（§8 Q5）。
+- **验收**：导出文件可被第三方工具读回；大结果导出不 OOM（流式写入）。
+
+#### N9 树导航增强
+- 表子节点（列 / 索引 / 外键 / 触发器，按需懒加载，复用列缓存）；树内搜索 / 过滤；
+  集群级目录（DB Objects / Server Objects）。
 - **验收**：大库展开子节点不卡；搜索命中可键盘跳转。
 
-### 第三优先：连接与运维
+### 第四优先：连接与运维
 
-#### N7 连接安全与驱动管理
-- **对标**：SSH 隧道、SSL、高级连接参数、驱动管理。
-- **要点**
-  1. SSH 隧道（连内网库刚需）；
-  2. SSL/TLS 与高级 JDBC 参数面板；
-  3. 外部驱动管理 UI（列出已扫描驱动、校验、打开驱动目录）；
-  4. 「测试连接」按钮。
-- **待定**：SSH 引库（JSch/sshj）还是调用系统 `ssh`？是否要跳板机多跳？（§6 Q8）
-- **验收**：新增连接可测试连通性；隧道断开有明确提示。
+#### N10 连接增强（SSL / 驱动管理 / 测试连接）
+- SSL/TLS 与高级 JDBC 参数面板；外部驱动管理 UI（列出已加载驱动、打开驱动目录）；「测试连接」按钮。
+- SSH 隧道**延后**（决策 7）。
+- **验收**：新建连接可测连通性；驱动缺失有明确指引。
 
-#### N8 执行计划与运维面板
-- **对标**：DataGrip EXPLAIN 计划树 / 会话面板；Navicat 服务器监控。
-- **要点**
-  1. EXPLAIN / EXPLAIN ANALYZE 结果可视化（表格 → 树/图形，方言相关）；
-  2. 会话列表 + 锁等待（按库能力列出并支持取消会话）；
-  3. 复用现有查询取消（Esc）。
-- **待定**：计划可视化做到什么程度（原始表格 / 树 / 图形）？（§6 Q9）
-- **验收**：能对演示库出计划树；会话面板可刷新并取消指定会话。
+#### N11 执行计划与运维面板
+- `EXPLAIN` 走现有执行路径，结果**原始表格**呈现（决策 8）；
+- 会话列表 + 锁等待（按方言能力，支持取消会话）。
+- **验收**：演示库能出计划结果；会话面板可刷新并取消指定会话。
 
 ### 最低优先
 
-#### N9 发布验证与分发（原 P8）
+#### N12 发布验证与分发（原 P8）
 - Deb / AppImage 干净环境安装自检；MSI 需 Windows；一条命令 `compileKotlin + test + smokeJdbc`。
-- **触发条件**：对外分发或版本发布时再做，不阻塞功能迭代。
+- 触发条件：对外分发或版本发布时再做。
 
-### 可选深化（不单独排期，遇需求再做）
-- 保存的查询 / 代码片段（`saved_queries`）；结果行锁 `FOR UPDATE`；schema diff / 数据对比同步；
-- 用户/权限管理；ER 图；多窗口；结果集虚拟滚动 / 真正的大结果分页。
+### 可选深化（不单独排期）
+保存的查询 / 片段、`FOR UPDATE` 行锁、schema diff / 数据对比、用户/权限管理、ER 图、多窗口、SSH 隧道、CSV 导入向导。
 
 ---
 
-## 6. 待定设计问题（决定路线取舍，先回答再排期）
+## 7. 多协议后端设计（Redis / Elasticsearch）
+
+### 7.1 现状：一切都绑在 JDBC 上
+- `LiveConnection` 内含 `java.sql.Connection` + `DbDialect`；`QueryExecutor` 只吃 SQL 文本；
+  `ConnectionsState` / `ConsoleState` 直接依赖 `LiveConnection`。
+- `QueryResult(columns, rows, affectedRows)` 是**二维表**，天生适合 ES，不太适合 Redis（值是结构化的）。
+
+### 7.2 目标抽象
+新增 `engine/` 包（不依赖 compose/coroutines），把「连接 + 元数据 + 执行」提到接口；
+`jdbc/` 与未来 `redis/`、`es/` 都是它的实现：
+
+```kotlin
+// engine/model
+enum class Protocol { JDBC, REDIS, ELASTICSEARCH }
+data class BackendCapabilities(
+    val editableResult: Boolean,   // 是否支持改格/增删
+    val sqlCompletion: Boolean,    // 关键字/表/列补全
+    val ddl: Boolean,              // 是否支持对象定义
+    val serverContext: Boolean,    // 会话级 schema 切换（PG search_path 等）
+    val lazyGroups: Boolean,       // 复用 P6 能力位
+    val editorLanguage: EditorLanguage,  // SQL | REDIS_COMMAND | JSON
+)
+data class ExecutionRequest(val text: String, val namespace: SchemaMeta?, val target: String?)
+
+// engine/runtime
+interface DataSourceSession : AutoCloseable {
+    val profileId: String
+    val protocol: Protocol
+    val capabilities: BackendCapabilities
+    fun connect()
+    fun loadNamespaces(): List<SchemaMeta>              // schema / Redis DB / ES 集群
+    fun loadObjects(ns: SchemaMeta): SchemaObjects      // 复用现有模型
+    fun loadColumns(ns: SchemaMeta?, name: String): List<ColumnMeta>
+    fun preview(ns: SchemaMeta?, name: String): String  // 生成预览语句/命令
+    fun execute(req: ExecutionRequest, limit: Int, onStatement: (Any?) -> Unit): List<StatementOutcome>
+    fun cancel()
+}
+```
+
+- **JDBC 实现**：现有 `LiveConnection` + `DbDialect` 包一层，`capabilities` 全 true（按方言细调）；
+  JDBC 专属概念（主键定位、`RowUpdater`、DDL）留在 `jdbc` 内，不污染通用层。
+- **执行入口不变**：`Ctrl+Enter` → `session.execute(...)`，只是「语句切分」不同（SQL 分号 / Redis 单行 / ES 单个 JSON body）。
+- **结果模型**：二维 `QueryResult` 通用；对 Redis 的非表格值，允许后端产出「结构化文本视图」
+  （走现有查看器 / JSON 树），作为 `StatementOutcome` 的一种形态。
+
+### 7.3 树与结果如何复用
+- 树：命名空间沿用 `SchemaMeta`（Redis = `db0..db15`，ES = 集群名）；对象沿用 `SchemaObjects` + `ObjectKind`
+  （Redis key 类型 / ES index），懒加载沿用 P6 的 `lazyGroups`。
+- 结果：ES 文档 → 行 = 文档、列 = `_id/_score/_source`（`_source` 可双击进 JSON 树）；
+  Redis → key/value/ttl 网格 + value viewer。
+- 编辑器：按 `editorLanguage` 切换高亮/补全（Redis 命令补全；ES 用现成 JSON 高亮）。
+
+### 7.4 Redis 设计要点
+- **连接**：host / port / password / db。
+- **客户端选型**：倾向 **Jedis**（阻塞式，契合现有「阻塞 API + app 层 IO 包裹」模型）；Lettuce 需 Netty，暂不引。
+- **浏览**：`SCAN` 游标分页 + `TYPE`；对象组 = key 类型（string/hash/list/set/zset/stream）。
+- **查看**：hash → 字段网格；list/set/zset → 行列表；string → 文本 / JSON / 图片（复用查看器）。
+- **命令台**：原生命令 → 结果转网格/文本；危险命令（`FLUSHALL` / `FLUSHDB` / `KEYS`）二次确认或禁用。
+- **只读优先**：第一版不提供写命令的安全网，但允许用户显式执行写命令（需确认）。
+
+### 7.5 Elasticsearch 设计要点
+- **连接**：URL / 用户名密码 / API key（HTTPS 支持）。
+- **客户端选型**：倾向 **`java.net.http.HttpClient` + JSON**（零重依赖）；官方 `elasticsearch-java` 需评估。
+- **浏览**：`_cat/indices?format=json` 列索引；`_mapping` 展开字段 → 复用树子节点（N9）。
+- **查询**：控制台输入 JSON DSL（或「索引 + 简易条件」生成 DSL）→ `_search` → 网格；
+  分页 `from/size`（或 `search_after`）复用 N1。
+- **结果**：行 = 文档；列固定 `_id` / `_score` / 主要字段，或整条 `_source` 走 JSON 树。
+
+### 7.6 分期与风险
+- 分期：**N4 抽象重构 → N5 Redis → N6 ES**。
+- 风险 1：**抽象过度**——JDBC 路径很深（`RowUpdater` / 补全 / DDL / 事务），
+  用 `capabilities` 能力位隔离，避免通用层出现 JDBC 专属概念。
+- 风险 2：**二维结果模型对 Redis 不自然**——保留「结构化文本视图」逃生通道。
+- 风险 3：**依赖体积**——Jedis / POI / HTTP 客户端都需在打包时验证 jlink 模块与产物大小。
+
+---
+
+## 8. 待定问题（接着定）
 
 | # | 问题 | 影响 |
 |---|---|---|
-| Q1 | 定位是「轻量查询客户端」还是「全功能 IDE」？ | 决定 N4 表设计器、N8 运维面板、ER 图/权限是否纳入 |
-| Q2 | 结果「取更多 / 排序 / 筛选」：允许重写用户 SQL 做分页吗？还是只客户端处理？ | 决定 N1 的复杂度与风险 |
-| Q3 | SQL 格式化：自研轻量 formatter 还是引入第三方库？ | 依赖体积与维护成本 |
-| Q4 | 事务模型：是否要用户可控事务（手动 BEGIN/COMMIT，每控制台）？ | 决定 N3 的连接/状态设计，影响很大 |
-| Q5 | 对象管理：只做「DDL 编辑 + 执行」，还是要 GUI 表设计器？ | N4 工作量差一个数量级 |
-| Q6 | 导入导出：必须支持哪些格式？Excel 能否引入依赖（POI）？ | N5 依赖与体积 |
-| Q7 | 树子节点 / 搜索：加载粒度与是否查库？ | N6 性能与缓存设计 |
-| Q8 | SSH 隧道：引库还是走系统 ssh？是否需要多跳？ | N7 依赖与安全模型 |
-| Q9 | EXPLAIN 可视化程度：表格 / 树 / 图形？ | N8 工作量 |
-| Q10 | NoSQL（Redis / Mongo）是否永久 out of scope？ | 决定整个数据源架构走向 |
+| Q1 | 「全能 IDE」是否要 ER 图 / 权限管理 / schema diff？（当前列在可选深化） | 决定是否从「可选」升为独立阶段 |
+| Q2 | Redis 客户端：Jedis（倾向）还是 Lettuce？ | N5 依赖与线程模型 |
+| Q3 | ES：走 `HttpClient`（倾向）还是官方 `elasticsearch-java`？兼容 ES 7.x / 8.x 哪些？ | N6 依赖与兼容面 |
+| Q4 | Redis/ES 控制台是否允许写命令（SET/DEL/PUT/POST）？还是第一版纯只读？ | N5/N6 安全模型 |
+| Q5 | Excel 导出确认引入 Apache POI？体积 / 许可可接受吗？ | N8 依赖 |
+| Q6 | Redis TLS / ES HTTPS 是否 N5/N6 就要求？（SSH 已延后，TLS 场景不同） | 连接层设计 |
 
 ---
 
-## 7. 阶段粒度与远期
+## 9. 阶段粒度与架构纪律
 
 - 每阶段拆 2~5 次提交；单提交 = 一个可感知的小能力（遵守 `AGENTS.md` 分层与主题规则）。
 - 任何 UI 可感知变化须人工切深色复检（无黑字沉底、无过曝白块）。
 - **架构稳定项**：JDBC 单线程执行、snapshot 状态、SQLite 持久化分层不因新功能改变；
-  跨层扩展优先走方言能力位（如 P6 的 `lazyObjectGroups`）。
-- 明确**不做**（除非 Q1 改定位）：插件体系、ER 图、多窗口自由布局、非 JDBC 数据源。
+  跨层扩展优先走**能力位**（如 P6 的 `lazyObjectGroups`、§7 的 `BackendCapabilities`）。
+- 持久化新增：连接表已通用（host/port/db/user/password），NoSQL 连接复用；如需 `protocol` 字段则 app.db 版本 +1 迁移。
 
 ---
 
-## 8. 关联文档
+## 10. 关联文档
 
-- `AGENTS.md`：工具链、分层、主题硬性规则、持久化分层、验证习惯（验收口径）。
+- `AGENTS.md`：工具链、分层、主题规则、持久化分层、验证习惯。
 - `doc/DESIGN.md`：数据模型、方言抽象、线程模型、打包风险。
-- `doc/EDITABLE_RESULT.md`：可编辑结果设计 + 实施进度。
-- `doc/COLUMN_COMPLETION.md`：列补全设计 + 实施进度。
-- `doc/PACKAGING.md`：Deb / AppImage / MSI 构建矩阵与前置条件。
+- `doc/EDITABLE_RESULT.md`、`doc/COLUMN_COMPLETION.md`：已实现子系统的设计与进度。
+- `doc/PACKAGING.md`：Deb / AppImage / MSI 构建矩阵。
 - `TODO.md`：零散即时事项（随做随删）。

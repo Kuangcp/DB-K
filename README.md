@@ -37,6 +37,8 @@
 > （Linux `~/.local/share/db-k/drivers/`，可用 `-Ddbk.driversDir=<dir>` 覆盖），**重启应用**后生效。
 > 加载状态可在「新建连接 → 类型」处看到提示。
 
+> **规划中**：NoSQL 多协议后端（优先 Redis → Elasticsearch），设计与分期见 [Roadmap.md](Roadmap.md) §7。
+
 ## 快速开始
 
 ```bash
@@ -110,10 +112,11 @@ src/main/kotlin/
 - [x] P9 诊断入口：设置窗口展示并打开日志 / 数据目录
 - [ ] P8 发布验证（Deb / AppImage 干净环境，MSI）——已降为最低优先
 
-下一轮路线（对标 Navicat / DataGrip，详见 [Roadmap.md](Roadmap.md) §5）：
-N1 结果网格排序/筛选/取更多 → N2 编辑器格式化/查找替换 → N3 事务与增删行 →
-N4 表结构管理 → N5 导入导出扩展 → N6 树导航增强 → N7 SSH/SSL 与驱动管理 →
-N8 执行计划与运维面板 → N9 发布验证。
+下一轮路线（对标 Navicat / DataGrip，详见 [Roadmap.md](Roadmap.md) §6）：
+N1 结果排序/筛选/取更多 → N2 编辑器格式化/查找替换 → N3 增行/删行 →
+**N4 后端抽象重构 → N5 Redis → N6 Elasticsearch** →
+N7 DDL 编辑执行 → N8 导出 JSON/SQL INSERT/Excel → N9 树导航 →
+N10 SSL/驱动管理 → N11 EXPLAIN/会话锁 → N12 发布验证（最低）。
 
 ## 文档
 
