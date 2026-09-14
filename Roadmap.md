@@ -201,10 +201,16 @@
 - **结果与分页**：命中→行，列 = `_index` / `_id` / `_score` + 各 `_source` 顶层字段并集（对象/数组落紧凑 JSON 文本）；
   复用 N1「取更多」：`BackendCapabilities.fetchMore` + `DataSourceSession.paginate()`（ES 改写 `from/size`）——
   分页从 JDBC 专有 `DialectRegistry` 提到能力位 + 会话方法，JDBC/ES 共用同一 UI 路径。
-- **编辑器**：`editorLanguage=JSON` 能力位驱动 JSON 语法高亮（`JsonSupport` 复用），并关闭 SQL 补全。
+- **编辑器**：`editorLanguage=JSON` 能力位驱动 JSON 语法高亮（`JsonSupport` 复用），并关闭 SQL 补全；
+  改成 **ES DSL 上下文补全**（`app/ui/EsDslCompletion.kt` 纯逻辑）：按 caret 所在 JSON 上下文给候选——
+  顶层键 / 查询类型 / `bool` 子句 / 排序项 / 聚合参数 / 高亮键（键位置）与 `index` 索引名 / `order`
+  asc·desc / `field` 字段名（值位置）；插入文本自适应补引号（已在串内 / 右侧已有收尾引号）。
+  字段名来自目标索引 `_mapping`（复用 `ColumnCatalog` 异步预取，防抖 + 只认已知索引）；
+  `index` 候选同树对象（索引/别名）。Ctrl+Space 列上下文，Enter/Tab 上屏。
 - **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `ElasticsearchProtocolTest`（16）、
   `ElasticsearchSessionIntegrationTest`（10，用本地 `HttpServer` 假装 ES 跑端到端）、
-  `ElasticsearchPermissionFallbackTest`（6，模拟 `_cat` 403 逐级回落）、`SessionFactoryTest` 增补（2）；
+  `ElasticsearchPermissionFallbackTest`（6，模拟 `_cat` 403 逐级回落）、`EsDslCompletionTest`（16）、
+  `SessionFactoryTest` 增补（2）；
   新增 `gradle smokeEs` 真服务端自检（建连 / 集群名 / 建索引+写文档 / 计数与清单 / `_mapping` / DSL 搜索 /
   `from·size` 分页 / 预览，最后删临时索引；连不上打印 SKIP）。
   ⚠️ Compose UI 交互（含深色）待人工验收。

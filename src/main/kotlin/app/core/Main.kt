@@ -332,10 +332,15 @@ private fun AppBody(
     // 元数据（库列表 + 对象）已由 ConnectionsState 在连接建立时整体预取并读缓存（见 ensureConnectionReady），
     // 数据来自数据源目录元信息；树是否展开不影响候选完整性。
     val completionTables: List<CompletionTable> = activeProfile?.let { p ->
+        // ES：对象是索引/别名（不是表/视图）；补全与 DSL 的 index 候选同源
+        val es = p.dbType.protocol == Protocol.ELASTICSEARCH
         connectionsState.schemasOf(p.id).orEmpty()
             .flatMap { s ->
                 connectionsState.objectsOf(p.id, s.key)
-                    ?.let { o -> o.tables + o.views + o.materializedViews }.orEmpty()
+                    ?.let { o ->
+                        if (es) (o.forKind(ObjectKind.INDEX) + o.forKind(ObjectKind.ALIAS)).map { it.name }
+                        else o.tables + o.views + o.materializedViews
+                    }.orEmpty()
                     .map { name -> CompletionTable(name, s) }
             }
     }.orEmpty()

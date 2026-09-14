@@ -44,6 +44,8 @@
 > 附加参数支持 `scheme=https`、`path=/es`（反向代理前缀）。
 > 受限账号无 `indices:monitor/settings/get` 时 `_cat/indices` 会 403，会依次回落 `_alias`/`_mapping`/`_search` 聚合/默认索引；
 > 仍失败则填「默认索引」后用 DSL 查询，或请管理员授予权限。
+> **写 DSL**：双击树里的索引会插入 `match_all` 骨架；编辑器内 JSON 补全（Ctrl+Space）会按上下文补
+> 顶层键 / 查询类型 / `bool` 子句 / 字段名（取目标索引 `_mapping`）/ `sort`·`aggs` 参数，Enter/Tab 上屏。
 
 ## 快速开始
 

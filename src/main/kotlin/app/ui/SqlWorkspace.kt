@@ -1243,7 +1243,9 @@ private fun EditorPane(
     val sel = value.selection
     val caretActive = editing
     val canComplete = caretActive && sel.collapsed
-    val qualified = if (canComplete) sqlQualifiedPrefix(value.text, sel.start) else null
+    // JSON 模式（Elasticsearch DSL）：走 [esDslSuggestions]，不走 SQL 词法/补全
+    val jsonMode = editorLanguage == EditorLanguage.JSON
+    val qualified = if (canComplete && !jsonMode) sqlQualifiedPrefix(value.text, sel.start) else null
     // 解析 caret 所在语句（只看括号深度 0；只取已写完的表名，避免边敲边查元数据）
     val prepared = if (canComplete) buildPreparedScope(value.text, sel.start) else null
     val cteColumns = prepared?.scope?.cteColumns.orEmpty()
@@ -1261,7 +1263,7 @@ private fun EditorPane(
     } else {
         null
     }
-    val word: CompletionWord? = when {
+    val sqlWord: CompletionWord? = when {
         qualified != null -> CompletionWord(qualified.wordStart, qualified.wordEnd, qualified.wordText)
         starPos != null -> CompletionWord(starPos, sel.start, "*")
         canComplete -> sqlCompletionWord(value.text, sel.start)
@@ -1313,17 +1315,34 @@ private fun EditorPane(
     }
     val candidates = when {
         starPos != null -> expandItems
-        word != null -> completionItems(
-            word = word.text,
+        sqlWord != null -> completionItems(
+            word = sqlWord.text,
             columns = columnItems,
             aliases = aliasItems,
             functions = functionItems,
             objects = objectItems,
-            includeKeywords = completionEnabled && qualified == null && (!forceComplete || word.text.isNotEmpty()),
+            includeKeywords = completionEnabled && qualified == null && (!forceComplete || sqlWord.text.isNotEmpty()),
         )
         else -> emptyList()
     }
-    val shown = candidates.take(MAX_COMPLETIONS)
+    val sqlShown = candidates.take(MAX_COMPLETIONS)
+
+    // ---- ES JSON DSL 补全：字段来自目标索引 `_mapping`（异步预取，未命中先出键/枚举）----
+    val dslIndex = if (jsonMode) {
+        esDslIndexName(value.text) ?: profile?.database?.trim()?.takeIf { it.isNotEmpty() }
+    } else null
+    val dslSchema = defaultSchema ?: schemas.firstOrNull()
+    val dslFields = if (jsonMode && dslIndex != null && profile != null) {
+        columnCatalog?.peek(profile.id, dslSchema, dslIndex)?.map { it.name }.orEmpty()
+    } else emptyList()
+    val dslSuggestion = if (jsonMode && canComplete) {
+        esDslSuggestions(value.text, sel.start, dslFields, completionIdentifiers)
+    } else null
+    // 空前缀只在显式 Ctrl+Space 时列上下文（与 SQL 一致，避免回车被弹层截走）
+    val dslWord = dslSuggestion?.word?.takeIf { forceComplete || it.text.isNotEmpty() }
+    val word: CompletionWord? = if (jsonMode) dslWord else sqlWord
+    val shown: List<CompletionItem> =
+        if (jsonMode) (if (dslWord != null) dslSuggestion.items else emptyList()) else sqlShown
     var selIdx by remember(shown) { mutableStateOf(0) }
     var dismissed by remember(word?.start, word?.end, shown.size) { mutableStateOf(false) }
     val popupOpen = shown.isNotEmpty() && !dismissed
@@ -1342,10 +1361,25 @@ private fun EditorPane(
     val fetchRefs = allRefs.filter { (ref, _) -> !ref.derived && !ref.cte }
     val prefetchKey = fetchRefs.joinToString("|") { (r, s) -> "${s?.key ?: ""}#${r.table.lowercase()}" }
     LaunchedEffect(consoleId, profile?.id, prefetchKey) {
+        if (jsonMode) return@LaunchedEffect
         val p = profile ?: return@LaunchedEffect
         val catalog = columnCatalog ?: return@LaunchedEffect
         if (fetchRefs.isEmpty()) return@LaunchedEffect
         catalog.ensure(p, fetchRefs.map { (r, s) -> ColumnCatalog.ColumnRef(s, r.table) })
+    }
+
+    // ES：DSL 里的目标索引（或默认索引）确定后预取其 `_mapping` 字段；防抖 + 只认已存在的索引，
+    // 避免边敲索引名边打一堆映射请求。
+    LaunchedEffect(jsonMode, consoleId, profile?.id, dslIndex) {
+        if (!jsonMode) return@LaunchedEffect
+        val p = profile ?: return@LaunchedEffect
+        val catalog = columnCatalog ?: return@LaunchedEffect
+        val idx = dslIndex ?: return@LaunchedEffect
+        val known = completionIdentifiers.any { it.equals(idx, ignoreCase = true) } ||
+            idx == p.database.trim()
+        if (!known) return@LaunchedEffect
+        kotlinx.coroutines.delay(300)
+        catalog.ensure(p, listOf(ColumnCatalog.ColumnRef(dslSchema, idx)))
     }
 
     // 弹窗高度自适配：不超出编辑器可视高度（避免被下方执行条/结果区遮挡），至少 64dp
@@ -1610,7 +1644,11 @@ private fun EditorPane(
                     Box {
                         if (value.text.isEmpty()) {
                             Text(
-                                "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）",
+                                if (jsonMode) {
+                                    "输入 ES JSON DSL，如 {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space 补全键/查询类型/字段名"
+                                } else {
+                                    "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）"
+                                },
                                 fontSize = editorStyle.fontSize,
                                 lineHeight = editorStyle.lineHeight,
                                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
