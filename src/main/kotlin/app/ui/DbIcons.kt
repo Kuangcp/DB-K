@@ -108,4 +108,17 @@ object DbIcons {
             "M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.02 11.03 17.1 8 12.5 8z",
         )
     }
+
+    /** 格式化（对齐线）：SQL 编辑器「格式化」入口。 */
+    val Format: ImageVector by lazy {
+        vector("format", "M15 15H3v2h12v-2zm0-8H3v2h12V7zM3 13h18v-2H3v2zm0 8h18v-2H3v2zM3 3v2h18V3H3z")
+    }
+
+    /** 查找替换（上下箭头 + 循环）。 */
+    val FindReplace: ImageVector by lazy {
+        vector(
+            "find-replace",
+            "M11 6h5l-3.5-3.5L14 1l6 6-6 6-1.5-1.5L16 8h-5c-1.1 0-2 .9-2 2v2H7v-2c0-2.21 1.79-4 4-4zm2 12H8l3.5 3.5L10 23l-6-6 6-6 1.5 1.5L8 16h5c1.1 0 2-.9 2-2v-2h2v2c0 2.21-1.79 4-4 4z",
+        )
+    }
 }

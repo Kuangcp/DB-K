@@ -55,10 +55,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -84,7 +87,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -262,11 +267,16 @@ fun SqlWorkspace(
     }
     // 转置视图：仅展示层翻转；新一次执行 / 切换控制台时复位为原布局
     var transposed by remember { mutableStateOf(false) }
+    // N2：编辑器动作（格式化 / 查找替换）。findReplaceOpen 控制查找栏显隐；
+    // formatRef 由下方控制台区块赋值（那里才能访问编辑器权威状态 tfv）。
+    var findReplaceOpen by remember { mutableStateOf(false) }
+    val formatRef = remember { mutableStateOf<(() -> Unit)?>(null) }
     LaunchedEffect(run.executing) {
         if (run.executing) transposed = false
     }
     LaunchedEffect(activeConsole?.id) {
         transposed = false
+        findReplaceOpen = false
     }
     LaunchedEffect(run.activeIndex) {
         transposed = false
@@ -298,6 +308,15 @@ fun SqlWorkspace(
                     transposed = !transposed
                     return@onPreviewKeyEvent true
                 }
+                // N2：Ctrl+F / Ctrl+H 打开查找替换；Ctrl+Alt+L 格式化（整段或选区）
+                if (e.isCtrlPressed && (e.key == Key.F || e.key == Key.H) && activeConsole != null) {
+                    findReplaceOpen = true
+                    return@onPreviewKeyEvent true
+                }
+                if (e.isCtrlPressed && e.isAltPressed && e.key == Key.L && activeConsole != null && formatRef.value != null) {
+                    formatRef.value?.invoke()
+                    return@onPreviewKeyEvent true
+                }
                 // F5：刷新当前结果 Tab（有未提交修改时由 Main 先弹确认）
                 if (e.key == Key.F5 && !run.executing && run.result != null) {
                     onRefreshResult()
@@ -319,6 +338,10 @@ fun SqlWorkspace(
             historyOpen = showHistory,
             onToggleHistory = { showHistory = !showHistory },
             onOpenSettings = onOpenSettings,
+            showEditorActions = activeConsole != null,
+            findOpen = findReplaceOpen,
+            onFormatSql = { formatRef.value?.invoke() },
+            onOpenFindReplace = { findReplaceOpen = !findReplaceOpen },
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -410,6 +433,26 @@ fun SqlWorkspace(
             onCaretChange(consoleId, caret, caret)
             onTextChange(newText)
         }
+        // N2：格式化 = 有选区只格式化选区，否则整段；只调空白/关键字大小写，语义不变。
+        val doFormat: () -> Unit = {
+            val fsel = tfv.selection
+            val newText: String
+            val caret: Int
+            if (!fsel.collapsed) {
+                val from = minOf(fsel.start, fsel.end).coerceIn(0, tfv.text.length)
+                val to = maxOf(fsel.start, fsel.end).coerceIn(0, tfv.text.length)
+                val formatted = formatSql(tfv.text.substring(from, to)).trimEnd('\n')
+                newText = tfv.text.substring(0, from) + formatted + tfv.text.substring(to)
+                caret = from
+            } else {
+                newText = formatSql(tfv.text).trimEnd('\n')
+                caret = tfv.selection.start.coerceIn(0, newText.length)
+            }
+            tfv = TextFieldValue(newText, TextRange(caret))
+            onCaretChange(consoleId, caret, caret)
+            onTextChange(newText)
+        }
+        SideEffect { formatRef.value = doFormat }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Box(
                 modifier = Modifier
@@ -443,6 +486,8 @@ fun SqlWorkspace(
                         defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
                         profile = profile,
                         editorSettings = editorSettings,
+                        findOpen = findReplaceOpen,
+                        onCloseFind = { findReplaceOpen = false },
                         modifier = Modifier
                             .weight(if (resultsVisible) 1f - resultFrac else 1f)
                             .fillMaxWidth(),
@@ -559,11 +604,35 @@ private fun HeaderBar(
     historyOpen: Boolean,
     onToggleHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** 有激活控制台时显示编辑器动作（格式化 / 查找替换）。 */
+    showEditorActions: Boolean = false,
+    findOpen: Boolean = false,
+    onFormatSql: () -> Unit = {},
+    onOpenFindReplace: () -> Unit = {},
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp),
     ) {
+        if (showEditorActions) {
+            IconButton(onClick = onFormatSql, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = DbIcons.Format,
+                    contentDescription = "格式化 SQL（Ctrl+Alt+L）",
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            IconButton(onClick = onOpenFindReplace, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = DbIcons.FindReplace,
+                    contentDescription = "查找替换（Ctrl+F / Ctrl+H）",
+                    tint = if (findOpen) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+        }
         // 左侧留白：后续在此放更多工具 icon（标题文字已去掉）
         Spacer(Modifier.weight(1f))
         if (showHistoryButton) {
@@ -1027,6 +1096,9 @@ private fun EditorPane(
     defaultSchema: SchemaMeta?,
     profile: ConnectionProfile?,
     editorSettings: EditorSettings,
+    /** N2：查找替换栏显隐（由 SqlWorkspace 控制）。 */
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val isDark = MaterialTheme.colors.isLight.not()
@@ -1037,6 +1109,64 @@ private fun EditorPane(
     }.rememberTextFieldValue(value)
 
     val scroll = rememberScrollState()
+
+    // N2 查找替换的替换动作会写 editing（替换后不弹补全），故提前声明；补全活性判定见下。
+    var editing by remember { mutableStateOf(false) }
+
+    // ---- N2 查找替换：纯逻辑在 SqlFindReplace.kt，这里只管状态与交互 ----
+    var findText by remember(consoleId) { mutableStateOf("") }
+    var replaceText by remember(consoleId) { mutableStateOf("") }
+    var useRegex by remember(consoleId) { mutableStateOf(false) }
+    var caseSensitive by remember(consoleId) { mutableStateOf(false) }
+    val findOptions = FindOptions(regex = useRegex, caseSensitive = caseSensitive)
+    val findHits = remember(value.text, findText, useRegex, caseSensitive) {
+        findMatches(value.text, findText, findOptions)
+    }
+    var activeMatch by remember { mutableStateOf(-1) }
+    LaunchedEffect(findHits) {
+        activeMatch = when {
+            findHits.isEmpty() -> -1
+            activeMatch < 0 -> -1
+            activeMatch >= findHits.size -> findHits.size - 1
+            else -> activeMatch
+        }
+    }
+    var navTick by remember { mutableStateOf(0) }
+    // 打开查找时若有选区，用选中文本预填（“选区查找”）；只取首行且限长
+    LaunchedEffect(findOpen) {
+        if (findOpen && findText.isEmpty()) {
+            val s = value.selection
+            if (!s.collapsed) {
+                val from = minOf(s.start, s.end).coerceIn(0, value.text.length)
+                val to = maxOf(s.start, s.end).coerceIn(0, value.text.length)
+                findText = value.text.substring(from, to).lineSequence().firstOrNull().orEmpty().take(200)
+            }
+        }
+    }
+
+    fun selectHit(index: Int) {
+        if (findHits.isEmpty()) return
+        val idx = ((index % findHits.size) + findHits.size) % findHits.size
+        activeMatch = idx
+        val r = findHits[idx]
+        onValueChange(value.copy(selection = TextRange(r.first, r.last + 1)))
+        navTick++
+    }
+
+    fun replaceCurrentHit() {
+        val r = findHits.getOrNull(activeMatch) ?: return
+        val caret = r.first + replaceText.length
+        editing = false
+        onValueChange(value.copy(text = replaceRange(value.text, r, replaceText), selection = TextRange(caret)))
+    }
+
+    fun replaceAllHits() {
+        val (newText, count) = replaceAll(value.text, findText, findOptions, replaceText)
+        if (count == 0) return
+        val caret = value.selection.start.coerceIn(0, newText.length)
+        editing = false
+        onValueChange(TextFieldValue(newText, TextRange(caret)))
+    }
     // 拖拽选区自动滚动：指针停在上/下边缘时持续滚动并同步延伸选区（多行大块选择必需）。
     // 编辑器是「BasicTextField + 外层 verticalScroll」结构，BasicTextField 不知道外层滚动，
     // 不会自己滚；所以在父 Box 上旁路观察指针（Final pass，不干涉文本域自身选区逻辑）。
@@ -1047,7 +1177,6 @@ private fun EditorPane(
     // 收不到事件（实测输入时 focused 恒为 false）。且 BasicTextField 在纯鼠标点击/移动光标时
     // 也会以新选区上报 onValueChange——因此**只有文本真正变化**（敲字/删除/粘贴）才激活补全，
     // 点击与光标移动立即关闭；再用 4s 空闲看门狗收尾。
-    var editing by remember { mutableStateOf(false) }
     var lastEdit by remember { mutableStateOf(0L) }
     // 显式 Ctrl+Space 唤起：允许空前缀（列出上下文列/表）；任意编辑/移动光标后复位
     var forceComplete by remember { mutableStateOf(false) }
@@ -1234,6 +1363,17 @@ private fun EditorPane(
         val top = textTopPx + lay.getLineTop(lay.getLineForOffset(off))
         // 让记忆行大致落在可视区中间；目标值越界时由 ScrollState 自行夹到 0..max，
         // 因此文件首/尾的行会自然贴顶/贴底展示，不会出现滚动不到位的空白。
+        val viewport = (boxH - 2f * textTopPx).coerceAtLeast(lineHpx)
+        val target = (top + lineHpx / 2f - viewport / 2f).coerceAtLeast(0f)
+        scroll.scrollTo(target.toInt())
+    }
+
+    // N2 查找导航：把当前命中行滚到视口中间（navTick 每次“下一个/上一个”自增触发）
+    LaunchedEffect(navTick) {
+        if (navTick == 0) return@LaunchedEffect
+        val lay = textLayout ?: return@LaunchedEffect
+        val off = value.selection.start.coerceIn(0, content.length)
+        val top = textTopPx + lay.getLineTop(lay.getLineForOffset(off))
         val viewport = (boxH - 2f * textTopPx).coerceAtLeast(lineHpx)
         val target = (top + lineHpx / 2f - viewport / 2f).coerceAtLeast(0f)
         scroll.scrollTo(target.toInt())
@@ -1504,6 +1644,215 @@ private fun EditorPane(
                     },
             )
         }
+        // N2 查找替换栏：浮在编辑器右上（不占正文空间）
+        if (findOpen) {
+            FindReplaceBar(
+                findText = findText,
+                onFindTextChange = { findText = it },
+                replaceText = replaceText,
+                onReplaceTextChange = { replaceText = it },
+                regex = useRegex,
+                onRegexChange = { useRegex = it },
+                caseSensitive = caseSensitive,
+                onCaseSensitiveChange = { caseSensitive = it },
+                matchCount = findHits.size,
+                activeIndex = activeMatch,
+                onPrev = { selectHit(if (activeMatch < 0) findHits.size - 1 else activeMatch - 1) },
+                onNext = { selectHit(if (activeMatch < 0) 0 else activeMatch + 1) },
+                onReplace = { replaceCurrentHit() },
+                onReplaceAll = { replaceAllHits() },
+                onClose = onCloseFind,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 10.dp, end = 14.dp),
+            )
+        }
+    }
+}
+
+/**
+ * N2 查找替换栏：浮在编辑器右上的紧凑面板。
+ * 查找框 Enter=下一个、Shift+Enter=上一个、Esc=关闭；`Aa`=区分大小写、`.*`=正则。
+ */
+@Composable
+private fun FindReplaceBar(
+    findText: String,
+    onFindTextChange: (String) -> Unit,
+    replaceText: String,
+    onReplaceTextChange: (String) -> Unit,
+    regex: Boolean,
+    onRegexChange: (Boolean) -> Unit,
+    caseSensitive: Boolean,
+    onCaseSensitiveChange: (Boolean) -> Unit,
+    matchCount: Int,
+    activeIndex: Int,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onReplace: () -> Unit,
+    onReplaceAll: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val findFocus = remember { FocusRequester() }
+    // 打开即聚焦查找框（面板仅 findOpen 时进入组合，故每次打开都会重新聚焦）
+    LaunchedEffect(Unit) { runCatching { findFocus.requestFocus() } }
+    val iconTint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+    Column(
+        modifier = modifier
+            .width(432.dp)
+            .shadow(8.dp, RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colors.surface)
+            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FindInputField(
+                value = findText,
+                onValueChange = onFindTextChange,
+                placeholder = "查找",
+                focus = findFocus,
+                onKey = { e ->
+                    when {
+                        e.key == Key.Enter -> {
+                            if (e.isShiftPressed) onPrev() else onNext()
+                            true
+                        }
+                        e.key == Key.Escape -> { onClose(); true }
+                        else -> false
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(6.dp))
+            FindToggleChip("Aa", caseSensitive) { onCaseSensitiveChange(!caseSensitive) }
+            Spacer(Modifier.width(4.dp))
+            FindToggleChip(".*", regex) { onRegexChange(!regex) }
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (matchCount == 0) "0/0" else "${activeIndex + 1}/$matchCount",
+                fontSize = 11.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.widthIn(min = 34.dp),
+            )
+            IconButton(onClick = onPrev, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Filled.KeyboardArrowUp, "上一个", tint = iconTint, modifier = Modifier.size(16.dp))
+            }
+            IconButton(onClick = onNext, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Filled.KeyboardArrowDown, "下一个", tint = iconTint, modifier = Modifier.size(16.dp))
+            }
+            IconButton(onClick = onClose, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Filled.Close, "关闭查找", tint = iconTint, modifier = Modifier.size(16.dp))
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FindInputField(
+                value = replaceText,
+                onValueChange = onReplaceTextChange,
+                placeholder = "替换为",
+                focus = null,
+                onKey = null,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(6.dp))
+            FindSmallButton("替换") { onReplace() }
+            Spacer(Modifier.width(4.dp))
+            FindSmallButton("全部替换") { onReplaceAll() }
+        }
+    }
+}
+
+@Composable
+private fun FindInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    focus: FocusRequester?,
+    onKey: ((KeyEvent) -> Boolean)?,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(26.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colors.background)
+            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.22f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colors.onSurface),
+            cursorBrush = SolidColor(MaterialTheme.colors.primary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
+                .then(
+                    if (onKey != null) {
+                        Modifier.onPreviewKeyEvent { e ->
+                            if (e.type == KeyEventType.KeyDown) onKey(e) else false
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) {
+                        Text(
+                            placeholder,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun FindToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(28.dp)
+            .height(26.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (active) MaterialTheme.colors.primary.copy(alpha = 0.22f) else Color.Transparent)
+            .border(
+                1.dp,
+                if (active) MaterialTheme.colors.primary.copy(alpha = 0.55f)
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.2f),
+                RoundedCornerShape(4.dp),
+            )
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colors.onSurface.copy(alpha = if (active) 0.95f else 0.55f),
+        )
+    }
+}
+
+@Composable
+private fun FindSmallButton(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(26.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colors.primary.copy(alpha = 0.12f))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f))
     }
 }
 
