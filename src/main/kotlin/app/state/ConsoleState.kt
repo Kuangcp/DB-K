@@ -8,6 +8,7 @@ import app.ui.CellKey
 import app.ui.EditPlan
 import app.ui.buildEditPlan
 import app.ui.buildUpdatePlans
+import app.ui.sqlHasPaginationClause
 import db.ConsoleRecord
 import db.ConnectionsRepository
 import db.SqlHistoryRow
@@ -358,6 +359,81 @@ class ConsoleState(
     }
 
     fun isDirty(consoleId: String): Boolean = consoleId in dirtyConsoleIds
+
+    // ---------- N1「取更多」：按方言注入分页，追加不替换 ----------
+
+    /** 当前激活结果是否还能「取更多」（被截断且原查询不含分页子句）。 */
+    fun canFetchMore(consoleId: String): Boolean {
+        val ui = runSlots[consoleId] ?: return false
+        val active = ui.active ?: return false
+        val result = active.result ?: return false
+        if (ui.executing || resultBusyOf(consoleId)) return false
+        if (!result.isQuery || !result.truncated) return false
+        return !sqlHasPaginationClause(active.sql)
+    }
+
+    /**
+     * 取更多：给当前语句按方言注入分页（[DialectRegistry.paginate]），取 [FETCH_MORE_PAGE] 行
+     * **追加**到当前结果（不替换），满页说明可能还有、不满页则到底。返回实际追加行数。
+     * 原查询无 ORDER BY 时由 UI 提示「顺序不保证」。
+     */
+    suspend fun fetchMore(console: ConsoleRecord, profile: db.ConnectionProfile): Result<Int> {
+        val ui = runSlots[console.id] ?: return Result.failure(IllegalStateException("没有可追加的结果"))
+        if (ui.executing || resultBusyOf(console.id)) {
+            return Result.failure(IllegalStateException("正在执行，稍后再试"))
+        }
+        val idx = ui.activeIndex
+        val outcome = ui.outcomes.getOrNull(idx) ?: return Result.failure(IllegalStateException("没有可追加的结果"))
+        val result = outcome.result ?: return Result.failure(IllegalStateException("没有可追加的结果"))
+        if (!result.isQuery) return Result.failure(IllegalStateException("当前结果不是查询"))
+        val baseSql = outcome.sql.trim().trimEnd(';').trim()
+        if (baseSql.isEmpty()) return Result.failure(IllegalStateException("原语句为空，无法取更多"))
+        if (sqlHasPaginationClause(baseSql)) {
+            return Result.failure(IllegalStateException("原查询已含分页子句，无法取更多"))
+        }
+
+        if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
+            connectionsState.ensureConnectionReady(profile)
+        }
+        if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
+            return Result.failure(
+                IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: "连接不可用"),
+            )
+        }
+        val session = connectionsState.sessionOf(profile.id)
+            ?: return Result.failure(IllegalStateException("连接已断开"))
+        val pageSql = DialectRegistry.forProfile(profile)
+            .paginate(baseSql, result.rows.size.toLong(), FETCH_MORE_PAGE)
+        val contextSql = sessionContextSqlFor(console, profile)
+
+        resultBusy[console.id] = true
+        val fetched = withContext(ioDispatcher) {
+            runCatching { session.runStatement(pageSql, contextSql) }
+        }
+        resultBusy[console.id] = false
+
+        return fetched.fold(
+            onSuccess = { page ->
+                if (!page.isQuery) {
+                    Result.failure(IllegalStateException("取更多未返回结果集"))
+                } else {
+                    val merged = result.copy(
+                        rows = result.rows + page.rows,
+                        // 满页说明后面可能还有；不满页即已到底
+                        truncated = page.rows.size >= FETCH_MORE_PAGE,
+                    )
+                    val outcomes = ui.outcomes.toMutableList()
+                    outcomes[idx] = outcome.copy(result = merged)
+                    runSlots[console.id] = ui.copy(outcomes = outcomes)
+                    Result.success(page.rows.size)
+                }
+            },
+            onFailure = { t ->
+                Logger.error(t, "fetch more failed on {}", profile.name)
+                Result.failure(IllegalStateException(friendlySqlError(t)))
+            },
+        )
+    }
 
     // ---------- 激活 / 切换 ----------
 
@@ -823,6 +899,8 @@ class ConsoleState(
         private const val AUTOSAVE_MS = 3000L
         // 光标落库防抖窗口：光标/选区变化远频于文本改动，单独一个更短的窗口（内存即时生效）。
         private const val CARET_SAVE_MS = 1500L
+        // N1「取更多」每页行数（< QueryExecutor.MAX_ROWS，保证单页不被截断）
+        private const val FETCH_MORE_PAGE = 500
         private const val HISTORY_PANEL_LIMIT = 100
     }
 }

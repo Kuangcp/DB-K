@@ -573,6 +573,13 @@ fun transposeResult(result: QueryResult): QueryResult {
     return result.copy(columns = newCols, rows = newRows, truncated = false)
 }
 
+/** 「取更多」顺序提示：查询是否含 ORDER BY（无则分页顺序不保证）。 */
+fun sqlHasOrderBy(sql: String): Boolean = Regex("(?i)\\border\\s+by\\b").containsMatchIn(sql)
+
+/** 查询是否已含分页子句（LIMIT/OFFSET/FETCH/TOP/ROWNUM）——此时「取更多」会冲突，应禁用。 */
+fun sqlHasPaginationClause(sql: String): Boolean =
+    Regex("(?i)\\b(limit|offset|fetch|top|rownum)\\b").containsMatchIn(sql)
+
 /** 从 SQL 中粗提取可回填的表名（FROM/INTO/UPDATE 后首个标识符，允许 schema.表 / 引号）。 */
 fun extractTableName(sql: String): String? {
     val m = Regex("(?i)\\b(?:from|into|update)\\s+([`\"\\[]?[A-Za-z_][A-Za-z0-9_$`\"\\[\\].-]*)")

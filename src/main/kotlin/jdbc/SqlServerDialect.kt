@@ -46,4 +46,10 @@ object SqlServerDialect : GenericDialect(DbType.SQLSERVER, "com.microsoft.sqlser
         val prefix = schema?.schema?.let { quoteIdent(it) + "." } ?: ""
         return "SELECT TOP 100 * FROM $prefix${quoteIdent(name)}"
     }
+
+    /** OFFSET/FETCH 要求 ORDER BY；原查询没有时补一个无意义的稳定排序。 */
+    override fun paginate(baseSql: String, offset: Long, limit: Int): String {
+        val orderBy = if (Regex("(?i)\\border\\s+by\\b").containsMatchIn(baseSql)) "" else " ORDER BY (SELECT NULL)"
+        return "$baseSql$orderBy OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY"
+    }
 }

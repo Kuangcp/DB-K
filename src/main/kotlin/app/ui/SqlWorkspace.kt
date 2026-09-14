@@ -207,6 +207,10 @@ fun SqlWorkspace(
     onClearAllEdits: () -> Unit = {},
     /** 刷新当前结果 Tab（重新执行该语句）。 */
     onRefreshResult: () -> Unit = {},
+    /** 「取更多」当前是否可用（结果被截断且原查询不含分页子句）。 */
+    canFetchMore: Boolean = false,
+    /** 取更多：按方言注入分页，把新行追加到当前结果（不重跑原查询）。 */
+    onFetchMore: () -> Unit = {},
     /** 未提交修改（原始坐标 → 新值）。 */
     edits: Map<CellKey, CellValue> = emptyMap(),
     /** 当前结果的可编辑计划（null = 只读：视图/无主键/表达式）。 */
@@ -461,6 +465,8 @@ fun SqlWorkspace(
                             onCommitEdits = onCommitEdits,
                             onClearAllEdits = onClearAllEdits,
                             onRefreshResult = onRefreshResult,
+                            canFetchMore = canFetchMore,
+                            onFetchMore = onFetchMore,
                             editCount = edits.size,
                             canCommit = editPlan != null,
                             resultBusy = resultBusy,
@@ -1606,6 +1612,8 @@ private fun ResultToolbar(
     onCommitEdits: () -> Unit,
     onClearAllEdits: () -> Unit,
     onRefreshResult: () -> Unit,
+    canFetchMore: Boolean,
+    onFetchMore: () -> Unit,
     editCount: Int,
     canCommit: Boolean,
     resultBusy: Boolean,
@@ -1685,6 +1693,15 @@ private fun ResultToolbar(
                     description = if (transposed) "还原行列 (Ctrl+T)" else "转置行列 (Ctrl+T)",
                     active = transposed,
                     onClick = onToggleTranspose,
+                )
+            }
+            if (canFetchMore) {
+                ResultIconButton(
+                    icon = DbIcons.FetchMore,
+                    description = "取更多（按方言分页追加下一页）",
+                    enabled = !resultBusy,
+                    active = true,
+                    onClick = onFetchMore,
                 )
             }
             ResultIconButton(
@@ -1892,6 +1909,8 @@ private fun ResultTabs(
     onCommitEdits: () -> Unit,
     onClearAllEdits: () -> Unit,
     onRefreshResult: () -> Unit,
+    canFetchMore: Boolean,
+    onFetchMore: () -> Unit,
     editCount: Int,
     canCommit: Boolean,
     resultBusy: Boolean,
@@ -1917,6 +1936,8 @@ private fun ResultTabs(
                 onCommitEdits = onCommitEdits,
                 onClearAllEdits = onClearAllEdits,
                 onRefreshResult = onRefreshResult,
+                canFetchMore = canFetchMore,
+                onFetchMore = onFetchMore,
                 editCount = editCount,
                 canCommit = canCommit,
                 resultBusy = resultBusy,
@@ -2005,8 +2026,8 @@ private fun TruncationBanner() {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            "结果超过 ${QueryExecutor.MAX_ROWS} 行，表格只显示前 ${QueryExecutor.MAX_ROWS} 行（已截断）。" +
-                "「导出全量 CSV」会重新执行并导出全部行。",
+            "结果已截断（超过 ${QueryExecutor.MAX_ROWS} 行）。可用工具栏「取更多」继续追加，" +
+                "或「导出全量 CSV」重新执行并导出全部行。",
             fontSize = 11.sp,
             lineHeight = 15.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),

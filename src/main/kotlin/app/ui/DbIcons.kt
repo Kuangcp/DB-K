@@ -78,6 +78,11 @@ object DbIcons {
         )
     }
 
+    /** 下箭头：结果区「取更多」（追加下一页）。 */
+    val FetchMore: ImageVector by lazy {
+        vector("fetch-more", "M11 4h2v12l5.5-5.5 1.42 1.42L12 20.84l-7.92-7.92L5.5 10.5 11 16V4z")
+    }
+
     /** 停止（实心方块）：取消正在执行的查询。 */
     val Stop: ImageVector by lazy {
         vector("stop", "M6 6h12v12H6z")

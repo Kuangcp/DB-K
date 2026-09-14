@@ -5,7 +5,9 @@ import engine.model.QueryResult
 import engine.model.SchemaMeta
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SqlEditingTest {
 
@@ -324,5 +326,17 @@ class SqlEditingTest {
         val cte = "WITH c AS (SELECT 1) SELECT * FROM c"
         assertNull(tableAtCaret(cte, cte.length - 1, known, listOf(publicS), publicS)) // CTE 无 DDL
         assertNull(tableAtCaret("SELECT 'users'", 11, known, listOf(publicS), publicS)) // 字符串内
+    }
+
+    @Test
+    fun `sqlHasOrderBy and pagination clause detection`() {
+        assertTrue(sqlHasOrderBy("SELECT * FROM t ORDER BY id"))
+        assertTrue(sqlHasOrderBy("select * from t order\nby id"))
+        assertFalse(sqlHasOrderBy("SELECT * FROM t"))
+        assertTrue(sqlHasPaginationClause("SELECT * FROM t LIMIT 100"))
+        assertTrue(sqlHasPaginationClause("SELECT * FROM t OFFSET 5 ROWS"))
+        assertTrue(sqlHasPaginationClause("SELECT TOP 10 * FROM t"))
+        assertTrue(sqlHasPaginationClause("SELECT * FROM t WHERE ROWNUM <= 5"))
+        assertFalse(sqlHasPaginationClause("SELECT * FROM t ORDER BY id"))
     }
 }

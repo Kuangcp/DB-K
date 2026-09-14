@@ -96,6 +96,10 @@ object OracleDialect : GenericDialect(DbType.ORACLE, "oracle.jdbc.OracleDriver")
         return "SELECT * FROM $prefix${quoteIdent(name)} FETCH FIRST 100 ROWS ONLY"
     }
 
+    /** Oracle 12c+ 的 OFFSET/FETCH 分页（无需 ORDER BY）。 */
+    override fun paginate(baseSql: String, offset: Long, limit: Int): String =
+        "$baseSql OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY"
+
     private fun queryFirstStrings(conn: Connection, sql: String): List<String> =
         conn.createStatement().use { st ->
             st.executeQuery(sql).use { rs ->

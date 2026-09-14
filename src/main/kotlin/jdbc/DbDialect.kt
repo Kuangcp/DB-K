@@ -101,6 +101,14 @@ interface DbDialect {
 
     /** 是否支持在控制台内选择执行目标库/schema（SQLite 单文件无意义）。 */
     val supportsTargetSwitch: Boolean get() = true
+
+    /**
+     * N1「取更多」：把 [baseSql]（单条、已去尾分号）改写成取第 [offset]+1 行起共 [limit] 行的等价查询。
+     * 默认 `LIMIT <limit> OFFSET <offset>`；无 LIMIT 语法的方言（SQL Server / Oracle）覆写。
+     * **仅此操作会重写 SQL** —— 客户端排序/筛选不重跑查询。
+     */
+    fun paginate(baseSql: String, offset: Long, limit: Int): String =
+        "$baseSql LIMIT $limit OFFSET $offset"
 }
 
 /**

@@ -79,6 +79,36 @@ class ConsoleStateRunTest {
     }
 
     @Test
+    fun `fetchMore appends next page until exhausted`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            // 1200 行 > QueryExecutor.MAX_ROWS(1000) → 首屏截断
+            state.run(console, stored, "SELECT X AS n FROM SYSTEM_RANGE(1, 1200) ORDER BY X")
+            val first = state.runStateOf(console.id).result!!
+            assertTrue(first.truncated)
+            assertEquals(1000, first.rows.size)
+            assertTrue(state.canFetchMore(console.id))
+
+            // 取下一页（offset=1000，page=500）→ 追加剩余 200 行
+            val added = state.fetchMore(console, stored).getOrThrow()
+            assertEquals(200, added)
+            val after = state.runStateOf(console.id).result!!
+            assertEquals(1200, after.rows.size)
+            assertFalse(after.truncated)
+            assertFalse(state.canFetchMore(console.id))
+            // 追加不替换：首尾均保留且顺序稳定
+            assertEquals("1", after.rows.first().single())
+            assertEquals("1200", after.rows.last().single())
+        }
+    }
+
+    @Test
     fun `run records failed history on error`() = runBlocking {
         val dbPath = dir.resolve("app.db")
         val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))

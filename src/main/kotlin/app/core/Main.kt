@@ -70,6 +70,7 @@ import app.state.ToastState
 import app.ui.CompletionTable
 import app.ui.SqlWorkspace
 import app.ui.appMaterialColors
+import app.ui.sqlHasOrderBy
 import app.ui.tableAtCaret
 import db.AppPaths
 import db.ConnectionProfile
@@ -796,6 +797,24 @@ private fun AppBody(
                                     dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "刷新结果", doRefresh)
                                 } else {
                                     doRefresh()
+                                }
+                            }
+                        },
+                        canFetchMore = activeConsole?.let { consoleState.canFetchMore(it.id) } == true,
+                        onFetchMore = {
+                            val c = activeConsole
+                            val p = activeProfile
+                            if (c != null && p != null) {
+                                val stmt = consoleState.runStateOf(c.id).active?.sql
+                                if (stmt != null && !sqlHasOrderBy(stmt)) {
+                                    toastState.show("原查询无 ORDER BY，取更多顺序不保证")
+                                }
+                                scope.launch {
+                                    consoleState.fetchMore(c, p)
+                                        .onSuccess { n ->
+                                            toastState.show(if (n > 0) "已追加 $n 行" else "没有更多数据了")
+                                        }
+                                        .onFailure { toastState.show("取更多失败：${it.message?.take(120)}") }
                                 }
                             }
                         },

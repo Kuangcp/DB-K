@@ -128,6 +128,28 @@ class DbDialectTest {
     }
 
     @Test
+    fun `paginate uses dialect specific syntax`() {
+        val base = "SELECT * FROM t ORDER BY id"
+        assertEquals("$base LIMIT 500 OFFSET 1000", PostgresDialect.paginate(base, 1000, 500))
+        assertEquals("$base LIMIT 500 OFFSET 1000", MySqlDialect.paginate(base, 1000, 500))
+        assertEquals("$base LIMIT 500 OFFSET 1000", MariaDbDialect.paginate(base, 1000, 500))
+        assertEquals("$base LIMIT 500 OFFSET 1000", SQLiteDialect.paginate(base, 1000, 500))
+        assertEquals("$base LIMIT 500 OFFSET 1000", H2Dialect.paginate(base, 1000, 500))
+        assertEquals("$base LIMIT 500 OFFSET 1000", ClickHouseDialect.paginate(base, 1000, 500))
+        assertEquals("$base OFFSET 1000 ROWS FETCH NEXT 500 ROWS ONLY", OracleDialect.paginate(base, 1000, 500))
+        // SQL Server：已有 ORDER BY 直接追加 OFFSET/FETCH
+        assertEquals(
+            "$base OFFSET 1000 ROWS FETCH NEXT 500 ROWS ONLY",
+            SqlServerDialect.paginate(base, 1000, 500),
+        )
+        // SQL Server：无 ORDER BY 时自动补一个（OFFSET/FETCH 语法要求）
+        assertEquals(
+            "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 500 ROWS ONLY",
+            SqlServerDialect.paginate("SELECT * FROM t", 0, 500),
+        )
+    }
+
+    @Test
     fun `registry maps all eight types to singletons`() {
         assertSame(PostgresDialect, DialectRegistry.forType(DbType.POSTGRES))
         assertSame(MySqlDialect, DialectRegistry.forType(DbType.MYSQL))
