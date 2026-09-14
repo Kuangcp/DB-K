@@ -49,21 +49,25 @@ import app.build.Version
 import app.core.openDirectory
 import app.core.writeClipboardText
 import app.settings.EditorSettings
+import app.settings.Keymap
 import app.ui.appMaterialColors
 import app.ui.editorFontFamily
 import db.AppPaths
 
+/** 设置窗口的完整快照：编辑器外观 + 快捷键。保存时一并落盘。 */
+data class SettingsSnapshot(val editor: EditorSettings, val keymap: Keymap)
+
 /**
  * 设置窗口（独立 [DialogWindow]，与主窗口同款主题）。
- * 左侧分区导航 + 右侧内容；左下角展示版本号。当前只有「通用设置」一个分区。
+ * 左侧分区导航 + 右侧内容；左下角展示版本号。当前有「通用设置」「快捷键」两个分区。
  */
 @Composable
 fun SettingsDialog(
     visible: Boolean,
     isDark: Boolean,
-    initial: EditorSettings,
+    initial: SettingsSnapshot,
     onDismiss: () -> Unit,
-    onSave: (EditorSettings) -> Unit,
+    onSave: (SettingsSnapshot) -> Unit,
 ) {
     if (!visible) return
     DialogWindow(
@@ -82,13 +86,14 @@ fun SettingsDialog(
 
 @Composable
 private fun SettingsBody(
-    initial: EditorSettings,
+    initial: SettingsSnapshot,
     onCancel: () -> Unit,
-    onSave: (EditorSettings) -> Unit,
+    onSave: (SettingsSnapshot) -> Unit,
 ) {
     var section by remember { mutableIntStateOf(0) }
-    var fontFamily by remember { mutableStateOf(initial.fontFamilyName) }
-    var fontSize by remember { mutableFloatStateOf(initial.fontSizeSp) }
+    var fontFamily by remember { mutableStateOf(initial.editor.fontFamilyName) }
+    var fontSize by remember { mutableFloatStateOf(initial.editor.fontSizeSp) }
+    var keymap by remember { mutableStateOf(initial.keymap) }
 
     Column(
         modifier = Modifier
@@ -106,6 +111,7 @@ private fun SettingsBody(
                     .padding(vertical = 8.dp),
             ) {
                 SettingsNavRow(label = "通用设置", selected = section == 0) { section = 0 }
+                SettingsNavRow(label = "快捷键", selected = section == 1) { section = 1 }
             }
             Divider(
                 modifier = Modifier.width(1.dp).fillMaxHeight(),
@@ -130,6 +136,10 @@ private fun SettingsBody(
                         )
                         DiagnosticsSection()
                     }
+                    1 -> ShortcutSettingsSection(
+                        keymap = keymap,
+                        onKeymapChange = { keymap = it },
+                    )
                 }
             }
         }
@@ -145,7 +155,7 @@ private fun SettingsBody(
             )
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onCancel) { Text("取消") }
-            TextButton(onClick = { onSave(EditorSettings.sanitized(fontFamily, fontSize)) }) {
+            TextButton(onClick = { onSave(SettingsSnapshot(EditorSettings.sanitized(fontFamily, fontSize), keymap)) }) {
                 Text("保存")
             }
         }

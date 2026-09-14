@@ -270,27 +270,42 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 
 ## 10. 快捷键
 
+快捷键统一登记在 `app/settings/ShortcutModels.kt` 的 `ShortcutCommand`（命令 id / 标签 / 作用域 / 默认键）；
+各拦截点用 `keymap.matches(...)` / `keymap.matchAnyAwt(...)` 匹配，不再散落字面量。完整设计见 `doc/KEYBINDINGS.md`。
+
+**扩展业务功能（设置窗口「快捷键」分区可改，覆盖写 `<dataDir>/keymap.properties`）**：
+
 | 键 | 动作 |
 |---|---|
-| Ctrl+Enter | 运行（编辑器内） |
+| Ctrl+Enter | 执行选中 SQL（编辑器内；无选中不执行） |
+| Ctrl+Alt+L | 格式化 SQL（选区或整段） |
 | Ctrl+Q | 查看表/视图定义 DDL（浮窗）：优取编辑器光标下的表名（含 `schema.表`/别名），其次左侧树选中项 |
-| Ctrl+Space | 编辑器主动召唤补全（按光标处前缀/限定符给候选；空前缀列上下文列/表；`SELECT *` 展开为列） |
 | Alt+D | 显示/隐藏结果区 |
-| Ctrl+B | 收起/展开左侧树 |
-| Ctrl+1..9 | 切结果 Tab |
 | Ctrl+T | 结果行列转置（只剩一个值列时该列自适应加宽） |
-| ↑↓←→ | 结果区聚焦时移动选中单元格 |
-| Ctrl+C | 结果区聚焦时复制选中单元格值（NULL → 空串） |
-| F5 | 刷新当前连接 schema |
-| Esc | 取消当前执行 |
-| Ctrl+↑ / Ctrl+↓ | 翻 SQL 历史（后置） |
+| F5 | 刷新当前结果 Tab |
 
-全局键处理用 AWT `KeyEventDispatcher` 拦截（api-x 同款；X11 下修饰键+字母会额外派发字符事件，
-必须在事件进入 Compose 前整颗吃掉，见 `Main.kt` 注释），编辑器内快捷键在编辑器层拦截。
+**基础编辑键（固定，不进设置，登记于同一注册表）**：
+
+| 键 | 动作 |
+|---|---|
+| Ctrl+S | 保存控制台 |
+| Ctrl+F / Ctrl+H | 查找替换 |
+| Ctrl+Space | 编辑器主动召唤补全（按光标处前缀/限定符给候选；空前缀列上下文列/表；`SELECT *` 展开为列） |
+| Ctrl+C | 结果区聚焦时复制选中单元格值（NULL → 空串） |
+| ↑↓←→ | 结果区聚焦时移动选中单元格 |
+| Esc | 取消当前执行 |
+
+后置：`Ctrl+B` 收起/展开树、`Ctrl+1..9` 切结果 Tab、`Ctrl+↑/↓` 翻 SQL 历史。
+
+全局键（Alt+D / Ctrl+Q）用 AWT `KeyEventDispatcher` 拦截（api-x 同款；X11 下修饰键+字母会额外派发字符事件，
+必须在事件进入 Compose 前整颗吃掉，见 `Main.kt` 注释），编辑器/结果区内快捷键在各自 composable 层拦截。
 
 设置窗口（非快捷键）：顶栏右上角 **设置** icon（齿轮，主题切换右侧）→ 独立 `DialogWindow`（与主窗口同款主题），
-左侧分区导航（当前仅「通用设置」），右侧配置**编辑器字体族 / 字号**（带实时预览），左下角显示版本号 `v<NAME>-<COMMIT>`；
-保存写 `<dataDir>/editor.properties` 并即时重排编辑器（字号变化时行高按 20/13 等比缩放，行号槽同步），取消不改。
+左侧分区导航「通用设置 / 快捷键」，左侧左下角显示版本号 `v<NAME>-<COMMIT>`。
+「通用设置」右侧配置**编辑器字体族 / 字号**（带实时预览）；保存写 `<dataDir>/editor.properties` 并即时重排编辑器
+（字号变化时行高按 20/13 等比缩放，行号槽同步），取消不改。
+「快捷键」右侧按作用域分组列出可配置的业务功能，点组合键胶囊录制新键（AWT 级捕获，需含 Ctrl/Alt 或 F1–F12），
+每行「重置」、底部「全部恢复默认」，同作用域冲突红字提示但不阻断；保存写 `<dataDir>/keymap.properties` 并即时生效。
 版本号由构建期 `generateVersion` 任务生成 `app/build/Version.kt`（含 git short hash）。
 「通用设置」底部还有**诊断**分区（P9）：展示 `AppPaths.logsDirectory()`（`<dataDir>/logs`，`-Ddbk.logDir` 可覆盖）
 与数据目录，按钮经 `Desktop.open` 用文件管理器打开；无桌面环境则复制路径 + 行内提示（设置窗口是独立窗口，主窗口 Toast 会被遮住）。

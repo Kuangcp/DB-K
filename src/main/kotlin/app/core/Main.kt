@@ -49,7 +49,10 @@ import app.dialog.FolderNameDialog
 import app.dialog.ImportConflictDialog
 import app.dialog.PassphraseDialog
 import app.dialog.SettingsDialog
+import app.dialog.SettingsSnapshot
 import app.settings.EditorPrefs
+import app.settings.KeymapPrefs
+import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
 import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
@@ -68,8 +71,10 @@ import app.state.TableDdlRequest
 import app.state.TreeState
 import app.state.ToastState
 import app.ui.CompletionTable
+import app.ui.LocalKeymap
 import app.ui.SqlWorkspace
 import app.ui.appMaterialColors
+import app.ui.matchAnyAwt
 import app.ui.sqlHasOrderBy
 import app.ui.tableAtCaret
 import db.AppPaths
@@ -215,6 +220,8 @@ private fun AppBody(
     var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
+    // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
+    var keymap by remember { mutableStateOf(KeymapPrefs.load()) }
     var treeWidthDp by remember { mutableStateOf(280f) }
     // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
@@ -454,6 +461,9 @@ private fun AppBody(
         }
     }
     val resolveDdlTargetState = rememberUpdatedState(resolveDdlTarget)
+    // AWT 派发器一次性安装（DisposableEffect(Unit)），用 rememberUpdatedState 读最新键表，
+    // 否则用户改键后派发器仍按旧键匹配。
+    val keymapState = rememberUpdatedState(keymap)
 
     // 在指定数据源新建控制台（标签条「+」与树右键「打开控制台 → 新建控制台」共用）。
     val createConsoleFor: (ConnectionProfile) -> Unit = { p ->
@@ -564,38 +574,41 @@ private fun AppBody(
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
-        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
-            // Alt+D 显示/隐藏结果区、Ctrl+Q 查看定义必须用 AWT 级 KeyEventDispatcher 拦截：
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colors.onSurface,
+            LocalKeymap provides keymap,
+        ) {
+            // 窗口级业务键（显示/隐藏结果区、查看定义 DDL）用 AWT 级 KeyEventDispatcher 拦截：
             // Linux/X11 实测，修饰键+字母除 KEY_PRESSED 外还会派发一次字符事件
             // （Alt+字母：key=Unknown、utf16CodePoint=98；Ctrl+字母：控制字符），该事件绕过
             // KeyDown 的消费直接进入编辑器的文本输入会话（编辑器失焦时平台会话仍绑定它，
             // 故“焦点在哪都会漏 b”/漏控制字符）。AWT 派发器在事件进入 Compose 之前把整颗按键
-            // （KEY_PRESSED + KEY_TYPED）吃掉，两条通道都收不到。
+            // （KEY_PRESSED + KEY_TYPED）吃掉，两条通道都收不到；命中哪两条命令由用户可配置键表决定。
             DisposableEffect(Unit) {
                 val dispatcher = java.awt.KeyEventDispatcher { e ->
-                    if (e.isAltDown && (e.keyCode == java.awt.event.KeyEvent.VK_D || e.keyChar == 'd')) {
-                        // 只在首次按下时切换，忽略自动重复（KEY_RELEASED/KEY_TYPED 只吞不切）
-                        if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
-                            resultsVisible = !resultsVisible
-                        }
-                        true
-                    } else if (e.isControlDown && (
-                            e.keyCode == java.awt.event.KeyEvent.VK_Q ||
-                                e.keyChar == 'q' || e.keyChar == '\u0011'
-                            )
-                    ) {
-                        // Ctrl+Q：只在首次按下时取值（控制字符 KEY_TYPED 只吞不重复触发）
-                        if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
-                            val target = resolveDdlTargetState.value()
-                            if (target != null) {
-                                dialogState.tableDdl = target
-                            } else {
-                                toastState.show("请把编辑器光标放到表名上，或在左侧选中表/视图，再按 Ctrl+Q")
+                    when (keymapState.value.matchAnyAwt(e)) {
+                        ShortcutCommand.TOGGLE_RESULTS -> {
+                            // 只在首次按下时切换，忽略自动重复（KEY_RELEASED/KEY_TYPED 只吞不切）
+                            if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                                resultsVisible = !resultsVisible
                             }
+                            true
                         }
-                        true
-                    } else {
-                        false
+                        ShortcutCommand.VIEW_DDL -> {
+                            // 只在首次按下时取值（控制字符 KEY_TYPED 只吞不重复触发）
+                            if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                                val target = resolveDdlTargetState.value()
+                                if (target != null) {
+                                    dialogState.tableDdl = target
+                                } else {
+                                    val keys = keymapState.value.chordsOf(ShortcutCommand.VIEW_DDL)
+                                        .joinToString(" / ") { it.format() }
+                                    toastState.show("请把编辑器光标放到表名上，或在左侧选中表/视图，再按 $keys")
+                                }
+                            }
+                            true
+                        }
+                        else -> false
                     }
                 }
                 val kfm = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
@@ -940,11 +953,13 @@ private fun AppBody(
                 SettingsDialog(
                     visible = dialogState.showSettings,
                     isDark = isDark,
-                    initial = editorSettings,
+                    initial = SettingsSnapshot(editorSettings, keymap),
                     onDismiss = { dialogState.showSettings = false },
-                    onSave = { saved ->
-                        editorSettings = saved
-                        EditorPrefs.save(saved)
+                    onSave = { snapshot ->
+                        editorSettings = snapshot.editor
+                        keymap = snapshot.keymap
+                        EditorPrefs.save(snapshot.editor)
+                        KeymapPrefs.save(snapshot.keymap)
                         dialogState.showSettings = false
                     },
                 )

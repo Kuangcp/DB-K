@@ -87,8 +87,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.KeyEvent
-import androidx.compose.ui.input.key.isAltPressed
-import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -121,6 +119,7 @@ import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
 import app.state.StatementOutcome
 import app.settings.EditorSettings
+import app.settings.ShortcutCommand
 import app.dialog.CellViewerDialog
 import app.dialog.EditCellDialog
 import app.dialog.TextViewerDialog
@@ -258,6 +257,8 @@ fun SqlWorkspace(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 当前快捷键表（业务命令可配置；基础编辑键固定）。读取一次，供根级 onPreviewKeyEvent 匹配。
+    val keymap = LocalKeymap.current
     var showHistory by remember { mutableStateOf(false) }
     // 双击历史条目：弹窗查看完整 SQL（复用通用文本查看器，按 SQL 高亮）
     var historyView by remember { mutableStateOf<SqlHistoryRow?>(null) }
@@ -298,32 +299,33 @@ fun SqlWorkspace(
             .background(MaterialTheme.colors.background)
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                // Ctrl+S：主动保存当前控制台（取消防抖，立即异步落盘）
-                if (e.isCtrlPressed && e.key == Key.S) {
+                // 基础编辑键（固定）：保存当前控制台（取消防抖，立即异步落盘）
+                if (keymap.matches(ShortcutCommand.SAVE_CONSOLE, e)) {
                     onSaveNow()
                     return@onPreviewKeyEvent true
                 }
-                // Ctrl+T 行列转制（仅在有可转置结果时消费，避免与其它用途冲突）
-                if (e.isCtrlPressed && e.key == Key.T && canTranspose(run)) {
-                    transposed = !transposed
-                    return@onPreviewKeyEvent true
-                }
-                // N2：Ctrl+F / Ctrl+H 打开查找替换；Ctrl+Alt+L 格式化（整段或选区）
-                if (e.isCtrlPressed && (e.key == Key.F || e.key == Key.H) && activeConsole != null) {
+                // 基础编辑键（固定）：Ctrl+F / Ctrl+H 打开查找替换
+                if (keymap.matches(ShortcutCommand.FIND_REPLACE, e) && activeConsole != null) {
                     findReplaceOpen = true
                     return@onPreviewKeyEvent true
                 }
-                if (e.isCtrlPressed && e.isAltPressed && e.key == Key.L && activeConsole != null && formatRef.value != null) {
+                // 业务功能：格式化（整段或选区）
+                if (keymap.matches(ShortcutCommand.FORMAT_SQL, e) && activeConsole != null && formatRef.value != null) {
                     formatRef.value?.invoke()
                     return@onPreviewKeyEvent true
                 }
-                // F5：刷新当前结果 Tab（有未提交修改时由 Main 先弹确认）
-                if (e.key == Key.F5 && !run.executing && run.result != null) {
+                // 业务功能：行列转置（仅在有可转置结果时消费，避免与其它用途冲突）
+                if (keymap.matches(ShortcutCommand.TRANSPOSE, e) && canTranspose(run)) {
+                    transposed = !transposed
+                    return@onPreviewKeyEvent true
+                }
+                // 业务功能：刷新当前结果 Tab（有未提交修改时由 Main 先弹确认）
+                if (keymap.matches(ShortcutCommand.REFRESH_RESULT, e) && !run.executing && run.result != null) {
                     onRefreshResult()
                     return@onPreviewKeyEvent true
                 }
-                // Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
-                if (e.key == Key.Escape && run.executing) {
+                // 基础交互键（固定）：Esc 取消执行（无论焦点在编辑器还是别处，预览阶段优先拦截）
+                if (keymap.matches(ShortcutCommand.CANCEL_RUN, e) && run.executing) {
                     onCancelRun()
                     true
                 } else {
@@ -1101,6 +1103,8 @@ private fun EditorPane(
     onCloseFind: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // 快捷键表：编辑器内的执行/补全用可配置键，其余为语义固定的编辑交互。
+    val keymap = LocalKeymap.current
     val isDark = MaterialTheme.colors.isLight.not()
     val keywords = remember { sqlHighlightKeywords().distinct() }
     // isDark 作 key：主题切换时重建 Highlight，否则记住的旧色板不会刷新。
@@ -1541,13 +1545,13 @@ private fun EditorPane(
                         .verticalScroll(scroll)
                     .onPreviewKeyEvent { e ->
                         if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        if (e.isCtrlPressed && e.key == Key.Enter) {
+                        if (keymap.matches(ShortcutCommand.EXECUTE, e)) {
                             // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
                             onCtrlEnter()
                             return@onPreviewKeyEvent true
                         }
-                        // Ctrl+Space：显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
-                        if (e.isCtrlPressed && e.key == Key.Spacebar) {
+                        // 基础编辑键（固定）：Ctrl+Space 显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
+                        if (keymap.matches(ShortcutCommand.COMPLETE, e)) {
                             // 显式唤起：允许空前缀（列/表）；未敲字也行，顺便标记“正在编辑”并续期看门狗
                             editing = true
                             lastEdit = System.currentTimeMillis()
@@ -2420,6 +2424,8 @@ private fun ResultTable(
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 当前快捷键表：结果网格的复制单元格走注册表（基础键，固定），方向键等仍为模态导航。
+    val keymap = LocalKeymap.current
     // 单元格大段文本查看器（双击 / 右键「查看完整内容」）
     var viewer by remember { mutableStateOf<CellView?>(null) }
     // Ctrl 按下状态（结果表内跟踪）：Ctrl+双击 = 进入编辑；普通双击 = 查看
@@ -2558,7 +2564,7 @@ private fun ResultTable(
                 editing != null && e.key == Key.Escape -> { cancelEditDraft(); true }
                 // 编辑中：其余按键（含方向键/Ctrl+C）交给文本框，不要劫持光标移动与复制
                 editing != null -> false
-                e.isCtrlPressed && e.key == Key.C -> {
+                keymap.matches(ShortcutCommand.COPY_CELL, e) -> {
                     sel.value
                         ?.takeIf { it.row in view.rows.indices && it.col in cols.indices }
                         ?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
