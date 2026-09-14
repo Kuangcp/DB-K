@@ -131,6 +131,28 @@ class ElasticsearchProtocolTest {
     }
 
     @Test
+    fun `parses alias listing for indices and aliases in one request`() {
+        val json = """{
+            "logs-1":{"aliases":{"current":{},"all":{}}},
+            "logs-2":{"aliases":{}}
+        }""".trimIndent()
+        val parsed = ElasticsearchProtocol.parseAliasListing(json)
+        assertEquals(listOf("logs-1", "logs-2"), parsed.indices)
+        assertEquals(listOf("current" to "logs-1", "all" to "logs-1"), parsed.aliases)
+    }
+
+    @Test
+    fun `extracts index names from cluster mapping and search agg`() {
+        assertEquals(
+            listOf("i1", "i2"),
+            ElasticsearchProtocol.mappingIndexNames("""{"i1":{"mappings":{}},"i2":{"mappings":{}}}"""),
+        )
+        val agg = """{"aggregations":{"dbk_indices":{"buckets":[{"key":"i1","doc_count":3},{"key":"i2"}]}}}"""
+        assertEquals(listOf("i1", "i2"), ElasticsearchProtocol.searchIndexNames(agg))
+        assertEquals(emptyList(), ElasticsearchProtocol.searchIndexNames("""{"hits":{}}"""))
+    }
+
+    @Test
     fun `flattens mapping fields including nested and multi-field`() {
         val mapping = """
             {"my-index":{"mappings":{"properties":{

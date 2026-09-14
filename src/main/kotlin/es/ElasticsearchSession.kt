@@ -50,7 +50,8 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
         objectDdl = true,
         objectPreview = true,
         sessionContext = false,
-        lazyObjectGroups = true,
+        // 索引清单在连接时一次拉全（权限宽容的多级回落只跑一次；刷新元数据重取），不做按组懒加载
+        lazyObjectGroups = false,
         namespaceAsFilter = false,
         editorLanguage = EditorLanguage.JSON,
         fetchMore = true,
@@ -103,25 +104,32 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
         return listOf(SchemaMeta(catalog = null, schema = cluster?.takeIf { it.isNotBlank() } ?: "elasticsearch"))
     }
 
-    override fun loadObjects(ns: SchemaMeta): SchemaObjects = SchemaObjects(
-        objects = mapOf(
-            ObjectKind.INDEX to indices(),
-            ObjectKind.ALIAS to aliases(),
-        ),
-    )
+    override fun loadObjects(ns: SchemaMeta): SchemaObjects {
+        val listing = listing()
+        listing.error?.let { throw IllegalStateException(it) }
+        return SchemaObjects(
+            objects = mapOf(
+                ObjectKind.INDEX to listing.indices,
+                ObjectKind.ALIAS to listing.aliases,
+            ),
+        )
+    }
 
-    /** 懒加载：连库只取索引/别名计数，展开组时再拉清单。 */
-    override fun loadObjectCounts(ns: SchemaMeta): Map<ObjectKind, Int> = mapOf(
-        ObjectKind.INDEX to indices().size,
-        ObjectKind.ALIAS to aliases().size,
-    )
+    override fun loadObjectCounts(ns: SchemaMeta): Map<ObjectKind, Int> {
+        val listing = listing()
+        listing.error?.let { throw IllegalStateException(it) }
+        return mapOf(ObjectKind.INDEX to listing.indices.size, ObjectKind.ALIAS to listing.aliases.size)
+    }
 
     override fun loadCoreObjects(ns: SchemaMeta): SchemaObjects = SchemaObjects()
 
-    override fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> = when (kind) {
-        ObjectKind.INDEX -> indices()
-        ObjectKind.ALIAS -> aliases()
-        else -> emptyList()
+    override fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> {
+        val listing = listing()
+        return when (kind) {
+            ObjectKind.INDEX -> listing.indices
+            ObjectKind.ALIAS -> listing.aliases
+            else -> emptyList()
+        }
     }
 
     override fun searchObjects(ns: SchemaMeta, kind: ObjectKind, search: ObjectSearch): ObjectSearchResult {
@@ -185,13 +193,99 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
 
     private fun defaultIndex(): String? = profile.database.trim().takeIf { it.isNotEmpty() }
 
-    private fun indices(): List<DbObjectMeta> =
-        ElasticsearchProtocol.catIndexNames(send("GET", "/_cat/indices?format=json&h=index", null))
-            .map { DbObjectMeta(it, ObjectKind.INDEX) }
+    /** 索引/别名清单（含失败原因）。 */
+    private data class IndexListing(
+        val indices: List<DbObjectMeta>,
+        val aliases: List<DbObjectMeta>,
+        val error: String?,
+    )
 
-    private fun aliases(): List<DbObjectMeta> =
-        ElasticsearchProtocol.catAliases(send("GET", "/_cat/aliases?format=json&h=alias,index", null))
-            .map { (alias, index) -> DbObjectMeta(alias, ObjectKind.ALIAS, detail = index) }
+    /**
+     * 列出索引/别名。权限宽容：`_cat/indices`（需 `indices:monitor/settings/get`）被 403 时依次回落
+     * `_alias` / `_mapping` / `_search` 聚合 / 连接档案的默认索引，尽量在只读权限下也能浏览。
+     * 全部失败才返回 [IndexListing.error]（含可操作提示），由上层转为树上的可读错误。
+     */
+    private fun listing(): IndexListing {
+        val errors = mutableListOf<String>()
+
+        // A) _cat/*：字段裁剪，响应最小
+        try {
+            val names = ElasticsearchProtocol.catIndexNames(send("GET", "/_cat/indices?format=json&h=index", null))
+            val aliases = try {
+                ElasticsearchProtocol.catAliases(send("GET", "/_cat/aliases?format=json&h=alias,index", null))
+                    .map { (alias, index) -> DbObjectMeta(alias, ObjectKind.ALIAS, detail = index) }
+            } catch (t: Throwable) {
+                // 索引拿到但别名不行：再试 _alias（别名可选，失败就空）
+                errors += brief(t)
+                runCatching {
+                    ElasticsearchProtocol.parseAliasListing(send("GET", "/_alias", null))
+                        .aliases.map { (alias, index) -> DbObjectMeta(alias, ObjectKind.ALIAS, detail = index) }
+                }.getOrDefault(emptyList())
+            }
+            return IndexListing(names.map { DbObjectMeta(it, ObjectKind.INDEX) }, aliases, null)
+        } catch (t: Throwable) {
+            errors += brief(t)
+        }
+
+        // B) GET /_alias：一次拿到索引 + 别名
+        try {
+            val parsed = ElasticsearchProtocol.parseAliasListing(send("GET", "/_alias", null))
+            return IndexListing(
+                indices = parsed.indices.map { DbObjectMeta(it, ObjectKind.INDEX) },
+                aliases = parsed.aliases.map { (alias, index) -> DbObjectMeta(alias, ObjectKind.ALIAS, detail = index) },
+                error = null,
+            )
+        } catch (t: Throwable) {
+            errors += brief(t)
+        }
+
+        // C) GET /_mapping
+        try {
+            return IndexListing(
+                ElasticsearchProtocol.mappingIndexNames(send("GET", "/_mapping", null))
+                    .map { DbObjectMeta(it, ObjectKind.INDEX) },
+                emptyList(),
+                null,
+            )
+        } catch (t: Throwable) {
+            errors += brief(t)
+        }
+
+        // D) _search + _index 聚合（只要有读权限即可；空索引不出现）
+        try {
+            val body = """{"size":0,"aggs":{"dbk_indices":{"terms":{"field":"_index","size":10000}}}}"""
+            return IndexListing(
+                ElasticsearchProtocol.searchIndexNames(send("POST", "/_search", body))
+                    .map { DbObjectMeta(it, ObjectKind.INDEX) },
+                emptyList(),
+                null,
+            )
+        } catch (t: Throwable) {
+            errors += brief(t)
+        }
+
+        // E) 默认索引兜底
+        defaultIndex()?.let {
+            return IndexListing(listOf(DbObjectMeta(it, ObjectKind.INDEX)), emptyList(), null)
+        }
+
+        return IndexListing(emptyList(), emptyList(), permissionHint(errors))
+    }
+
+    private fun brief(t: Throwable): String = (t.message ?: t.javaClass.simpleName).lineSequence().first().take(160)
+
+    private fun permissionHint(errors: List<String>): String {
+        val forbidden = errors.any {
+            it.contains("403") || it.contains("security_exception") || it.contains("no permissions")
+        }
+        val prefix = if (forbidden) {
+            "无权限列出索引/别名（OpenSearch/ES 403）。可在连接里填写「默认索引」后手动查询，或让管理员授予 " +
+                "indices:monitor/settings/get（_cat/indices）或 indices:admin/aliases/get（_alias）。"
+        } else {
+            "无法列出索引/别名。"
+        }
+        return prefix + "原始错误：" + errors.joinToString("；").take(240)
+    }
 
     /** 发送请求并返回响应体；HTTP >= 400 时解析 ES 错误并抛出可读异常。 */
     private fun send(method: String, path: String, body: String?): String {

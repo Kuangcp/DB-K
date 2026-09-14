@@ -138,6 +138,38 @@ object ElasticsearchProtocol {
         }
     }
 
+    /** `GET /_alias` 解析结果：索引名 + (别名→索引)。 */
+    data class AliasListing(val indices: List<String>, val aliases: List<Pair<String, String>>)
+
+    /**
+     * `GET /_alias` → 索引 + 别名（一次请求，权限面比 `_cat/indices` 窄，作无权 `_cat` 时的回落）。
+     * 响应形如 `{"idx":{"aliases":{"a":{}}}, …}`。
+     */
+    fun parseAliasListing(json: String): AliasListing {
+        val root = parseObject(json)
+        val indices = mutableListOf<String>()
+        val aliases = mutableListOf<Pair<String, String>>()
+        root.forEach { (index, value) ->
+            indices += index
+            (((value as? JsonObject)?.get("aliases") as? JsonObject))?.keys?.forEach { aliases += it to index }
+        }
+        return AliasListing(indices, aliases)
+    }
+
+    /** `GET /_mapping`（集群级）→ 顶层索引名清单。 */
+    fun mappingIndexNames(json: String): List<String> = parseObject(json).keys.toList()
+
+    /**
+     * `_search` 在 `_index` 上的 terms 聚合 → 命中的索引名。
+     * 用于只有读权限（`indices:data/read/search`）时的最后回落；空索引不会出现。
+     */
+    fun searchIndexNames(json: String): List<String> {
+        val root = parseObject(json)
+        val aggs = root["aggregations"] as? JsonObject ?: root["aggs"] as? JsonObject ?: return emptyList()
+        val buckets = aggs.values.firstOrNull()?.jsonObject?.get("buckets")?.jsonArray ?: return emptyList()
+        return buckets.mapNotNull { (it as? JsonObject)?.get("key")?.let(::textOrNull)?.takeIf { n -> n.isNotBlank() } }
+    }
+
     /**
      * `_mapping` 响应 → 扁平字段清单（嵌套 `properties` 与 multi-`fields` 展开为 `a.b.c`）。
      * 计 `parent` 自身不计为列，只取其叶子字段；同一字段名去重。

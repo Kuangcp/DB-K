@@ -42,6 +42,8 @@
 > **Elasticsearch 连接**：填 host/port（默认 9200），`默认索引` 可留空（留空时 DSL 需自带 `index`）；
 > 用户名/密码 = Basic 认证，**用户名留空、密码填 API Key** = `Authorization: ApiKey`；
 > 附加参数支持 `scheme=https`、`path=/es`（反向代理前缀）。
+> 受限账号无 `indices:monitor/settings/get` 时 `_cat/indices` 会 403，会依次回落 `_alias`/`_mapping`/`_search` 聚合/默认索引；
+> 仍失败则填「默认索引」后用 DSL 查询，或请管理员授予权限。
 
 ## 快速开始
 

@@ -497,6 +497,7 @@ class ConnectionsState(
         val schemas = live.loadNamespaces()
         val objects = linkedMapOf<String, SchemaObjects>()
         val failed = mutableListOf<String>()
+        val reasons = mutableListOf<String>()
         val lazy = live.capabilities.lazyObjectGroups
         val flat = live.capabilities.namespaceAsFilter
         // 「命名空间即过滤器」：只加载当前 DB（先取 B/S 计数 + 首页键）
@@ -520,9 +521,15 @@ class ConnectionsState(
                 .onFailure { t ->
                     Logger.error(t, "load objects failed {} {}", rt.profile.name, s.displayName)
                     failed += s.displayName
+                    reasons += friendlyMessage(t)
                 }
         }
-        val warn = if (failed.isEmpty()) null else "对象加载失败：${failed.joinToString("、").take(60)}"
+        val warn = if (failed.isEmpty()) {
+            null
+        } else {
+            // 带上根因（如 ES 403 缺权限），否则树/状态栏只有一句“加载失败”无从排查
+            "对象加载失败：${failed.joinToString("、").take(40)}：${reasons.first().take(160)}"
+        }
         return Triple(schemas, objects, warn)
     }
 

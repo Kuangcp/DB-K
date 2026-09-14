@@ -191,8 +191,9 @@
   `extraParams` 支持 `scheme=https`、`path=/es`（反向代理前缀）；`user`+`password` = Basic 认证，
   **用户名留空、密码非空 = API Key**（`Authorization: ApiKey`，密码仍走 vault 加密存储）；
   `database` = 默认索引（可空）。编辑弹窗类型切换 / 测试连接 / 连接地址预览均按协议适配。
-- **浏览**：命名空间 = 集群（`GET /` 的 `cluster_name`）；对象组 = 索引 / 别名（数据驱动 `objectGroups()`，
-  `lazyObjectGroups=true` 连库只取计数，展开组再拉 `_cat/indices` / `_cat/aliases`）；
+- **浏览**：命名空间 = 集群（`GET /` 的 `cluster_name`）；对象组 = 索引 / 别名（数据驱动 `objectGroups()`）。
+  列出时**权限宽容降级**：`_cat/indices`（需 `indices:monitor/settings/get`）403 时依次回落
+  `_alias` → `_mapping` → `_search` `_index` 聚合 → 连接档案的「默认索引」；全失败才报错，并提示所需权限。
   `objectDdl` = 格式化的 `_mapping`（树右键「查看映射」+ `Ctrl+Q`），`loadColumns` 扁平展开嵌套与 multi-field。
 - **查询**：控制台输入 JSON 对象 DSL，顶层可选 `index`/`_index` 指定目标索引（缺省回落连接默认索引，
   再缺省则 `/_search` 全集群）；未被识别的键原样作 `_search` 请求体，`from`/`size` 缺省注入（默认 100）。
@@ -201,8 +202,9 @@
   复用 N1「取更多」：`BackendCapabilities.fetchMore` + `DataSourceSession.paginate()`（ES 改写 `from/size`）——
   分页从 JDBC 专有 `DialectRegistry` 提到能力位 + 会话方法，JDBC/ES 共用同一 UI 路径。
 - **编辑器**：`editorLanguage=JSON` 能力位驱动 JSON 语法高亮（`JsonSupport` 复用），并关闭 SQL 补全。
-- **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `ElasticsearchProtocolTest`（13）、
-  `ElasticsearchSessionIntegrationTest`（9，用本地 `HttpServer` 假装 ES 跑端到端）、`SessionFactoryTest` 增补（2）；
+- **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `ElasticsearchProtocolTest`（16）、
+  `ElasticsearchSessionIntegrationTest`（10，用本地 `HttpServer` 假装 ES 跑端到端）、
+  `ElasticsearchPermissionFallbackTest`（6，模拟 `_cat` 403 逐级回落）、`SessionFactoryTest` 增补（2）；
   新增 `gradle smokeEs` 真服务端自检（建连 / 集群名 / 建索引+写文档 / 计数与清单 / `_mapping` / DSL 搜索 /
   `from·size` 分页 / 预览，最后删临时索引；连不上打印 SKIP）。
   ⚠️ Compose UI 交互（含深色）待人工验收。
@@ -317,6 +319,8 @@ interface DataSourceSession : AutoCloseable {
 - **客户端选型**：✅ **`java.net.http.HttpClient` + `kotlinx.serialization.json`**（零重依赖，jlink 仅加 `java.net.http` 模块）；
   官方 `elasticsearch-java` 不引入（体积 + 兼容面）。
 - **浏览**：`_cat/indices` / `_cat/aliases?format=json` 列索引与别名；`_mapping` 展开字段（嵌套 / multi-field 扁平化）。
+  **权限降级**：受限账号（OpenSearch security role 常有读权限但无 `indices:monitor/settings/get`，`_cat/indices` 返 403）
+  时依次回落 `_alias` → `_mapping` → `_search`(`_index` agg) → 默认索引；全失败才在连接状态里报错并提示所需权限。
 - **查询**：控制台输入 JSON DSL（顶层 `index` + `_search` 请求体）→ 网格；分页 `from/size` 走 N1 能力位；
   错误响应提取 `error.reason` 作可读提示。
 - **结果**：列 = `_index` / `_id` / `_score` + `_source` 顶层字段并集；行 = 文档；嵌套值落紧凑 JSON 文本。
