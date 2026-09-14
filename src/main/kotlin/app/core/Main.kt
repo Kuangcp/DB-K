@@ -83,6 +83,7 @@ import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
 import db.ProfileTransfer
+import engine.EditorLanguage
 import engine.Protocol
 import engine.model.ObjectKind
 import engine.model.SchemaMeta
@@ -420,7 +421,7 @@ private fun AppBody(
     fun ddlNoun(profileId: String, schema: SchemaMeta?, name: String): String {
         val s = schema ?: return "对象"
         val objs = connectionsState.objectsOf(profileId, s.key) ?: return "对象"
-        for (kind in listOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW)) {
+        for (kind in listOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW, ObjectKind.INDEX, ObjectKind.ALIAS)) {
             if (objs.forKind(kind).any { it.name.equals(name, ignoreCase = true) }) return kind.displayNoun
         }
         return "对象"
@@ -431,7 +432,8 @@ private fun AppBody(
             val p = row.profile
             val obj = row.dbObject
             if (row.kind == TreeRowKind.DB_OBJECT && p != null && obj != null &&
-                p.dbType.protocol == Protocol.JDBC && obj.kind.isPreviewable()
+                (p.dbType.protocol == Protocol.JDBC || p.dbType.protocol == Protocol.ELASTICSEARCH) &&
+                obj.kind.isPreviewable()
             ) {
                 TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
             } else {
@@ -945,6 +947,9 @@ private fun AppBody(
                         completionEnabled = activeProfile?.let {
                             connectionsState.sessionOf(it.id)?.capabilities?.sqlCompletion
                         } ?: true,
+                        editorLanguage = activeProfile?.let {
+                            connectionsState.sessionOf(it.id)?.capabilities?.editorLanguage
+                        } ?: EditorLanguage.SQL,
                         columnCatalog = connectionsState.columns,
                         onCopyText = { text, label ->
                             writeClipboardText(text)

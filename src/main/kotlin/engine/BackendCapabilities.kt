@@ -21,4 +21,6 @@ data class BackendCapabilities(
     val namespaceAsFilter: Boolean = false,
     /** 编辑器语言（决定高亮 / 补全 / 语句切分）。 */
     val editorLanguage: EditorLanguage = EditorLanguage.SQL,
+    /** 支持 N1「取更多」（按后端改写语句追加下一页，见 [DataSourceSession.paginate]）。 */
+    val fetchMore: Boolean = false,
 )

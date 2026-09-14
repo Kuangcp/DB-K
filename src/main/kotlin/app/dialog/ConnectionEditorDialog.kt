@@ -116,18 +116,19 @@ fun ConnectionEditorDialog(
         extraParams = if (isEmbedded) "" else extra.trim(),
     )
 
-    val canSubmit = name.isNotBlank() && database.isNotBlank()
+    val isRedis = dbType == DbType.REDIS
+    val isEs = dbType == DbType.ELASTICSEARCH
+    val canSubmit = name.isNotBlank() && (database.isNotBlank() || isEs)
 
     // ---------- 测试连接 ----------
     val scope = rememberCoroutineScope()
     var testing by remember(request) { mutableStateOf(false) }
     var testPassed by remember(request) { mutableStateOf<Boolean?>(null) }
     var testMessage by remember(request) { mutableStateOf("") }
-    val isRedis = dbType == DbType.REDIS
-    val canTest = if (isRedis) {
-        host.isNotBlank()
-    } else {
-        database.isNotBlank() && (isEmbedded || host.isNotBlank())
+    val canTest = when {
+        isRedis -> host.isNotBlank()
+        isEs -> host.isNotBlank()
+        else -> database.isNotBlank() && (isEmbedded || host.isNotBlank())
     }
 
     fun runTestConnection() {
@@ -224,11 +225,16 @@ fun ConnectionEditorDialog(
                         },
                     )
                 }
-                FormRow(if (isEmbedded) "文件路径" else if (isRedis) "DB 序号" else "数据库") {
+                FormRow(if (isEmbedded) "文件路径" else if (isRedis) "DB 序号" else if (isEs) "默认索引（可空）" else "数据库") {
                     CompactField(
                         value = database,
                         onValueChange = { database = it },
-                        placeholder = if (isEmbedded) "/path/to/demo.db" else if (isRedis) "0" else dbType.label.lowercase(),
+                        placeholder = when {
+                            isEmbedded -> "/path/to/demo.db"
+                            isRedis -> "0"
+                            isEs -> "my-index（可空）"
+                            else -> dbType.label.lowercase()
+                        },
                     )
                 }
                 if (!isEmbedded) {
@@ -237,10 +243,10 @@ fun ConnectionEditorDialog(
                         fieldA = {
                             CompactField(
                                 value = user, onValueChange = { user = it },
-                                placeholder = "root",
+                                placeholder = if (isEs) "elastic（可空）" else "root",
                             )
                         },
-                        labelB = "密码",
+                        labelB = if (isEs) "密码 / API Key" else "密码",
                         fieldB = {
                             CompactField(
                                 value = password, onValueChange = { password = it },
@@ -249,17 +255,29 @@ fun ConnectionEditorDialog(
                             )
                         },
                     )
+                    if (isEs) {
+                        Text(
+                            "用户名为空时，密码按 API Key 认证（Authorization: ApiKey）；附加参数支持 scheme=https、path=/es",
+                            style = MaterialTheme.typography.caption,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
+                        )
+                    }
                     FormRow("附加参数") {
                         CompactField(
                             value = extra,
                             onValueChange = { extra = it },
-                            placeholder = "sslMode=require&connectTimeout=5",
+                            placeholder = if (isEs) "scheme=https&path=/es" else "sslMode=require&connectTimeout=5",
                         )
                     }
                 }
-                if (!isEmbedded && (database.isNotBlank() || isRedis)) {
+                if (!isEmbedded && (database.isNotBlank() || isRedis || isEs)) {
                     Text(
-                        if (isRedis) "连接串：${build().urlPreview()}" else "JDBC URL：${build().urlPreview()}",
+                        when {
+                            isRedis -> "连接串：${build().urlPreview()}"
+                            isEs -> "连接地址：${build().urlPreview()}"
+                            else -> "JDBC URL：${build().urlPreview()}"
+                        },
                         style = MaterialTheme.typography.caption,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.padding(top = 2.dp),

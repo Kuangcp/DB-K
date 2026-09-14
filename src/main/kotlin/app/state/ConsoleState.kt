@@ -423,19 +423,24 @@ class ConsoleState(
 
     // ---------- N1「取更多」：按方言注入分页，追加不替换 ----------
 
-    /** 当前激活结果是否还能「取更多」（被截断且原查询不含分页子句）。 */
+    /** 当前激活结果是否还能「取更多」（被截断，且后端支持改写语句）。 */
     fun canFetchMore(consoleId: String): Boolean {
         val ui = runSlots[consoleId] ?: return false
         val active = ui.active ?: return false
         val result = active.result ?: return false
         if (ui.executing || resultBusyOf(consoleId)) return false
         if (!result.isQuery || !result.truncated) return false
-        return !sqlHasPaginationClause(active.sql)
+        val profileId = findConsole(consoleId)?.connectionId ?: return false
+        val session = connectionsState.sessionOf(profileId) ?: return false
+        if (!session.capabilities.fetchMore) return false
+        // JDBC：原查询已含分页子句时不再二次注入（避免嵌套 LIMIT/TOP 歧义）
+        if (session.protocol == Protocol.JDBC && sqlHasPaginationClause(active.sql)) return false
+        return true
     }
 
     /**
-     * 取更多：给当前语句按方言注入分页（[DialectRegistry.paginate]），取 [FETCH_MORE_PAGE] 行
-     * **追加**到当前结果（不替换），满页说明可能还有、不满页则到底。返回实际追加行数。
+     * 取更多：由后端把当前语句改写为取下一页（JDBC 注入 `LIMIT/OFFSET`；ES 设 DSL `from/size`），
+     * 取 [FETCH_MORE_PAGE] 行**追加**到当前结果（不替换），满页说明可能还有、不满页则到底。返回实际追加行数。
      * 原查询无 ORDER BY 时由 UI 提示「顺序不保证」。
      */
     suspend fun fetchMore(console: ConsoleRecord, profile: db.ConnectionProfile): Result<Int> {
@@ -449,7 +454,7 @@ class ConsoleState(
         if (!result.isQuery) return Result.failure(IllegalStateException("当前结果不是查询"))
         val baseSql = outcome.sql.trim().trimEnd(';').trim()
         if (baseSql.isEmpty()) return Result.failure(IllegalStateException("原语句为空，无法取更多"))
-        if (sqlHasPaginationClause(baseSql)) {
+        if (sqlHasPaginationClause(baseSql) && profile.dbType.protocol == Protocol.JDBC) {
             return Result.failure(IllegalStateException("原查询已含分页子句，无法取更多"))
         }
 
@@ -463,8 +468,8 @@ class ConsoleState(
         }
         val session = connectionsState.sessionOf(profile.id)
             ?: return Result.failure(IllegalStateException("连接已断开"))
-        val pageSql = DialectRegistry.forProfile(profile)
-            .paginate(baseSql, result.rows.size.toLong(), FETCH_MORE_PAGE)
+        val pageSql = session.paginate(baseSql, result.rows.size.toLong(), FETCH_MORE_PAGE)
+            ?: return Result.failure(IllegalStateException("当前数据源不支持「取更多」"))
         val contextSql = sessionContextSqlFor(console, profile)
 
         resultBusy[console.id] = true

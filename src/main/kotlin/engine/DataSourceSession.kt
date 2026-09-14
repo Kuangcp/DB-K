@@ -18,7 +18,8 @@ import engine.model.SchemaObjects
  *   这类能力留在具体实现内的独立接口（如 `jdbc.EditableSession`），app 层按能力位判断。
  * - **命名空间**沿用 [SchemaMeta]（SQL schema / Redis DB / ES 集群），对象沿用 [SchemaObjects]。
  *
- * 现有实现：`jdbc.LiveConnection`（[Protocol.JDBC]）、`redis.RedisSession`（[Protocol.REDIS]）。
+ * 现有实现：`jdbc.LiveConnection`（[Protocol.JDBC]）、`redis.RedisSession`（[Protocol.REDIS]）、
+ * `es.ElasticsearchSession`（[Protocol.ELASTICSEARCH]）。
  */
 interface DataSourceSession : AutoCloseable {
 
@@ -81,6 +82,13 @@ interface DataSourceSession : AutoCloseable {
      * 失败抛异常（由 app 层转为可读错误）。执行期应登记当前语句以便 [cancel]。
      */
     fun runStatement(statement: String, sessionContextSql: String?): QueryResult
+
+    /**
+     * N1「取更多」：把 [statement] 改写成从 [offset] 起取 [limit] 行的等价语句。
+     * JDBC 按方言注入 `LIMIT/OFFSET`；Elasticsearch 设 DSL 的 `from/size`；
+     * null = 该后端 / 语句不支持（UI 隐藏「取更多」）。
+     */
+    fun paginate(statement: String, offset: Long, limit: Int): String? = null
 
     /** 取消当前执行；返回是否发出了取消请求（正在排队 / 驱动不支持时 false）。 */
     fun cancel(): Boolean

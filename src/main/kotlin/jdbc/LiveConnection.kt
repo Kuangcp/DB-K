@@ -41,6 +41,7 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
         sessionContext = dialect.supportsTargetSwitch,
         lazyObjectGroups = dialect.lazyObjectGroups,
         editorLanguage = EditorLanguage.SQL,
+        fetchMore = true,
     )
 
     @Volatile
@@ -128,6 +129,9 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
             QueryExecutor.applyContext(conn, sessionContextSql)
             QueryExecutor.execute(conn, statement) { st -> registerStatement(st) }
         }
+
+    override fun paginate(statement: String, offset: Long, limit: Int): String? =
+        dialect.paginate(statement, offset, limit)
 
     override fun applyWriteOps(ops: List<WriteOp>, sessionContextSql: String?): Int =
         onConnection { conn ->

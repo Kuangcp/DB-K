@@ -130,10 +130,11 @@ import com.neoutils.highlight.compose.remember.rememberTextFieldValue
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
-import jdbc.CellValue
-import jdbc.QueryExecutor
+import engine.EditorLanguage
 import engine.model.QueryResult
 import engine.model.SchemaMeta
+import jdbc.CellValue
+import jdbc.QueryExecutor
 import tree.ConnUiStatus
 import tree.TypeBadge
 
@@ -254,6 +255,8 @@ fun SqlWorkspace(
     completionFunctions: List<String> = emptyList(),
     /** 是否启用 SQL 补全（非 SQL 后端如 Redis 关掉，避免弹 SQL 关键字）。 */
     completionEnabled: Boolean = true,
+    /** 编辑器语言：决定高亮（SQL / JSON DSL / Redis 命令）。 */
+    editorLanguage: EditorLanguage = EditorLanguage.SQL,
     /** 列元数据会话缓存（异步回填；null = 不做列补全）。 */
     columnCatalog: ColumnCatalog? = null,
     /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
@@ -495,6 +498,7 @@ fun SqlWorkspace(
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
                         completionEnabled = completionEnabled,
+                        editorLanguage = editorLanguage,
                         columnCatalog = columnCatalog,
                         schemas = schemas.orEmpty(),
                         defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
@@ -1111,6 +1115,8 @@ private fun EditorPane(
     completionTables: List<CompletionTable>,
     completionFunctions: List<String>,
     completionEnabled: Boolean = true,
+    /** 编辑器语言：决定语法高亮（SQL 关键字 / JSON DSL）。 */
+    editorLanguage: EditorLanguage = EditorLanguage.SQL,
     columnCatalog: ColumnCatalog?,
     schemas: List<SchemaMeta>,
     defaultSchema: SchemaMeta?,
@@ -1125,9 +1131,12 @@ private fun EditorPane(
     val keymap = LocalKeymap.current
     val isDark = MaterialTheme.colors.isLight.not()
     val keywords = remember { sqlHighlightKeywords().distinct() }
-    // isDark 作 key：主题切换时重建 Highlight，否则记住的旧色板不会刷新。
-    val highlightedValue = rememberHighlight(isDark) {
-        applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
+    // isDark / editorLanguage 作 key：主题切换或后端变化时重建 Highlight，否则记住的旧色板不会刷新。
+    val highlightedValue = rememberHighlight(isDark, editorLanguage) {
+        when (editorLanguage) {
+            EditorLanguage.JSON -> applyJsonHighlightRules(jsonSyntaxPalette(isDark))
+            else -> applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
+        }
     }.rememberTextFieldValue(value)
 
     val scroll = rememberScrollState()

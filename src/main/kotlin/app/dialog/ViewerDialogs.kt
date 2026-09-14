@@ -57,6 +57,7 @@ import app.ui.md5Hex
 import app.ui.parseJsonDocument
 import app.ui.sqlHighlightKeywords
 import app.ui.sqlSyntaxPalette
+import engine.Protocol
 import com.neoutils.highlight.compose.remember.rememberAnnotatedString
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import db.ConnectionProfile
@@ -205,7 +206,11 @@ fun DdlDialog(
         loading = false
     }
 
-    val title = "${request.noun}定义 · ${request.objectName}"
+    val title = if (request.profile.dbType.protocol == Protocol.ELASTICSEARCH) {
+        "${request.noun}映射 · ${request.objectName}"
+    } else {
+        "${request.noun}定义 · ${request.objectName}"
+    }
     DialogWindow(
         onCloseRequest = onDismiss,
         state = rememberDialogState(size = VIEWER_WINDOW_SIZE),
@@ -227,7 +232,11 @@ fun DdlDialog(
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text(" 正在读取定义…", style = MaterialTheme.typography.body2)
                 }
-                ddl != null -> SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
+                ddl != null -> if (request.profile.dbType.protocol == Protocol.ELASTICSEARCH) {
+                    JsonCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
+                } else {
+                    SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
+                }
                 else -> Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     Text(
                         error ?: "未获取到定义。",

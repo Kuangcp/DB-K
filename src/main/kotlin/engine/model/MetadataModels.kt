@@ -28,6 +28,10 @@ enum class ObjectKind {
     ROUTINE, AGGREGATE, OPERATOR, TYPE, OPERATOR_CLASS, OPERATOR_FAMILY,
     /** 非 SQL 后端（如 Redis）的通用键对象。 */
     KEY,
+    /** Elasticsearch 索引。 */
+    INDEX,
+    /** Elasticsearch 别名。 */
+    ALIAS,
 }
 
 /** SQL 后端的对象组顺序（表 / 视图 / …）；非 SQL 后端自行提供 [engine.DataSourceSession.objectGroups]。 */
@@ -37,9 +41,10 @@ val SQL_OBJECT_KINDS: List<ObjectKind> = listOf(
     ObjectKind.TYPE, ObjectKind.OPERATOR_CLASS, ObjectKind.OPERATOR_FAMILY,
 )
 
-/** 双击/菜单可预览的对象类型：SQL = 表/视图/物化视图；非 SQL = Redis 键（[ObjectKind.KEY]）。 */
+/** 双击/菜单可预览的对象类型：SQL = 表/视图/物化视图；非 SQL = Redis 键（[ObjectKind.KEY]）、ES 索引/别名。 */
 val PREVIEWABLE_KINDS = setOf(
     ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW, ObjectKind.KEY,
+    ObjectKind.INDEX, ObjectKind.ALIAS,
 )
 
 fun ObjectKind.isPreviewable(): Boolean = this in PREVIEWABLE_KINDS
@@ -59,6 +64,8 @@ val ObjectKind.displayNoun: String
         ObjectKind.OPERATOR_CLASS -> "操作符类"
         ObjectKind.OPERATOR_FAMILY -> "操作符族"
         ObjectKind.KEY -> "键"
+        ObjectKind.INDEX -> "索引"
+        ObjectKind.ALIAS -> "别名"
     }
 
 /**

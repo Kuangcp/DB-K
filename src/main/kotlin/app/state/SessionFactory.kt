@@ -3,6 +3,7 @@ package app.state
 import db.ConnectionProfile
 import engine.DataSourceSession
 import engine.Protocol
+import es.ElasticsearchSession
 import jdbc.LiveConnection
 import jdbc.splitSqlStatements
 import redis.RedisProtocol
@@ -17,7 +18,7 @@ object SessionFactory {
     fun create(profile: ConnectionProfile): DataSourceSession = when (profile.dbType.protocol) {
         Protocol.JDBC -> LiveConnection(profile)
         Protocol.REDIS -> RedisSession(profile)
-        Protocol.ELASTICSEARCH -> error("Elasticsearch 后端尚未实现（Roadmap N6）")
+        Protocol.ELASTICSEARCH -> ElasticsearchSession(profile)
     }
 
     /** 按协议切分控制台文本为多条语句：SQL 按 `;`；Redis 按行；ES 整段一个报体。 */

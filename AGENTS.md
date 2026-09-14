@@ -18,6 +18,7 @@
 - `db/` → 自有 SQLite 存储（connections/folders/sql_history）；依赖 `engine/model`
 - `jdbc/` → JDBC 后端（`LiveConnection` 实现 `engine.DataSourceSession`）；**禁止 import compose/coroutines**
 - `redis/` → Redis 后端（N5，`RedisSession` 用 Jedis + `RedisProtocol` 纯逻辑）；**禁止 import compose/coroutines**
+- `es/` → Elasticsearch 后端（N6，`ElasticsearchSession` 用 `java.net.http.HttpClient` + `ElasticsearchProtocol` 纯逻辑）；**禁止 import compose/coroutines**
 - `engine/` → **协议无关契约层**（`DataSourceSession` / `BackendCapabilities` / `Protocol` + `engine/model`）：
   **纯叶层，不得 import `jdbc`/`db`/`app`/compose/coroutines**；新数据源（Redis / ES）实现同一接口，
   JDBC 专属能力（主键写回等）另立接口（如 `jdbc.EditableSession`），不污染通用层。
@@ -149,5 +150,6 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 2. `gradle test` 通过（单元测试：jdbc/tree/db 纯逻辑 + 嵌入式库集成，`src/test/kotlin`）
 3. `gradle smokeJdbc` 通过（驱动层 + QueryExecutor 冒烟）
 4. `gradle smokeRedis`（可选：连得上 Redis 才跑，连不上打印 SKIP；`-Ddbk.redisHost/-Ddbk.redisPort/-Ddbk.redisUser/-Ddbk.redisPassword` 覆盖）
+4b. `gradle smokeEs`（可选：连得上 ES 才跑，连不上打印 SKIP；`-Ddbk.esUrl/-Ddbk.esUser/-Ddbk.esPassword/-Ddbk.esIndex` 覆盖；会建/删临时索引）
 5. 程序化可验的部分用 sqlite3/python3 直查 `~/.local/share/db-k/app.db`（库表、迁移、演示连接）
 

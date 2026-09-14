@@ -81,6 +81,17 @@ tasks.register<JavaExec>("smokeRedis") {
     }
 }
 
+// Elasticsearch 后端自检：gradle smokeEs （需可连的 ES；连不上则 SKIP）
+tasks.register<JavaExec>("smokeEs") {
+    group = "verification"
+    description = "Verify the Elasticsearch backend against a running server (skips if unreachable)"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("es.ElasticsearchSmokeKt")
+    listOf("dbk.esUrl", "dbk.esUser", "dbk.esPassword", "dbk.esIndex").forEach { key ->
+        System.getProperty(key)?.let { systemProperty(key, it) }
+    }
+}
+
 // 生成版本信息（含 git commit hash），设置窗口左下角展示（与 api-x 同源）
 val generatedVersionDir = layout.buildDirectory.dir("generated/version/kotlin")
 
@@ -133,8 +144,8 @@ compose.desktop {
             targetFormats(TargetFormat.Deb, TargetFormat.Msi)
             packageName = "db-k"
             packageVersion = appVersion
-            // JDBC 驱动需要这些模块（jlink 默认运行时未包含）
-            modules("java.sql", "java.naming", "java.management")
+            // JDBC 驱动需要这些模块（jlink 默认运行时未包含）；java.net.http 供 Elasticsearch 后端
+            modules("java.sql", "java.naming", "java.management", "java.net.http")
             // 应用图标：母版 icon/db-k.svg（1024，纯几何无字体）
             linux {
                 iconFile.set(project.file("icon/db-k-512.png"))

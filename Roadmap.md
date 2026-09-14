@@ -44,7 +44,7 @@
 
 | 能力域 | 已完成 |
 |---|---|
-| 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）+ **Redis（N5）**；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
+| 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）+ **Redis（N5）** + **Elasticsearch（N6）**；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
 | 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数（**组类型由会话提供，JDBC 11 类 / Redis 仅「键」**）；组折叠 + **按组懒加载**；展开持久化 |
 | 编辑器 | 高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全（非 SQL 后端关闭）；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` |
 | 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / CSV（含全量流式）；**客户端排序 + 每列筛选 + 快速过滤（不重跑 SQL）+ 取更多（方言分页追加）**；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销**；**增行 / 删行（N3，主键定位，与改格同单事务提交）** |
@@ -183,10 +183,29 @@
   搜索+类型过滤+TTL / 600 键分页去重 / 取消重连），已对无密码、`requirepass`、ACL user 三种服务端实测通过。
   ⚠️ Compose UI 交互待人工验收。
 
-#### N6 Elasticsearch 后端（索引浏览 + DSL 查询）
-- 连接（URL / 账号 / API key）→ 命名空间 = 集群 → 对象 = index/alias；
-  `_mapping` 展开字段；控制台输入 JSON DSL（复用 JSON 高亮）→ `_search` 结果入网格；`from/size` 复用 N1。
-- **验收**：能列出索引、看映射、跑简单 DSL 查询并分页。
+#### N6 Elasticsearch 后端（索引浏览 + DSL 查询）✅ 已实现
+- 新包 `es/`：`ElasticsearchProtocol`（纯逻辑：DSL 解析 / `from·size` 改写 / `_search` 响应→二维结果 /
+  `_cat` 与 `_mapping` 解析 / 错误提取，可单测）+ `ElasticsearchSession`（`java.net.http.HttpClient`，
+  实现 `engine.DataSourceSession`，在途请求登记 `CompletableFuture`，`cancel()` 取消请求）。
+- **连接**：复用现有 host/port/database/user/password/extraParams（**无表结构迁移**）。
+  `extraParams` 支持 `scheme=https`、`path=/es`（反向代理前缀）；`user`+`password` = Basic 认证，
+  **用户名留空、密码非空 = API Key**（`Authorization: ApiKey`，密码仍走 vault 加密存储）；
+  `database` = 默认索引（可空）。编辑弹窗类型切换 / 测试连接 / 连接地址预览均按协议适配。
+- **浏览**：命名空间 = 集群（`GET /` 的 `cluster_name`）；对象组 = 索引 / 别名（数据驱动 `objectGroups()`，
+  `lazyObjectGroups=true` 连库只取计数，展开组再拉 `_cat/indices` / `_cat/aliases`）；
+  `objectDdl` = 格式化的 `_mapping`（树右键「查看映射」+ `Ctrl+Q`），`loadColumns` 扁平展开嵌套与 multi-field。
+- **查询**：控制台输入 JSON 对象 DSL，顶层可选 `index`/`_index` 指定目标索引（缺省回落连接默认索引，
+  再缺省则 `/_search` 全集群）；未被识别的键原样作 `_search` 请求体，`from`/`size` 缺省注入（默认 100）。
+  双击索引/别名生成 `match_all` DSL 骨架（插入控制台不自动执行），右键「复制查询（DSL）」。
+- **结果与分页**：命中→行，列 = `_index` / `_id` / `_score` + 各 `_source` 顶层字段并集（对象/数组落紧凑 JSON 文本）；
+  复用 N1「取更多」：`BackendCapabilities.fetchMore` + `DataSourceSession.paginate()`（ES 改写 `from/size`）——
+  分页从 JDBC 专有 `DialectRegistry` 提到能力位 + 会话方法，JDBC/ES 共用同一 UI 路径。
+- **编辑器**：`editorLanguage=JSON` 能力位驱动 JSON 语法高亮（`JsonSupport` 复用），并关闭 SQL 补全。
+- **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `ElasticsearchProtocolTest`（13）、
+  `ElasticsearchSessionIntegrationTest`（9，用本地 `HttpServer` 假装 ES 跑端到端）、`SessionFactoryTest` 增补（2）；
+  新增 `gradle smokeEs` 真服务端自检（建连 / 集群名 / 建索引+写文档 / 计数与清单 / `_mapping` / DSL 搜索 /
+  `from·size` 分页 / 预览，最后删临时索引；连不上打印 SKIP）。
+  ⚠️ Compose UI 交互（含深色）待人工验收。
 
 ### 第三优先：对象与数据流转
 
@@ -292,13 +311,17 @@ interface DataSourceSession : AutoCloseable {
 - **未做**：专用 value viewer（JSON 树 / 图片 / TTL 编辑）、命令补全、Redis 命令语法高亮
   （`editorLanguage` 能力位已预留）、工作台内表格式 key 浏览器（方案 B，暂不做）。
 
-### 7.5 Elasticsearch 设计要点
-- **连接**：URL / 用户名密码 / API key（HTTPS 支持）。
-- **客户端选型**：倾向 **`java.net.http.HttpClient` + JSON**（零重依赖）；官方 `elasticsearch-java` 需评估。
-- **浏览**：`_cat/indices?format=json` 列索引；`_mapping` 展开字段 → 复用树子节点（N9）。
-- **查询**：控制台输入 JSON DSL（或「索引 + 简易条件」生成 DSL）→ `_search` → 网格；
-  分页 `from/size`（或 `search_after`）复用 N1。
-- **结果**：行 = 文档；列固定 `_id` / `_score` / 主要字段，或整条 `_source` 走 JSON 树。
+### 7.5 Elasticsearch 设计要点（已实现，见 N6）
+- **连接**：host/port + 账号密码（Basic）/ API Key（用户名留空、密码填 key）；HTTPS 与反向代理前缀走 `extraParams`
+  （`scheme=https`、`path=/es`）；`database` 作默认索引复用现有连接表（无迁移）。
+- **客户端选型**：✅ **`java.net.http.HttpClient` + `kotlinx.serialization.json`**（零重依赖，jlink 仅加 `java.net.http` 模块）；
+  官方 `elasticsearch-java` 不引入（体积 + 兼容面）。
+- **浏览**：`_cat/indices` / `_cat/aliases?format=json` 列索引与别名；`_mapping` 展开字段（嵌套 / multi-field 扁平化）。
+- **查询**：控制台输入 JSON DSL（顶层 `index` + `_search` 请求体）→ 网格；分页 `from/size` 走 N1 能力位；
+  错误响应提取 `error.reason` 作可读提示。
+- **结果**：列 = `_index` / `_id` / `_score` + `_source` 顶层字段并集；行 = 文档；嵌套值落紧凑 JSON 文本。
+- **未做**：`search_after` / PIT 深分页（`from+size` 上限 10000）、聚合结果专用视图、写操作
+  （PUT/POST/DELETE 文档）、ES 专用补全（`editorLanguage` 已预留）。
 
 ### 7.6 分期与风险
 - 分期：**N4 抽象重构 → N5 Redis → N6 ES**。
@@ -315,7 +338,7 @@ interface DataSourceSession : AutoCloseable {
 |---|---|---|
 | Q1 | 「全能 IDE」是否要 ER 图 / 权限管理 / schema diff？（当前列在可选深化） | 决定是否从「可选」升为独立阶段 |
 | Q2 | Redis 客户端：Jedis（倾向）还是 Lettuce？ | ✅ 已定：Jedis（N5 已实现） |
-| Q3 | ES：走 `HttpClient`（倾向）还是官方 `elasticsearch-java`？兼容 ES 7.x / 8.x 哪些？ | N6 依赖与兼容面 |
+| Q3 | ES：走 `HttpClient`（倾向）还是官方 `elasticsearch-java`？兼容 ES 7.x / 8.x 哪些？ | ✅ 已定：`java.net.http.HttpClient` + `kotlinx.serialization.json`（N6 已实现）；未特化版本，按 REST 通用处理 |
 | Q4 | Redis/ES 控制台是否允许写命令（SET/DEL/PUT/POST）？还是第一版纯只读？ | ✅ 已定：允许写命令 + 危险命令二次确认（N5） |
 | Q5 | Excel 导出确认引入 Apache POI？体积 / 许可可接受吗？ | N8 依赖 |
 | Q6 | Redis TLS / ES HTTPS 是否 N5/N6 就要求？（SSH 已延后，TLS 场景不同） | 连接层设计 |

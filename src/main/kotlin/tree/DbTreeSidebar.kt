@@ -314,20 +314,30 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
                 return listOf(TreeMenuItem.Action("复制触发器名") { actions.onCopyName() })
             }
             val isSql = (row.profile?.dbType?.protocol ?: Protocol.JDBC) == Protocol.JDBC
+            val isEs = row.profile?.dbType?.protocol == Protocol.ELASTICSEARCH
             buildList {
                 add(TreeMenuItem.Action("复制${kind.displayNoun}名") { actions.onCopyName() })
                 if (kind.isPreviewable()) {
                     add(
-                        TreeMenuItem.Action(if (isSql) "预览（前 100 行）" else "查看键") {
-                            actions.onPreviewTable()
-                        },
+                        TreeMenuItem.Action(
+                            when {
+                                isSql -> "预览（前 100 行）"
+                                isEs -> "预览（DSL 查询）"
+                                else -> "查看键"
+                            },
+                        ) { actions.onPreviewTable() },
                     )
                     add(
-                        TreeMenuItem.Action(if (isSql) "复制查询（SELECT 预览）" else "复制查看命令") {
-                            actions.onCopyQuery()
-                        },
+                        TreeMenuItem.Action(
+                            when {
+                                isSql -> "复制查询（SELECT 预览）"
+                                isEs -> "复制查询（DSL）"
+                                else -> "复制查看命令"
+                            },
+                        ) { actions.onCopyQuery() },
                     )
                     if (isSql) add(TreeMenuItem.Action("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
+                    if (isEs) add(TreeMenuItem.Action("查看映射 (Ctrl+Q)") { actions.onViewDdl() })
                 }
             }
         }
@@ -990,6 +1000,8 @@ fun ObjectKindBadge(kind: ObjectKind?) {
         ObjectKind.OPERATOR_CLASS -> "OC" to Color(0xFF78909C)
         ObjectKind.OPERATOR_FAMILY -> "OF" to Color(0xFFD84315)
         ObjectKind.KEY -> "K" to Color(0xFFD82C20)
+        ObjectKind.INDEX -> "IX" to Color(0xFF00897B)
+        ObjectKind.ALIAS -> "AL" to Color(0xFF8E24AA)
     }
     Box(
         contentAlignment = Alignment.Center,
