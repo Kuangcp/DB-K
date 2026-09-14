@@ -1,7 +1,7 @@
 # 打包与分发（Deb / AppImage / MSI）
 
 > 工具链见 `AGENTS.md`：JDK `25.0.3-jbr`、Gradle `9.4.1`（项目**不引入 wrapper**，各平台用系统 gradle）。
-> `build.gradle.kts` 里 `version = "1.0.0"`，是 Deb / AppImage / MSI / 设置窗口版本号（`app/build/Version.kt`）的统一来源。
+> `build.gradle.kts` 里 `version = "1.0.1"`，是 Deb / AppImage / MSI / 设置窗口版本号（`app/build/Version.kt`）的统一来源。
 
 ## 目标格式与构建机
 
@@ -35,8 +35,8 @@ Compose 的 `TargetFormat.AppImage` 实际只是 jpackage 的 `app-image` 目录
 ### 运行
 
 ```sh
-chmod +x db-k-1.0.0-x86_64.AppImage
-./db-k-1.0.0-x86_64.AppImage
+chmod +x db-k-1.0.1-x86_64.AppImage
+./db-k-1.0.1-x86_64.AppImage
 ```
 
 ### glibc 兼容性（本机实测结论）
@@ -61,7 +61,7 @@ AppImage 是"自包含"但**不是静态链接**：native ELF（JRE、Skiko、la
 targetFormats(TargetFormat.Deb, TargetFormat.Msi)
 windows {
     upgradeUuid = "ab0abd13-bf35-4b79-8898-fbb9cfdc0f82" // 永久固定，改动会导致无法升级
-    msiPackageVersion = appVersion                        // 1.0.0
+    msiPackageVersion = appVersion                        // 1.0.1
     menu = true
     menuGroup = "DB-K"
     shortcut = true
@@ -76,10 +76,10 @@ windows {
 1. **JDK 25**（JBR 或 Temurin，需含 MSI bundler；本机 Linux JBR 的 `jdk.jpackage` 就不含）。
 2. **Gradle 9.4.1**（项目无 wrapper，用系统 gradle）。
 3. **WiX Toolset 3.x**（jpackage 调 `candle.exe`/`light.exe`），装好并加入 `PATH`。Compose 的 `windows {}` DSL 未暴露 wix 目录，走 PATH 即可。
-4. `gradle packageMsi` → `build/compose/binaries/main/msi/db-k-1.0.0.msi`。
+4. `gradle packageMsi` → `build/compose/binaries/main/msi/db-k-1.0.1.msi`。
 
 ### 注意
 
-- **版本号 major 不能为 0**：jpackage/WiX 对 MSI 要求 major ≥ 1；现统一为 `1.0.0`。若 Windows 上仍报版本错，把 `msiPackageVersion` 单独调大即可。
+- **版本号 major 不能为 0**：jpackage/WiX 对 MSI 要求 major ≥ 1；现统一为 `1.0.1`。若 Windows 上仍报版本错，把 `msiPackageVersion` 单独调大即可。
 - `upgradeUuid` 一旦发布就不要再改，否则新版本不会被识别为升级。
 - 未做代码签名（自签证书过不了杀软，故不配置 `signMsi`）。
