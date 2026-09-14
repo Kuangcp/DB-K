@@ -54,6 +54,8 @@ import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -1955,6 +1957,8 @@ private fun ResultPane(
             .clip(RoundedCornerShape(6.dp))
             .background(MaterialTheme.colors.surface),
     ) {
+        // 客户端排序/筛选视图（N1）：随结果 SQL 重置，不重跑 SQL
+        var viewSpec by remember(result?.sql) { mutableStateOf(ResultViewSpec()) }
         when {
             error != null -> CenteredHint(error, isError = true)
             result == null -> CenteredHint("执行 SELECT 后在此查看结果表格；可导出 CSV", isError = false)
@@ -1966,6 +1970,8 @@ private fun ResultPane(
                     transposed = transposed,
                     edits = edits,
                     editPlan = editPlan,
+                    viewSpec = viewSpec,
+                    onViewSpecChange = { viewSpec = it },
                     onCellEdit = onCellEdit,
                     onClearCellEdit = onClearCellEdit,
                     onCopyText = onCopyText,
@@ -2037,6 +2043,8 @@ private fun ResultTable(
     transposed: Boolean,
     edits: Map<CellKey, CellValue>,
     editPlan: EditPlan?,
+    viewSpec: ResultViewSpec,
+    onViewSpecChange: (ResultViewSpec) -> Unit,
     onCellEdit: (CellKey, CellValue) -> Unit,
     onClearCellEdit: (CellKey) -> Unit,
     onCopyText: (String, String) -> Unit,
@@ -2053,7 +2061,10 @@ private fun ResultTable(
     var dialogEdit by remember { mutableStateOf<CellEditRequest?>(null) }
     // 暂存修改叠到展示值上（仅值变化，尺寸不变）
     val edited = remember(result, edits) { applyEdits(result, edits) }
-    val view = if (transposed) transposeResult(edited) else edited
+    // 视图层（N1）：排序/筛选只改行顺序与可见行，不重跑 SQL；rowView 保留回原始行的映射
+    val rowView = remember(edited, viewSpec) { buildResultView(edited, viewSpec) }
+    val displayedRows = remember(edited, rowView) { rowView.rowOrder.map { edited.rows[it] } }
+    val view = if (transposed) transposeResult(edited.copy(rows = displayedRows)) else edited.copy(rows = displayedRows)
     val cols = view.columns
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -2066,7 +2077,10 @@ private fun ResultTable(
     val scrollbarStyle = dbScrollbarStyle()
     // 列宽：默认按内容采样估算；用户拖表头分隔线可覆盖（列数/内容/布局变化时重建）。
     // 用轻量键避免每次重组合都对整表行做深比较（拖动时会高频重组合）。
-    val baseWidths = remember(result.sql, result.columns, result.rows.size, transposed) {
+    // 列宽：默认按内容采样估算；用户拖表头分隔线可覆盖。
+    // 非转置：列数不随排序/筛选变化，列宽保持稳定；转置：列数 = 展示行数 + 1，故随筛选重建。
+    val transposedRows = if (transposed) view.rows.size else 0
+    val baseWidths = remember(result.sql, result.columns, transposed, transposedRows) {
         List(cols.size) { c ->
             var w = cols[c].name.length
             val sample = minOf(view.rows.size, 300)
@@ -2077,7 +2091,7 @@ private fun ResultTable(
             estWidth(w)
         }
     }
-    val widths = remember(result.sql, result.columns, result.rows.size, transposed) {
+    val widths = remember(result.sql, result.columns, transposed, transposedRows) {
         mutableStateListOf<Int>().apply { addAll(baseWidths) }
     }
     // 单列结果 / 转置后只剩一个值列（列名 + 行 1）时，让该值列自适应吃掉右侧空白（有上限）。
@@ -2087,7 +2101,7 @@ private fun ResultTable(
         else -> -1
     }
     // 用户手动拖过列宽后不再自动加宽（按列记忆）
-    val manualCols = remember(result.sql, result.rows.size, transposed) {
+    val manualCols = remember(result.sql, result.columns, transposed, transposedRows) {
         mutableStateListOf<Boolean>().apply { repeat(cols.size) { add(false) } }
     }
     var tableWidthPx by remember { mutableStateOf(0) }
@@ -2131,7 +2145,7 @@ private fun ResultTable(
 
     fun editableAt(r: Int, c: Int): Boolean {
         val plan = editPlan ?: return false
-        val orig = viewToOriginal(result, transposed, r, c) ?: return false
+        val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, r, c) ?: return false
         return plan.columnAt(orig.col) != null
     }
 
@@ -2145,7 +2159,7 @@ private fun ResultTable(
     fun commitEditDraft() {
         val e = editing ?: return
         editing = null
-        val orig = viewToOriginal(result, transposed, e.row, e.col) ?: return
+        val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, e.row, e.col) ?: return
         val text = editDraft
         val shown = cellText(e.row, e.col)
         // 与当前显示值一致（含 NULL/空串语义）→ 不产生修改
@@ -2175,7 +2189,9 @@ private fun ResultTable(
                 // 编辑中：其余按键（含方向键/Ctrl+C）交给文本框，不要劫持光标移动与复制
                 editing != null -> false
                 e.isCtrlPressed && e.key == Key.C -> {
-                    sel.value?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
+                    sel.value
+                        ?.takeIf { it.row in view.rows.indices && it.col in cols.indices }
+                        ?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
                     true
                 }
                 e.key == Key.DirectionUp -> { onMove(-1, 0); true }
@@ -2189,7 +2205,9 @@ private fun ResultTable(
     // 每行可生成的 INSERT（仅原布局；复杂查询/无法定表时 null）
     val tableName = extractTableName(result.sql)
     val insertSqls: List<String?> = if (transposed) view.rows.map { null }
-    else result.rows.map { row -> rowToInsertSql(result.sql, result.columns.map { it.name }, row) }
+    else rowView.rowOrder.map { origIdx ->
+        rowToInsertSql(result.sql, result.columns.map { it.name }, result.rows[origIdx])
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -2199,6 +2217,12 @@ private fun ResultTable(
             .onFocusChanged { if (!it.isFocused) ctrlDown = false }
             .onPreviewKeyEvent(onKey),
     ) {
+        ResultFilterBar(
+            spec = viewSpec,
+            onSpecChange = onViewSpecChange,
+            shownRows = rowView.rowCount,
+            totalRows = rowView.totalRows,
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2209,7 +2233,22 @@ private fun ResultTable(
             cols.forEachIndexed { c, col ->
                 // 表头单元格 + 右缘拖拽把手（覆盖式，不占布局宽，保证与数据行水平对齐）
                 Box {
-                    RowHeaderCell(col.name, widths[c], highlighted = sel.value?.col == c)
+                    ResultHeaderCell(
+                        name = col.name,
+                        width = widths[c],
+                        highlighted = sel.value?.col == c,
+                        sort = viewSpec.sorts.firstOrNull { it.column == c },
+                        sortRank = viewSpec.sorts.indexOfFirst { it.column == c }.takeIf { it > 0 },
+                        filterText = viewSpec.filters[c],
+                        onToggleSort = {
+                            onViewSpecChange(viewSpec.toggleSort(c))
+                        },
+                        onFilterChange = { text ->
+                            val next = viewSpec.filters.toMutableMap()
+                            if (text.isEmpty()) next.remove(c) else next[c] = text
+                            onViewSpecChange(viewSpec.copy(filters = next))
+                        },
+                    )
                     ColumnResizeHandle(
                         modifier = Modifier.align(Alignment.CenterEnd),
                         onDragStart = { manualCols[c] = true },
@@ -2244,7 +2283,7 @@ private fun ResultTable(
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
                                 val cellView = v?.let { CellView("$colName · 第 ${index + 1} 行", it) }
-                                val origKey = viewToOriginal(result, transposed, index, c)
+                                val origKey = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, index, c)
                                 val isEditable = editableAt(index, c)
                                 val pending = origKey != null && edits.containsKey(origKey)
                                 val isEditing = editing == CellSel(index, c)
@@ -2457,6 +2496,210 @@ private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colN
     } else {
         val preview = if (v.length > 28) v.take(28) + "…" else v
         onCopyText(v, "已复制单元格（列 $colName）：$preview")
+    }
+}
+
+/** 结果区筛选条：左侧顶部快速过滤（所有列包含），右侧「命中 N / 共 M」与清除全部。 */
+@Composable
+private fun ResultFilterBar(
+    spec: ResultViewSpec,
+    onSpecChange: (ResultViewSpec) -> Unit,
+    shownRows: Int,
+    totalRows: Int,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colors.surface)
+            .padding(start = 8.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
+    ) {
+        Icon(
+            Icons.Filled.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .width(240.dp)
+                .height(24.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.05f))
+                .padding(horizontal = 7.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            BasicTextField(
+                value = spec.quickFilter,
+                onValueChange = { onSpecChange(spec.copy(quickFilter = it)) },
+                singleLine = true,
+                textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colors.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colors.primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (spec.quickFilter.isEmpty()) {
+                Text(
+                    "快速过滤（所有列）",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                )
+            }
+        }
+        if (spec.quickFilter.isNotEmpty()) {
+            Spacer(Modifier.width(2.dp))
+            IconButton(
+                onClick = { onSpecChange(spec.copy(quickFilter = "")) },
+                modifier = Modifier.size(20.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "清除快速过滤",
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.size(13.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            if (shownRows != totalRows) "命中 $shownRows / 共 $totalRows 行" else "共 $totalRows 行",
+            fontSize = 11.sp,
+            color = if (shownRows != totalRows) MaterialTheme.colors.primary
+            else MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+        )
+        Spacer(Modifier.weight(1f))
+        if (spec.filterCount > 0) {
+            Text(
+                "筛选 ${spec.filterCount} 条",
+                fontSize = 11.sp,
+                color = MaterialTheme.colors.primary,
+            )
+            Spacer(Modifier.width(4.dp))
+            TextButton(
+                onClick = { onSpecChange(ResultViewSpec()) },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+            ) {
+                Text("清除全部", fontSize = 11.sp)
+            }
+        }
+    }
+    Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
+}
+
+/**
+ * 可排序/筛选的表头单元格：点击切换排序（升→降→无），右侧漏斗图标弹出列筛选输入框。
+ * 列筛选输入语法同 [parseColumnFilter]（`=x` 精确、`!=x`、`>x`、`~regex`，默认包含）。
+ */
+@Composable
+private fun ResultHeaderCell(
+    name: String,
+    width: Int,
+    highlighted: Boolean,
+    sort: SortSpec?,
+    sortRank: Int?,
+    filterText: String?,
+    onToggleSort: () -> Unit,
+    onFilterChange: (String) -> Unit,
+) {
+    var filterOpen by remember { mutableStateOf(false) }
+    var draft by remember(filterText, filterOpen) { mutableStateOf(filterText.orEmpty()) }
+    val filterFocus = remember { FocusRequester() }
+    LaunchedEffect(filterOpen) { if (filterOpen) runCatching { filterFocus.requestFocus() } }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .width(width.dp)
+            .height(30.dp)
+            .background(if (highlighted) MaterialTheme.colors.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(onClick = onToggleSort)
+            .padding(start = 8.dp, end = 10.dp),
+    ) {
+        Text(
+            name,
+            fontSize = 11.sp,
+            fontWeight = if (highlighted) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (highlighted) MaterialTheme.colors.primary
+            else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (sort != null) {
+            Text(
+                if (sort.ascending) "▲" else "▼",
+                fontSize = 8.sp,
+                color = MaterialTheme.colors.primary,
+                modifier = Modifier.padding(start = 3.dp),
+            )
+            if (sortRank != null) {
+                Text(
+                    "${sortRank + 1}",
+                    fontSize = 7.5.sp,
+                    color = MaterialTheme.colors.primary.copy(alpha = 0.8f),
+                    modifier = Modifier.padding(start = 1.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(4.dp))
+        Box(contentAlignment = Alignment.Center) {
+            IconButton(
+                onClick = { filterOpen = true },
+                modifier = Modifier.size(16.dp),
+            ) {
+                Icon(
+                    DbIcons.Filter,
+                    contentDescription = "筛选「$name」",
+                    tint = if (!filterText.isNullOrEmpty()) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+            DropdownMenu(expanded = filterOpen, onDismissRequest = { filterOpen = false }) {
+                Column(modifier = Modifier.width(228.dp).padding(horizontal = 10.dp, vertical = 8.dp)) {
+                    Text(
+                        "筛选「$name」",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colors.onSurface,
+                    )
+                    Text(
+                        "= 精确 · != 不等 · > >= < <= 比较 · ~ 正则 · 默认包含",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .height(26.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
+                            .padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        BasicTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            singleLine = true,
+                            textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colors.onSurface),
+                            cursorBrush = SolidColor(MaterialTheme.colors.primary),
+                            modifier = Modifier.fillMaxWidth().focusRequester(filterFocus),
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(
+                            onClick = { onFilterChange(""); filterOpen = false },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) { Text("清除", fontSize = 12.sp) }
+                        TextButton(
+                            onClick = { onFilterChange(draft); filterOpen = false },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) { Text("应用", fontSize = 12.sp) }
+                    }
+                }
+            }
+        }
     }
 }
 

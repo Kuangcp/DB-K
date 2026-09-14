@@ -70,6 +70,14 @@ object DbIcons {
         vector("download", "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z")
     }
 
+    /** 漏斗筛选：结果表头列筛选入口。 */
+    val Filter: ImageVector by lazy {
+        vector(
+            "filter",
+            "M14 12v7.88c.04.3-.12.62-.42.77-.28.15-.63.12-.88-.06L9.6 18.4c-.25-.19-.4-.49-.4-.8V12L3.5 5.2c-.45-.53-.07-1.2.6-1.2h15.8c.67 0 1.05.67.6 1.2L14 12z",
+        )
+    }
+
     /** 停止（实心方块）：取消正在执行的查询。 */
     val Stop: ImageVector by lazy {
         vector("stop", "M6 6h12v12H6z")
