@@ -72,6 +72,7 @@ import app.state.TreeState
 import app.state.ToastState
 import app.ui.CompletionTable
 import app.ui.LocalKeymap
+import app.ui.ResultEdits
 import app.ui.SqlWorkspace
 import app.ui.appMaterialColors
 import app.ui.matchAnyAwt
@@ -710,7 +711,7 @@ private fun AppBody(
                             profiles.firstOrNull { it.id == pid }?.let(createConsoleFor)
                         },
                         dirtyConsoleIds = consoleState.dirtyConsoleIds,
-                        pendingEditCounts = consoleState.editBuffers.mapValues { it.value.size },
+                        pendingEditCounts = consoleState.editBuffers.mapValues { it.value.count },
                         schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
                         supportsTargetSwitch =
                             activeProfile?.let { connectionsState.sessionOf(it.id)?.capabilities?.sessionContext } == true,
@@ -831,7 +832,7 @@ private fun AppBody(
                                 }
                             }
                         },
-                        edits = activeConsole?.let { consoleState.editsOf(it.id) }.orEmpty(),
+                        resultEdits = activeConsole?.let { consoleState.editsOf(it.id) } ?: ResultEdits.EMPTY,
                         editPlan = activeConsole?.let { consoleState.editPlanOf(it.id) },
                         resultBusy = activeConsole?.let { consoleState.resultBusyOf(it.id) } == true,
                         onCellEdit = { key, value ->
@@ -839,6 +840,30 @@ private fun AppBody(
                         },
                         onClearCellEdit = { key ->
                             activeConsole?.let { consoleState.clearCellEdit(it.id, key) }
+                        },
+                        onInsertRow = {
+                            activeConsole?.let { consoleState.addPendingInsert(it.id) }
+                        },
+                        onRemoveInsertRow = { id ->
+                            activeConsole?.let { consoleState.removePendingInsert(it.id, id) }
+                        },
+                        onInsertCellEdit = { id, col, value ->
+                            activeConsole?.let { consoleState.setPendingInsertCell(it.id, id, col, value) }
+                        },
+                        onClearInsertCell = { id, col ->
+                            activeConsole?.let { consoleState.clearPendingInsertCell(it.id, id, col) }
+                        },
+                        onToggleRowDelete = { row ->
+                            activeConsole?.let { c ->
+                                val deletes = consoleState.editsOf(c.id).deletes
+                                when {
+                                    row in deletes -> consoleState.restoreRow(c.id, row)
+                                    deletes.isNotEmpty() -> dialogState.confirm = ConfirmRequest.DeleteRows(deletes.size + 1) {
+                                        consoleState.markRowDeleted(c.id, row)
+                                    }
+                                    else -> consoleState.markRowDeleted(c.id, row)
+                                }
+                            }
                         },
                         onExportCsv = {
                             val result = activeConsole?.let { consoleState.runStateOf(it.id).result }
@@ -1072,6 +1097,7 @@ private fun DialogHost(
                     }
                     is ConfirmRequest.DeleteConsole -> consoleState.deleteConsole(request.id)
                     is ConfirmRequest.DiscardResultEdits -> request.onDiscard()
+                    is ConfirmRequest.DeleteRows -> request.onConfirm()
                     is ConfirmRequest.DangerConfirm -> request.onDecision(true)
                 }
                 dialogState.confirm = null

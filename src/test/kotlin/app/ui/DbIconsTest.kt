@@ -20,6 +20,11 @@ class DbIconsTest {
             "Transpose" to DbIcons.Transpose,
             "Download" to DbIcons.Download,
             "Stop" to DbIcons.Stop,
+            "Commit" to DbIcons.Commit,
+            "Refresh" to DbIcons.Refresh,
+            "Undo" to DbIcons.Undo,
+            "AddRow" to DbIcons.AddRow,
+            "DeleteRow" to DbIcons.DeleteRow,
         )
         icons.forEach { (name, icon) ->
             assertTrue(icon.defaultWidth.value > 0f, "图标 $name 未能解析出有效尺寸")

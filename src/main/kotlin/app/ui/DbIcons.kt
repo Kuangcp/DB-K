@@ -109,6 +109,19 @@ object DbIcons {
         )
     }
 
+    /** 插入行（加号）：结果网格新增待插入行。 */
+    val AddRow: ImageVector by lazy {
+        vector("add-row", "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")
+    }
+
+    /** 删除行（垃圾桶）：结果网格标记/撤销删除当前行。 */
+    val DeleteRow: ImageVector by lazy {
+        vector(
+            "delete-row",
+            "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z",
+        )
+    }
+
     /** 格式化（对齐线）：SQL 编辑器「格式化」入口。 */
     val Format: ImageVector by lazy {
         vector("format", "M15 15H3v2h12v-2zm0-8H3v2h12V7zM3 13h18v-2H3v2zm0 8h18v-2H3v2zM3 3v2h18V3H3z")

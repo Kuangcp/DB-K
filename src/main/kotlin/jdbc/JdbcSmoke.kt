@@ -492,6 +492,36 @@ private fun smokeRowUpdater(dir: Path) {
         val nopkCols = SQLiteDialect.loadColumns(conn, schema, "nopk")
         check(nopkCols.first { it.name == "email" }.primaryKey) { "无主键时唯一索引列应作为行定位键" }
         check(!nopkCols.first { it.name == "name" }.primaryKey) { "非唯一列不应是行定位键" }
+
+        // N3：增行 / 删行与改格共用单事务（DELETE → UPDATE → INSERT）
+        val idCol = QueryColumn("id", table = "users", baseColumn = "id", sqlType = java.sql.Types.INTEGER)
+        val nameCol = QueryColumn("name", table = "users", baseColumn = "name", sqlType = java.sql.Types.VARCHAR)
+        val ageCol = QueryColumn("age", table = "users", baseColumn = "age", sqlType = java.sql.Types.INTEGER)
+        val rows = QueryResult(
+            sql = "SELECT id, name, age FROM users",
+            columns = listOf(idCol, nameCol, ageCol),
+            rows = listOf(listOf("1", "alice", "30"), listOf("2", "Bobby", "40")),
+        )
+        val writePlan = app.ui.buildEditPlan(
+            rows,
+            primaryKeys = setOf("id"),
+            knownColumns = setOf("id", "name", "age"),
+        )
+        check(writePlan != null) { "增删行需要可编辑计划（主键）" }
+        val overlay = app.ui.ResultEdits(
+            cells = mapOf(app.ui.CellKey(0, 1) to CellValue("ALICE")),
+            inserts = listOf(app.ui.PendingInsert(1, mapOf(0 to CellValue("3"), 1 to CellValue("dave"), 2 to CellValue("22")))),
+            deletes = setOf(1),
+        )
+        val ops = app.ui.buildWriteOps(rows, writePlan, overlay)
+        check(ops.size == 3 && ops[0] is jdbc.WriteOp.Delete && ops[1] is jdbc.WriteOp.Update && ops[2] is jdbc.WriteOp.Insert) {
+            "写操作应按 DELETE→UPDATE→INSERT 生成，实际=$ops"
+        }
+        check(RowUpdater.executeWriteBatch(conn, ops, SQLiteDialect) == 3) { "增删改应共影响 3 行" }
+        check(QueryExecutor.execute(conn, "SELECT COUNT(*) FROM users").rows.single().single() == "2") { "行数应为 2" }
+        check(QueryExecutor.execute(conn, "SELECT name FROM users WHERE id = 1").rows.single().single() == "ALICE")
+        check(QueryExecutor.execute(conn, "SELECT COUNT(*) FROM users WHERE id = 2").rows.single().single() == "0") { "id=2 应被删除" }
+        check(QueryExecutor.execute(conn, "SELECT name FROM users WHERE id = 3").rows.single().single() == "dave") { "新行应插入" }
         Logger.info("[row-updater] plan/update/rollback PASS", "PASS")
     }
 }

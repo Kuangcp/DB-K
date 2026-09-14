@@ -146,6 +146,10 @@ fun ConfirmDialog(
             "未提交的修改" to
                 "有 ${request.count} 处修改尚未提交，${request.actionLabel}将丢失这些修改。\n\n确定继续吗？"
         }
+        is ConfirmRequest.DeleteRows -> {
+            "批量删除行" to
+                "已标记删除的行将达 ${request.count} 行，提交时这些行会从数据库删除且不可恢复。\n\n确定继续标记吗？"
+        }
         is ConfirmRequest.DangerConfirm -> {
             "危险命令确认" to
                 "即将执行「${request.command}」，该命令可能清空数据或中断服务且不可恢复。\n\n确定继续吗？"
@@ -153,6 +157,7 @@ fun ConfirmDialog(
     }
     val confirmLabel = when (request) {
         is ConfirmRequest.DiscardResultEdits -> "继续"
+        is ConfirmRequest.DeleteRows -> "继续"
         is ConfirmRequest.DangerConfirm -> "执行"
         else -> "删除"
     }

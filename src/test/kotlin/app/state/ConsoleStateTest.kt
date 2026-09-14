@@ -295,4 +295,107 @@ class ConsoleStateTest {
             assertTrue(state.previewCommit(c, profile()).isEmpty())
         }
     }
+
+    // ---------- N3：增行 / 删行 overlay ----------
+
+    private fun seeded(r: ConnectionsRepository, state: ConsoleState, c: db.ConsoleRecord): QueryResult {
+        val result = QueryResult(
+            sql = "SELECT id, bal FROM acc",
+            columns = listOf(
+                QueryColumn("id", table = "acc", baseColumn = "id", sqlType = Types.INTEGER),
+                QueryColumn("bal", table = "acc", baseColumn = "bal", sqlType = Types.INTEGER),
+            ),
+            rows = listOf(listOf("1", "100"), listOf("2", "200")),
+        )
+        state.runSlots[c.id] = ConsoleRunUi(
+            outcomes = listOf(StatementOutcome("SELECT id, bal FROM acc", result, null)),
+            activeIndex = 0,
+        )
+        state.editPlans[c.id] = buildEditPlan(result, primaryKeys = setOf("id"))!!
+        return result
+    }
+
+    @Test
+    fun `pending insert and delete flow into preview`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c = state.createConsole(pid, "c")
+            seeded(repo, state, c)
+
+            val insId = state.addPendingInsert(c.id)
+            state.setPendingInsertCell(c.id, insId, 0, CellValue("3"))
+            state.setPendingInsertCell(c.id, insId, 1, CellValue("300"))
+            state.markRowDeleted(c.id, 1)
+            assertEquals(2, state.editCount(c.id))
+
+            val preview = state.previewCommit(c, profile())
+            assertEquals(2, preview.size, preview.toString())
+            assertTrue(preview[0].startsWith("DELETE"), preview[0])
+            assertTrue(preview[1].startsWith("INSERT"), preview[1])
+            assertTrue(preview[1].contains("300"))
+        }
+    }
+
+    @Test
+    fun `mark row deleted drops its cell edits and is restorable`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c = state.createConsole(pid, "c")
+            seeded(repo, state, c)
+
+            state.setCellEdit(c.id, CellKey(1, 1), CellValue("222"))
+            state.markRowDeleted(c.id, 1)
+            // 同行的改格被丢弃，只剩删除标记
+            assertEquals(1, state.editCount(c.id))
+            assertTrue(state.editsOf(c.id).cells.isEmpty())
+
+            // 恢复行 → overlay 变空（编辑已被删）
+            state.restoreRow(c.id, 1)
+            assertTrue(state.editsOf(c.id).isEmpty)
+        }
+    }
+
+    @Test
+    fun `blank insert produces no preview entry and can be cleared`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c = state.createConsole(pid, "c")
+            seeded(repo, state, c)
+
+            val id = state.addPendingInsert(c.id)
+            assertEquals(1, state.editCount(c.id))
+            // 未填任何值 → 不生成 INSERT，预览为空
+            assertTrue(state.previewCommit(c, profile()).isEmpty())
+
+            // 填了又清 → 回到未填
+            state.setPendingInsertCell(c.id, id, 1, CellValue("x"))
+            assertEquals(1, state.previewCommit(c, profile()).size)
+            state.clearPendingInsertCell(c.id, id, 1)
+            assertTrue(state.previewCommit(c, profile()).isEmpty())
+
+            // 移除待插入行 → overlay 清空
+            state.removePendingInsert(c.id, id)
+            assertTrue(state.editsOf(c.id).isEmpty)
+        }
+    }
+
+    @Test
+    fun `clearEdits drops insert and delete overlays`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c = state.createConsole(pid, "c")
+            seeded(repo, state, c)
+
+            state.addPendingInsert(c.id)
+            state.markRowDeleted(c.id, 0)
+            assertEquals(2, state.totalEditCount())
+            state.clearEdits(c.id)
+            assertEquals(0, state.totalEditCount())
+            assertTrue(state.editsOf(c.id).isEmpty)
+        }
+    }
 }

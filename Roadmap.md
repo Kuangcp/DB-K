@@ -47,7 +47,7 @@
 | 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）+ **Redis（N5）**；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
 | 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数（**组类型由会话提供，JDBC 11 类 / Redis 仅「键」**）；组折叠 + **按组懒加载**；展开持久化 |
 | 编辑器 | 高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全（非 SQL 后端关闭）；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` |
-| 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / CSV（含全量流式）；**客户端排序 + 每列筛选 + 快速过滤（不重跑 SQL）+ 取更多（方言分页追加）**；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销** |
+| 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / CSV（含全量流式）；**客户端排序 + 每列筛选 + 快速过滤（不重跑 SQL）+ 取更多（方言分页追加）**；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销**；**增行 / 删行（N3，主键定位，与改格同单事务提交）** |
 | 查看器 | 长文本弹窗、JSON 树 + 高亮、Base64 图片预览、MD5 |
 | 控制台 | 跨源多标签、独立执行目标（库/schema）、光标记忆、关闭可重开 |
 | 连接与存储 | app.db SQLite v8（迁移 + FK 级联）、列缓存、密码 AES-256-GCM、连接档案 JSON 导入导出、正文独立 `.sql` |
@@ -75,7 +75,7 @@
 | 执行计划 | ✅ 可视化 | ✅ 计划树 | ◐ 仅执行 | **只做原始结果表（决策 8）→ N11** |
 | 结果排序 / 筛选 | ✅ | ✅ | ✅ | N1（客户端优先） |
 | 分页 / 取更多 | ✅ | ✅ | ◐ | N1「取更多」已做（方言分页追加）；页码跳转未做 |
-| 增 / 删行 | ✅ | ✅ | ❌ | N3（主键定位） |
+| 增 / 删行 | ✅ | ✅ | ✅ | N3（主键定位，已完成） |
 | 手动事务 | ✅ | ✅ | 🚫 暂不做 | 决策 3 |
 | 导入 | ✅ 多格式 | ✅ | ❌ | 后置 |
 | 导出 | ✅ 多格式 | ✅ | ◐ CSV | N8：+JSON / SQL INSERT / Excel |
@@ -121,14 +121,22 @@
      侵入性大且易破坏现有编辑器，故单独立项后再做。
 - **验收**：格式化语义不变（`SqlFormatterTest` 词元签名 + 幂等）✅；查找替换可撤销（待人工 UI 确认）◐。
 
-#### N3 行级写操作（增行 / 删行）
+#### N3 行级写操作（增行 / 删行）✅ 已实现
 - **对标**：Navicat / DataGrip 网格增删行。
 - **要点**
-  1. 结果网格「插入行 / 删除行」，pending 状态 + 提交；
-  2. 与改格共用提交管线（单事务 + `affected==1` 校验）；预览扩展 INSERT / DELETE；
-  3. **主键定位**：无主键 / 主键不在结果列 → 整表只读（复用 `buildEditPlan` 判定）；
-  4. 删除批量二次确认；不引入用户手动事务（决策 3）。
-- **验收**：增删行提交前不入库；无主键表不可增删；失败整体回滚。
+  1. ✅ 结果网格「插入行 / 删除行」：`ResultEdits` overlay（单元格改值 + 待插入行 + 待删除行）纯内存暂存，
+     工具条 `AddRow`/`DeleteRow` 图标（删除按当前选中行标记，可再点撤销；已有待删行时批量二次确认）；
+  2. ✅ 与改格共用提交管线：`RowUpdater.executeWriteBatch` 单事务按 **DELETE → UPDATE → INSERT** 执行，
+     每条 `affected==1` 校验、任一失败整体回滚；提交前预览（`renderWriteSql`）扩展覆盖 INSERT/DELETE；
+  3. ✅ **主键定位**：复用 `buildEditPlan` 判定——无主键 / 键不在结果列 / 视图 → 整表只读，增删一并禁用；
+     待删除行不可再改格（标记删除时丢弃该行改格），未填写任何值的待插入行提交前拦截；
+  4. ✅ 不引入手动事务（决策 3）：提交成功仍固定刷新当前 Tab 取服务端权威值。
+- **实现**：`jdbc/RowUpdater.kt`（`InsertPlan`/`DeletePlan`/`WriteOp`/`executeWriteBatch`）、
+  `app/ui/ResultWritePlan.kt`（`ResultEdits`/`PendingInsert`/`buildWriteOps`）、
+  `ConsoleState`（overlay 读写 + `commitEdits`/`previewCommit`）、`SqlWorkspace`（待插入行渲染 + 行级操作）。
+- **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `ResultWritePlanTest`（9）、
+  `RowUpdaterTest` 增补 INSERT/DELETE/混合回滚（4）、`ConsoleStateTest` 增补 overlay（3）、
+  `smokeJdbc` row-updater 段增补增删改单事务。⚠️ Compose UI 交互待人工验收（含深色）。
 
 ### 第二优先：多协议后端（NoSQL，设计见 §7）
 

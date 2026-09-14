@@ -170,4 +170,97 @@ class RowUpdaterTest {
         assertFalse(isBinarySqlType(Types.VARCHAR))
         assertFalse(isBinarySqlType(Types.INTEGER))
     }
+
+    // ---------- N3：INSERT / DELETE 与混合提交 ----------
+
+    private fun Connection.rowCount(table: String): Int =
+        QueryExecutor.execute(this, "SELECT COUNT(*) FROM $table").rows.single().single()!!.toInt()
+
+    @Test
+    fun `insert and delete in single transaction`() {
+        open().use { c ->
+            c.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+            c.exec("INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')")
+
+            val insert = InsertPlan(
+                schema = null,
+                table = "users",
+                columns = listOf(ColumnValue("id", CellValue("4"), Types.INTEGER), ColumnValue("name", CellValue("dave"), Types.VARCHAR)),
+            )
+            val delete = DeletePlan(
+                schema = null,
+                table = "users",
+                keys = listOf(ColumnValue("id", CellValue("2"), Types.INTEGER)),
+            )
+            val updated = UpdatePlan(
+                null, "users",
+                sets = listOf(ColumnValue("name", CellValue("ALICE"), Types.VARCHAR)),
+                keys = listOf(ColumnValue("id", CellValue("1"), Types.INTEGER)),
+            )
+
+            val total = RowUpdater.executeWriteBatch(
+                c,
+                listOf(WriteOp.Delete(delete), WriteOp.Update(updated), WriteOp.Insert(insert)),
+                SQLiteDialect,
+            )
+            assertEquals(3, total)
+            assertEquals(3, c.rowCount("users"))
+            assertEquals("ALICE", c.scalar("SELECT name FROM users WHERE id = 1"))
+            assertEquals(null, c.scalar("SELECT name FROM users WHERE id = 2"))
+            assertEquals("dave", c.scalar("SELECT name FROM users WHERE id = 4"))
+        }
+    }
+
+    @Test
+    fun `render insert and delete sql`() {
+        val insert = InsertPlan(
+            schema = null,
+            table = "users",
+            columns = listOf(ColumnValue("name", CellValue("O'Reilly"), Types.VARCHAR), ColumnValue("note", CellValue(null), Types.VARCHAR)),
+        )
+        assertEquals(
+            "INSERT INTO \"users\" (\"name\", \"note\") VALUES ('O''Reilly', NULL);",
+            RowUpdater.renderInsertSql(insert, SQLiteDialect),
+        )
+        val del = DeletePlan(null, "users", listOf(ColumnValue("id", CellValue("1"), Types.INTEGER)))
+        assertEquals("DELETE FROM \"users\" WHERE \"id\" = '1';", RowUpdater.renderDeleteSql(del, SQLiteDialect))
+        assertEquals(
+            RowUpdater.renderDeleteSql(del, SQLiteDialect),
+            RowUpdater.renderWriteSql(WriteOp.Delete(del), SQLiteDialect),
+        )
+    }
+
+    @Test
+    fun `mixed write batch rolls back when one delete misses`() {
+        open().use { c ->
+            c.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+            c.exec("INSERT INTO users VALUES (1, 'alice')")
+            val insert = InsertPlan(
+                null, "users",
+                listOf(ColumnValue("id", CellValue("2"), Types.INTEGER), ColumnValue("name", CellValue("bob"), Types.VARCHAR)),
+            )
+            // 删除不存在的行 → affected 0 → 整体回滚（含前面的插入）
+            val missing = DeletePlan(null, "users", listOf(ColumnValue("id", CellValue("99"), Types.INTEGER)))
+            val ex = assertFailsWith<IllegalStateException> {
+                RowUpdater.executeWriteBatch(c, listOf(WriteOp.Insert(insert), WriteOp.Delete(missing)), SQLiteDialect)
+            }
+            assertTrue(ex.message!!.contains("影响 0 行"), ex.message!!)
+            assertEquals(1, c.rowCount("users"), "插入也应回滚")
+        }
+    }
+
+    @Test
+    fun `insert with bound types and defaults`() {
+        open().use { c ->
+            c.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, qty INTEGER, tag TEXT DEFAULT 'dflt')")
+            // 只填 id 与 qty，tag 走库默认值
+            val insert = InsertPlan(
+                null, "t",
+                listOf(ColumnValue("id", CellValue("1"), Types.INTEGER), ColumnValue("qty", CellValue("5"), Types.INTEGER)),
+            )
+            assertEquals(1, RowUpdater.executeWriteBatch(c, listOf(WriteOp.Insert(insert)), SQLiteDialect))
+            assertEquals("5", c.scalar("SELECT qty FROM t WHERE id = 1"))
+            assertEquals("dflt", c.scalar("SELECT tag FROM t WHERE id = 1"))
+        }
+    }
 }

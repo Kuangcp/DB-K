@@ -6,8 +6,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.ui.CellKey
 import app.ui.EditPlan
+import app.ui.PendingInsert
+import app.ui.ResultEdits
 import app.ui.buildEditPlan
-import app.ui.buildUpdatePlans
+import app.ui.buildWriteOps
 import app.ui.sqlHasPaginationClause
 import db.ConsoleRecord
 import db.ConnectionsRepository
@@ -95,10 +97,13 @@ class ConsoleState(
     val runSlots = mutableStateMapOf<String, ConsoleRunUi>()
 
     /**
-     * 结果单元格未提交修改（本地 overlay）：consoleId → (原始坐标 → 新值)。
+     * 结果网格未提交写操作（本地 overlay）：consoleId → 单元格改值 / 待插入行 / 待删除行。
      * 纯瞬态，不落盘；新执行/刷新/切 Tab 即清（有修改时 UI 先确认）。
      */
-    val editBuffers = mutableStateMapOf<String, Map<CellKey, CellValue>>()
+    val editBuffers = mutableStateMapOf<String, ResultEdits>()
+
+    /** 待插入行的临时 id 源（会话内自增，不落盘）。 */
+    private var insertSeq = 0L
 
     /** 当前结果集的编辑计划（表/主键/可编辑列）；null = 不可编辑（视图/无主键/表达式）。 */
     val editPlans = mutableStateMapOf<String, EditPlan?>()
@@ -164,9 +169,9 @@ class ConsoleState(
 
     // ---------- 结果单元格编辑（本地 overlay → 提交写回） ----------
 
-    fun editsOf(consoleId: String): Map<CellKey, CellValue> = editBuffers[consoleId].orEmpty()
+    fun editsOf(consoleId: String): ResultEdits = editBuffers[consoleId] ?: ResultEdits.EMPTY
 
-    fun editCount(consoleId: String): Int = editsOf(consoleId).size
+    fun editCount(consoleId: String): Int = editsOf(consoleId).count
 
     fun editPlanOf(consoleId: String): EditPlan? = editPlans[consoleId]
 
@@ -174,15 +179,61 @@ class ConsoleState(
 
     /** 暂存一格修改（仅内存；重复点同一格覆盖）。 */
     fun setCellEdit(consoleId: String, key: CellKey, value: CellValue) {
-        editBuffers[consoleId] = editsOf(consoleId) + (key to value)
+        val cur = editsOf(consoleId)
+        editBuffers[consoleId] = cur.copy(cells = cur.cells + (key to value))
     }
 
     /** 撤销单格修改。 */
     fun clearCellEdit(consoleId: String, key: CellKey) {
         val cur = editBuffers[consoleId] ?: return
-        if (key !in cur) return
-        val next = cur - key
-        if (next.isEmpty()) editBuffers.remove(consoleId) else editBuffers[consoleId] = next
+        if (key !in cur.cells) return
+        putOrClear(consoleId, cur.copy(cells = cur.cells - key))
+    }
+
+    /** 追加一个待插入行，返回其临时 id；该行默认所有列未填（提交时走库默认值）。 */
+    fun addPendingInsert(consoleId: String): Long {
+        insertSeq += 1
+        val id = insertSeq
+        val cur = editsOf(consoleId)
+        editBuffers[consoleId] = cur.copy(inserts = cur.inserts + PendingInsert(id))
+        return id
+    }
+
+    /** 移除一个待插入行。 */
+    fun removePendingInsert(consoleId: String, id: Long) {
+        val cur = editBuffers[consoleId] ?: return
+        if (cur.inserts.none { it.id == id }) return
+        putOrClear(consoleId, cur.copy(inserts = cur.inserts.filterNot { it.id == id }))
+    }
+
+    /** 填写某待插入行的一列（结果列下标）。 */
+    fun setPendingInsertCell(consoleId: String, id: Long, col: Int, value: CellValue) {
+        val cur = editsOf(consoleId)
+        val next = cur.inserts.map { if (it.id == id) it.copy(values = it.values + (col to value)) else it }
+        editBuffers[consoleId] = cur.copy(inserts = next)
+    }
+
+    /** 清除某待插入行一列的填写（恢复为未填，走库默认值）。 */
+    fun clearPendingInsertCell(consoleId: String, id: Long, col: Int) {
+        val cur = editsOf(consoleId)
+        val next = cur.inserts.map { if (it.id == id) it.copy(values = it.values - col) else it }
+        putOrClear(consoleId, cur.copy(inserts = next))
+    }
+
+    /**
+     * 标记一行待删除（原始行下标）；同时丢弃该行的单元格修改（避免既改又删）。
+     */
+    fun markRowDeleted(consoleId: String, row: Int) {
+        val cur = editsOf(consoleId)
+        val cells = cur.cells.filterKeys { it.row != row }
+        editBuffers[consoleId] = cur.copy(cells = cells, deletes = cur.deletes + row)
+    }
+
+    /** 撤销某行的待删除标记。 */
+    fun restoreRow(consoleId: String, row: Int) {
+        val cur = editBuffers[consoleId] ?: return
+        if (row !in cur.deletes) return
+        putOrClear(consoleId, cur.copy(deletes = cur.deletes - row))
     }
 
     /** 丢弃某控制台全部未提交修改。 */
@@ -191,7 +242,12 @@ class ConsoleState(
     }
 
     /** 全部控制台的未提交修改总数（退出前守卫用）。 */
-    fun totalEditCount(): Int = editBuffers.values.sumOf { it.size }
+    fun totalEditCount(): Int = editBuffers.values.sumOf { it.count }
+
+    /** overlay 空则移除键，避免无意义状态残留。 */
+    private fun putOrClear(consoleId: String, next: ResultEdits) {
+        if (next.isEmpty) editBuffers.remove(consoleId) else editBuffers[consoleId] = next
+    }
 
     /**
      * 为当前激活结果重算编辑计划：找基表 → 解析 schema → 异步拉列元数据（含主键标记）→ 构建。
@@ -255,9 +311,14 @@ class ConsoleState(
         val result = ui.result ?: return Result.failure(IllegalStateException("没有可提交的结果"))
         val plan = editPlanOf(console.id) ?: return Result.failure(IllegalStateException("当前结果不可编辑"))
         val edits = editsOf(console.id)
-        if (edits.isEmpty()) return Result.success(0)
-        val plans = buildUpdatePlans(result, plan, edits)
-        if (plans.isEmpty()) return Result.failure(IllegalStateException("没有可提交的修改"))
+        if (edits.isEmpty) return Result.success(0)
+        // 待插入行必须至少填一个可编辑列，否则无法生成 INSERT（不能静默丢弃）
+        val blankInserts = edits.inserts.count { !edits.insertHasValues(plan, it) }
+        if (blankInserts > 0) {
+            return Result.failure(IllegalStateException("有 $blankInserts 个待插入行未填写任何值"))
+        }
+        val ops = buildWriteOps(result, plan, edits)
+        if (ops.isEmpty()) return Result.failure(IllegalStateException("没有可提交的修改"))
 
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             connectionsState.ensureConnectionReady(profile)
@@ -277,14 +338,14 @@ class ConsoleState(
 
         resultBusy[console.id] = true
         val outcome = withContext(ioDispatcher) {
-            runCatching { session.applyUpdatePlans(plans, contextSql) }
+            runCatching { session.applyWriteOps(ops, contextSql) }
         }
         resultBusy[console.id] = false
 
         return outcome.fold(
             onSuccess = { count ->
-                plans.forEach { p ->
-                    recordHistory(profile.id, RowUpdater.renderUpdateSql(p, dialect), true, 0, 1)
+                ops.forEach { op ->
+                    recordHistory(profile.id, RowUpdater.renderWriteSql(op, dialect), true, 0, 1)
                 }
                 clearEdits(console.id)
                 // 提交后固定刷新当前 Tab（等值：服务端触发器等可能改写结果）
@@ -299,17 +360,17 @@ class ConsoleState(
     }
 
     /**
-     * P7：提交前预览——把暂存修改渲染为可读 UPDATE（不执行、不改状态）。
-     * 返回空列表表示没有可预览内容（无修改 / 不可编辑）。
+     * P7：提交前预览——把暂存写操作（UPDATE / INSERT / DELETE）渲染为可读语句（不执行、不改状态）。
+     * 返回空列表表示没有可预览内容（无修改 / 不可编辑 / 待插入行尚未填写）。
      */
     fun previewCommit(console: ConsoleRecord, profile: db.ConnectionProfile): List<String> {
         val ui = runSlots[console.id] ?: return emptyList()
         val result = ui.result ?: return emptyList()
         val plan = editPlanOf(console.id) ?: return emptyList()
         val edits = editsOf(console.id)
-        if (edits.isEmpty()) return emptyList()
+        if (edits.isEmpty) return emptyList()
         val dialect = DialectRegistry.forProfile(profile)
-        return buildUpdatePlans(result, plan, edits).map { RowUpdater.renderUpdateSql(it, dialect) }
+        return buildWriteOps(result, plan, edits).map { RowUpdater.renderWriteSql(it, dialect) }
     }
 
     /**

@@ -24,7 +24,7 @@ data class ConsoleRenameRequest(val consoleId: String, val currentName: String)
 
 /**
  * 结果提交前预览（P7）：展示将要执行的参数化 UPDATE（只读、不执行），确认后 [onConfirm]。
- * [statements] 由 `RowUpdater.renderUpdateSql` 渲染，仅供人工核对定位条件与目标值。
+ * [statements] 由 `RowUpdater.renderWriteSql` 渲染（UPDATE / INSERT / DELETE），仅供人工核对定位条件与目标值。
  */
 data class CommitPreviewRequest(
     val statements: List<String>,
@@ -48,6 +48,9 @@ sealed interface ConfirmRequest {
 
     /** 有未提交的结果修改时，刷新/重跑等动作会丢弃它们 → 确认；[onDiscard] 为确认后执行的动作。 */
     class DiscardResultEdits(val count: Int, val actionLabel: String, val onDiscard: () -> Unit) : ConfirmRequest
+
+    /** 批量标记删除结果行（已有多行待删时）→ 二次确认；[onConfirm] 为确认后执行的标记动作。 */
+    class DeleteRows(val count: Int, val onConfirm: () -> Unit) : ConfirmRequest
 
     /** 危险命令（Redis FLUSHALL 等）执行前的二次确认；[onDecision] 回传用户选择。 */
     class DangerConfirm(val command: String, val onDecision: (Boolean) -> Unit) : ConfirmRequest

@@ -9,8 +9,8 @@ package jdbc
 interface EditableSession {
 
     /**
-     * 在**单事务**中执行多条 UPDATE（每条要求恰好影响 1 行，否则整体回滚）。
+     * 在**单事务**中执行多条写操作（UPDATE / INSERT / DELETE，每条要求恰好影响 1 行，否则整体回滚）。
      * [sessionContextSql] 非空时先切会话；返回总影响行数。
      */
-    fun applyUpdatePlans(plans: List<UpdatePlan>, sessionContextSql: String?): Int
+    fun applyWriteOps(ops: List<WriteOp>, sessionContextSql: String?): Int
 }

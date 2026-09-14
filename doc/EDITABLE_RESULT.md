@@ -17,7 +17,7 @@
 
 非目标（本期不做）：
 
-- 新增行 / 删除行。
+- ~~新增行 / 删除行~~ → 后续 N3 已实现，见 §14（与改格共用提交管线）。
 - 单元格富类型编辑（BLOB/图片/JSON 结构化编辑仍走现有查看器）。
 - 结果的本地持久化（未提交修改是**纯瞬态**，见 `AGENTS.md` 持久化分层）。
 
@@ -436,3 +436,55 @@ data class DiscardEdits(
 ### 后续（未实现）
 
 - `SELECT ... FOR UPDATE` 锁定行（可选，需评估只读查询副作用）。
+
+---
+
+## 14. N3 行级写操作（增行 / 删行，已实现）
+
+> 由 `doc/EDITABLE_RESULT.md` 的 Phase 4 延伸而来；与「改格」共享同一本地 overlay 与提交事务。
+
+### 14.1 本地 overlay 模型（`app/ui/ResultWritePlan.kt`）
+
+`ConsoleState.editBuffers: consoleId → ResultEdits`，取代原先的 `Map<CellKey, CellValue>`：
+
+```kotlin
+data class PendingInsert(val id: Long, val values: Map<Int, CellValue> = emptyMap())
+data class ResultEdits(
+    val cells: Map<CellKey, CellValue> = emptyMap(),  // 改格（原始坐标）
+    val inserts: List<PendingInsert> = emptyList(),   // 待插入行（局部 id）
+    val deletes: Set<Int> = emptySet(),               // 待删除行（原始行下标）
+)
+```
+
+- **未填与 NULL 分离**：`PendingInsert.values` 的键存在性 = 用户是否填过该列；缺席 = 走数据库默认值，`CellValue(null)` = 显式 NULL。
+- 坐标永远是原始（非转置）坐标；转置视图只读、不提供增删。
+- 纯瞬态：不落盘，新执行 / 刷新 / 切 Tab / 切控制台即清（有修改时 UI 先确认丢弃）。
+
+### 14.2 行定位与可编辑性
+
+- 增删沿用 [buildEditPlan]：基表 + 主键（或唯一索引回落）齐全才可编辑；否则整表只读，增删按钮一并隐藏。
+- **删除**：`buildDeletePlans` 按原始行 + 行定位键生成 `DeletePlan`（WHERE 用原始值）。
+- **插入**：`buildInsertPlans` 仅包含用户填写过的 `EditPlan.columns`（自增/只读列天然排除），未填写任何值的行在
+`ConsoleState.commitEdits` 提交前拦截（`ResultEdits.insertHasValues`），不做静默丢弃。
+
+### 14.3 提交管线（`RowUpdater.executeWriteBatch`）
+
+`ConsoleState.commitEdits` 先把 overlay 编译为按序执行的 `WriteOp`：**DELETE → UPDATE → INSERT**
+（先删释放唯一键，再改已有行，最后插新行）；`LiveConnection.applyWriteOps` 在**单事务**内逐条执行，
+每条要求 `affected == 1`，任一失败整体回滚（`EditableSession` 接口由 `applyUpdatePlans` 升级为 `applyWriteOps`）。
+成功后写 `sql_history`（`renderWriteSql` 逐条），清空 overlay，并固定刷新当前 Tab。
+
+### 14.4 UI（`app/ui/SqlWorkspace.kt`）
+
+- 工具条（`canModifyRows = editPlan != null && !transposed`）：`AddRow`（插入行）/ `DeleteRow`（标记删除当前选中行，再点撤销）。
+- 待插入行渲染在结果行之下（行头 `＋`）：双击直接编辑（无历史值可查看），右键可「编辑 / 对话框编辑 / 置为 NULL / 清除此格填写 / 移除该行」。
+- 待删除行：红色底 + 行头 `✕` + 删除线，且不可再改格（标记删除时丢弃该行改格）；右键「撤销删除该行」。
+- 批量删除二次确认：已有待删行时再标记新行，弹 `ConfirmRequest.DeleteRows`；提交前仍有统一的写语句预览。
+- 未填列占位显示「未填」（区别于显式 NULL 的 `(NULL)`）。
+
+### 14.5 测试
+
+- `app/ui/ResultWritePlanTest`：overlay 模型、INSERT 列清单、DELETE 定位、写操作顺序、空 overlay。
+- `jdbc/RowUpdaterTest`：增删改单事务、混合回滚、默认值、渲染 SQL。
+- `app/state/ConsoleStateTest`：overlay 读改、删除丢弃同行改格、未填插入不生成、`clearEdits`。
+- `gradle smokeJdbc`：row-updater 段增补增删改单事务实测。

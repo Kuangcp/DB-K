@@ -129,9 +129,9 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
             QueryExecutor.execute(conn, statement) { st -> registerStatement(st) }
         }
 
-    override fun applyUpdatePlans(plans: List<UpdatePlan>, sessionContextSql: String?): Int =
+    override fun applyWriteOps(ops: List<WriteOp>, sessionContextSql: String?): Int =
         onConnection { conn ->
             QueryExecutor.applyContext(conn, sessionContextSql)
-            RowUpdater.executeBatch(conn, plans, dialect) { st -> registerStatement(st) }
+            RowUpdater.executeWriteBatch(conn, ops, dialect) { st -> registerStatement(st) }
         }
 }

@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -109,6 +110,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -215,8 +217,8 @@ fun SqlWorkspace(
     canFetchMore: Boolean = false,
     /** 取更多：按方言注入分页，把新行追加到当前结果（不重跑原查询）。 */
     onFetchMore: () -> Unit = {},
-    /** 未提交修改（原始坐标 → 新值）。 */
-    edits: Map<CellKey, CellValue> = emptyMap(),
+    /** 未提交写操作（单元格修改 / 待插入行 / 待删除行），原始坐标）。 */
+    resultEdits: ResultEdits = ResultEdits.EMPTY,
     /** 当前结果的可编辑计划（null = 只读：视图/无主键/表达式）。 */
     editPlan: EditPlan? = null,
     /** 有提交/刷新在执行中。 */
@@ -225,6 +227,16 @@ fun SqlWorkspace(
     onCellEdit: (CellKey, CellValue) -> Unit = { _, _ -> },
     /** 撤销一格修改。 */
     onClearCellEdit: (CellKey) -> Unit = {},
+    /** 追加一个待插入行。 */
+    onInsertRow: () -> Unit = {},
+    /** 移除某个待插入行。 */
+    onRemoveInsertRow: (Long) -> Unit = {},
+    /** 填写待插入行的一列（结果列下标）。 */
+    onInsertCellEdit: (Long, Int, CellValue) -> Unit = { _, _, _ -> },
+    /** 清除待插入行一列的填写（恢复为未填，走库默认值）。 */
+    onClearInsertCell: (Long, Int) -> Unit = { _, _ -> },
+    /** 标记/撤销某原始行的待删除状态。 */
+    onToggleRowDelete: (Int) -> Unit = {},
     onExportCsv: () -> Unit,
     /** 取消当前执行（取消按钮 / Esc）。 */
     onCancelRun: () -> Unit,
@@ -514,13 +526,19 @@ fun SqlWorkspace(
                             onRefreshResult = onRefreshResult,
                             canFetchMore = canFetchMore,
                             onFetchMore = onFetchMore,
-                            editCount = edits.size,
+                            editCount = resultEdits.count,
                             canCommit = editPlan != null,
                             resultBusy = resultBusy,
-                            edits = edits,
+                            resultEdits = resultEdits,
                             editPlan = editPlan,
+                            canModifyRows = editPlan != null && !transposed,
                             onCellEdit = onCellEdit,
                             onClearCellEdit = onClearCellEdit,
+                            onInsertRow = onInsertRow,
+                            onRemoveInsertRow = onRemoveInsertRow,
+                            onInsertCellEdit = onInsertCellEdit,
+                            onClearInsertCell = onClearInsertCell,
+                            onToggleRowDelete = onToggleRowDelete,
                             onExportCsv = onExportCsv,
                             onExportAllCsv = onExportAllCsv,
                             onCancelRun = onCancelRun,
@@ -1970,6 +1988,11 @@ private fun ResultToolbar(
     editCount: Int,
     canCommit: Boolean,
     resultBusy: Boolean,
+    canModifyRows: Boolean,
+    selectedRow: Int?,
+    selectedRowDeleted: Boolean,
+    onInsertRow: () -> Unit,
+    onToggleRowDelete: () -> Unit,
     onExportCsv: () -> Unit,
     onExportAllCsv: () -> Unit,
     onCancelRun: () -> Unit,
@@ -2040,6 +2063,26 @@ private fun ResultToolbar(
                 enabled = result != null && !resultBusy,
                 onClick = onRefreshResult,
             )
+            // 行级写操作（N3）：插入行 / 标记删除选中行（无主键/视图/转置时禁用）
+            if (canModifyRows) {
+                ResultIconButton(
+                    icon = DbIcons.AddRow,
+                    description = "插入行（提交时写入）",
+                    enabled = !resultBusy,
+                    onClick = onInsertRow,
+                )
+                ResultIconButton(
+                    icon = DbIcons.DeleteRow,
+                    description = when {
+                        selectedRow == null -> "删除行（请先选中一行）"
+                        selectedRowDeleted -> "撤销删除该行"
+                        else -> "标记删除选中行（提交时从库删除）"
+                    },
+                    enabled = !resultBusy && selectedRow != null,
+                    active = selectedRowDeleted,
+                    onClick = onToggleRowDelete,
+                )
+            }
             if (canTranspose(run)) {
                 ResultIconButton(
                     icon = DbIcons.Transpose,
@@ -2267,16 +2310,26 @@ private fun ResultTabs(
     editCount: Int,
     canCommit: Boolean,
     resultBusy: Boolean,
-    edits: Map<CellKey, CellValue>,
+    resultEdits: ResultEdits,
     editPlan: EditPlan?,
+    canModifyRows: Boolean,
     onCellEdit: (CellKey, CellValue) -> Unit,
     onClearCellEdit: (CellKey) -> Unit,
+    onInsertRow: () -> Unit,
+    onRemoveInsertRow: (Long) -> Unit,
+    onInsertCellEdit: (Long, Int, CellValue) -> Unit,
+    onClearInsertCell: (Long, Int) -> Unit,
+    onToggleRowDelete: (Int) -> Unit,
     onExportCsv: () -> Unit,
     onExportAllCsv: () -> Unit,
     onCancelRun: () -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 结果网格当前选中的原始行（行级操作按钮据此定位）；结果 / Tab 变化时清空
+    var selectedRow by remember(run.activeIndex, run.result?.sql, run.result?.rows?.size) {
+        mutableStateOf<Int?>(null)
+    }
     Column(modifier = modifier) {
         if (run.outcomes.isNotEmpty() || run.executing) {
             ResultToolbar(
@@ -2294,6 +2347,11 @@ private fun ResultTabs(
                 editCount = editCount,
                 canCommit = canCommit,
                 resultBusy = resultBusy,
+                canModifyRows = canModifyRows,
+                selectedRow = selectedRow,
+                selectedRowDeleted = selectedRow != null && selectedRow in resultEdits.deletes,
+                onInsertRow = onInsertRow,
+                onToggleRowDelete = { selectedRow?.let(onToggleRowDelete) },
                 onExportCsv = onExportCsv,
                 onExportAllCsv = onExportAllCsv,
                 onCancelRun = onCancelRun,
@@ -2304,10 +2362,18 @@ private fun ResultTabs(
             result = run.result,
             error = run.error,
             transposed = transposed,
-            edits = edits,
+            resultEdits = resultEdits,
             editPlan = editPlan,
+            canModifyRows = canModifyRows,
+            selectedRow = selectedRow,
+            onSelectedRowChange = { selectedRow = it },
             onCellEdit = onCellEdit,
             onClearCellEdit = onClearCellEdit,
+            onInsertRow = onInsertRow,
+            onRemoveInsertRow = onRemoveInsertRow,
+            onInsertCellEdit = onInsertCellEdit,
+            onClearInsertCell = onClearInsertCell,
+            onToggleRowDelete = onToggleRowDelete,
             onCopyText = onCopyText,
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
@@ -2319,10 +2385,18 @@ private fun ResultPane(
     result: QueryResult?,
     error: String?,
     transposed: Boolean,
-    edits: Map<CellKey, CellValue>,
+    resultEdits: ResultEdits,
     editPlan: EditPlan?,
+    canModifyRows: Boolean,
+    selectedRow: Int?,
+    onSelectedRowChange: (Int?) -> Unit,
     onCellEdit: (CellKey, CellValue) -> Unit,
     onClearCellEdit: (CellKey) -> Unit,
+    onInsertRow: () -> Unit,
+    onRemoveInsertRow: (Long) -> Unit,
+    onInsertCellEdit: (Long, Int, CellValue) -> Unit,
+    onClearInsertCell: (Long, Int) -> Unit,
+    onToggleRowDelete: (Int) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2336,18 +2410,27 @@ private fun ResultPane(
         when {
             error != null -> CenteredHint(error, isError = true)
             result == null -> CenteredHint("执行 SELECT 后在此查看结果表格；可导出 CSV", isError = false)
-            result.isQuery && result.rowCount == 0 -> CenteredHint("查询完成：0 行", isError = false)
+            result.isQuery && result.rowCount == 0 && resultEdits.inserts.isEmpty() ->
+                CenteredHint("查询完成：0 行", isError = false)
             result.isQuery -> Column(modifier = Modifier.fillMaxSize()) {
                 if (result.truncated) TruncationBanner()
                 ResultTable(
                     result = result,
                     transposed = transposed,
-                    edits = edits,
+                    resultEdits = resultEdits,
                     editPlan = editPlan,
+                    canModifyRows = canModifyRows,
+                    selectedRow = selectedRow,
+                    onSelectedRowChange = onSelectedRowChange,
                     viewSpec = viewSpec,
                     onViewSpecChange = { viewSpec = it },
                     onCellEdit = onCellEdit,
                     onClearCellEdit = onClearCellEdit,
+                    onInsertRow = onInsertRow,
+                    onRemoveInsertRow = onRemoveInsertRow,
+                    onInsertCellEdit = onInsertCellEdit,
+                    onClearInsertCell = onClearInsertCell,
+                    onToggleRowDelete = onToggleRowDelete,
                     onCopyText = onCopyText,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -2408,19 +2491,39 @@ private fun CenteredHint(text: String, isError: Boolean) {
 /** 结果表内单元格坐标（行列均基于当前展示视图：转置后为转置坐标）。 */
 private data class CellSel(val row: Int, val col: Int)
 
-/** 对话框编辑请求（长值/多行）：坐标用原始（非转置）坐标。 */
-private data class CellEditRequest(val key: CellKey, val title: String, val value: String?)
+/** 行内编辑目标：已有结果格 / 待插入行的一格。 */
+private sealed interface EditTarget {
+    data class Cell(val row: Int, val col: Int) : EditTarget
+    data class Insert(val id: Long, val col: Int) : EditTarget
+}
+
+/** 对话框编辑请求（长值/多行/NULL）：定位 + 标题 + 初始值。 */
+private sealed interface EditRequest {
+    val title: String
+    val value: String?
+
+    data class Cell(val key: CellKey, override val title: String, override val value: String?) : EditRequest
+    data class Insert(val id: Long, val col: Int, override val title: String, override val value: String?) : EditRequest
+}
 
 @Composable
 private fun ResultTable(
     result: QueryResult,
     transposed: Boolean,
-    edits: Map<CellKey, CellValue>,
+    resultEdits: ResultEdits,
     editPlan: EditPlan?,
+    canModifyRows: Boolean,
+    selectedRow: Int?,
+    onSelectedRowChange: (Int?) -> Unit,
     viewSpec: ResultViewSpec,
     onViewSpecChange: (ResultViewSpec) -> Unit,
     onCellEdit: (CellKey, CellValue) -> Unit,
     onClearCellEdit: (CellKey) -> Unit,
+    onInsertRow: () -> Unit,
+    onRemoveInsertRow: (Long) -> Unit,
+    onInsertCellEdit: (Long, Int, CellValue) -> Unit,
+    onClearInsertCell: (Long, Int) -> Unit,
+    onToggleRowDelete: (Int) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2430,13 +2533,13 @@ private fun ResultTable(
     var viewer by remember { mutableStateOf<CellView?>(null) }
     // Ctrl 按下状态（结果表内跟踪）：Ctrl+双击 = 进入编辑；普通双击 = 查看
     var ctrlDown by remember { mutableStateOf(false) }
-    // 正在行内编辑的展示坐标 + 草稿
-    var editing by remember(result.sql, result.rows.size, transposed) { mutableStateOf<CellSel?>(null) }
+    // 正在行内编辑的目标 + 草稿
+    var editing by remember(result.sql, result.rows.size, transposed) { mutableStateOf<EditTarget?>(null) }
     var editDraft by remember { mutableStateOf("") }
-    // 长值/多行 → 对话框编辑（原始坐标定位）
-    var dialogEdit by remember { mutableStateOf<CellEditRequest?>(null) }
+    // 长值/多行/NULL → 对话框编辑
+    var dialogEdit by remember { mutableStateOf<EditRequest?>(null) }
     // 暂存修改叠到展示值上（仅值变化，尺寸不变）
-    val edited = remember(result, edits) { applyEdits(result, edits) }
+    val edited = remember(result, resultEdits.cells) { applyEdits(result, resultEdits.cells) }
     // 视图层（N1）：排序/筛选只改行顺序与可见行，不重跑 SQL；rowView 保留回原始行的映射
     val rowView = remember(edited, viewSpec) { buildResultView(edited, viewSpec) }
     val displayedRows = remember(edited, rowView) { rowView.rowOrder.map { edited.rows[it] } }
@@ -2522,6 +2625,7 @@ private fun ResultTable(
     fun editableAt(r: Int, c: Int): Boolean {
         val plan = editPlan ?: return false
         val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, r, c) ?: return false
+        if (orig.row in resultEdits.deletes) return false // 待删除行不可再改格
         return plan.columnAt(orig.col) != null
     }
 
@@ -2529,15 +2633,21 @@ private fun ResultTable(
         if (!editableAt(r, c)) return
         editDraft = cellText(r, c).orEmpty()
         sel.value = CellSel(r, c)
-        editing = CellSel(r, c)
+        editing = EditTarget.Cell(r, c)
     }
 
-    fun commitEditDraft() {
-        val e = editing ?: return
-        editing = null
-        val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, e.row, e.col) ?: return
+    /** 待插入行一格：无历史值可查看，双击/右键直接进入编辑。 */
+    fun beginInsertEdit(id: Long, c: Int) {
+        if (editPlan?.columnAt(c) == null) return
+        val ins = resultEdits.inserts.firstOrNull { it.id == id } ?: return
+        editDraft = ins.values[c]?.raw.orEmpty()
+        editing = EditTarget.Insert(id, c)
+    }
+
+    fun commitCellDraft(row: Int, c: Int) {
+        val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, row, c) ?: return
         val text = editDraft
-        val shown = cellText(e.row, e.col)
+        val shown = cellText(row, c)
         // 与当前显示值一致（含 NULL/空串语义）→ 不产生修改
         if (text == shown.orEmpty() && !(text.isEmpty() && shown == null)) return
         val original = result.rows.getOrNull(orig.row)?.getOrNull(orig.col)
@@ -2549,8 +2659,35 @@ private fun ResultTable(
         onCellEdit(orig, CellValue(text))
     }
 
+    fun commitInsertDraft(id: Long, c: Int) {
+        val ins = resultEdits.inserts.firstOrNull { it.id == id } ?: return
+        if (editPlan?.columnAt(c) == null) return
+        // 未填过的格子提交空串 → 保持未填（走库默认值）；已填过则可清成空串
+        if (editDraft.isEmpty() && c !in ins.values) return
+        onInsertCellEdit(id, c, CellValue(editDraft))
+    }
+
+    fun commitEditDraft() {
+        val e = editing ?: return
+        editing = null
+        when (e) {
+            is EditTarget.Cell -> commitCellDraft(e.row, e.col)
+            is EditTarget.Insert -> commitInsertDraft(e.id, e.col)
+        }
+    }
+
     fun cancelEditDraft() {
         editing = null
+    }
+
+    // 把当前选中行（原始坐标）上报给工具条，供行级操作（删除/撤销）定位
+    val selSnapshot = sel.value
+    LaunchedEffect(selSnapshot, transposed, rowView.rowOrder) {
+        onSelectedRowChange(
+            selSnapshot?.let {
+                displayToOriginal(rowView.rowOrder, result.columns.size, transposed, it.row, it.col)?.row
+            },
+        )
     }
 
     val onKey: (KeyEvent) -> Boolean = { e ->
@@ -2643,11 +2780,14 @@ private fun ResultTable(
                     itemsIndexed(view.rows) { index, row ->
                         val insertSql = insertSqls.getOrNull(index)
                         val rowSelected = sel.value?.row == index
+                        val origRow = rowView.rowOrder.getOrNull(index)
+                        val deleted = origRow != null && origRow in resultEdits.deletes
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
                                     when {
+                                        deleted -> Color(0xFFE53935).copy(alpha = 0.08f)
                                         rowSelected -> MaterialTheme.colors.primary.copy(alpha = 0.10f)
                                         index % 2 == 1 -> MaterialTheme.colors.onSurface.copy(alpha = 0.025f)
                                         else -> Color.Transparent
@@ -2655,21 +2795,27 @@ private fun ResultTable(
                                 )
                                 .horizontalScroll(hScroll),
                         ) {
-                            RowHeaderCell("${index + 1}", RESULT_GUTTER_DP, highlighted = rowSelected)
+                            RowHeaderCell(
+                                if (deleted) "✕" else "${index + 1}",
+                                RESULT_GUTTER_DP,
+                                highlighted = rowSelected,
+                            )
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
                                 val cellView = v?.let { CellView("$colName · 第 ${index + 1} 行", it) }
                                 val origKey = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, index, c)
                                 val isEditable = editableAt(index, c)
-                                val pending = origKey != null && edits.containsKey(origKey)
-                                val isEditing = editing == CellSel(index, c)
+                                val pending = origKey != null && resultEdits.cells.containsKey(origKey)
+                                val isEditing = editing == EditTarget.Cell(index, c)
                                 DataCell(
                                     value = v,
                                     width = widths[c],
                                     selected = sel.value == CellSel(index, c),
                                     pending = pending,
+                                    deleted = deleted,
                                     onSelect = {
-                                        if (editing != null && editing != CellSel(index, c)) commitEditDraft()
+                                        val cur = editing
+                                        if (cur != null && cur != EditTarget.Cell(index, c)) commitEditDraft()
                                         sel.value = CellSel(index, c)
                                         focusRequester.requestFocus()
                                     },
@@ -2691,7 +2837,7 @@ private fun ResultTable(
                                                     // 长值/多行/NULL → 对话框；短值 → 行内编辑
                                                     if (v == null || v.length > 60 || v.contains('\n')) {
                                                         origKey?.let {
-                                                            dialogEdit = CellEditRequest(
+                                                            dialogEdit = EditRequest.Cell(
                                                                 it,
                                                                 "${result.columns[it.col].name} · 第 ${it.row + 1} 行",
                                                                 v,
@@ -2726,12 +2872,12 @@ private fun ResultTable(
                                                 },
                                             )
                                         }
-                                        if (isEditable) {
+                                        if (isEditable && !deleted) {
                                             add(ContextMenuItem("编辑单元格（Ctrl+双击）") { beginEdit(index, c) })
                                             add(
                                                 ContextMenuItem("在对话框中编辑…") {
                                                     origKey?.let {
-                                                        dialogEdit = CellEditRequest(
+                                                        dialogEdit = EditRequest.Cell(
                                                             it,
                                                             "${result.columns[it.col].name} · 第 ${it.row + 1} 行",
                                                             v,
@@ -2752,6 +2898,13 @@ private fun ResultTable(
                                                 },
                                             )
                                         }
+                                        if (canModifyRows && origRow != null) {
+                                            add(
+                                                ContextMenuItem(if (deleted) "撤销删除该行" else "标记删除该行（主键定位）") {
+                                                    onToggleRowDelete(origRow)
+                                                },
+                                            )
+                                        }
                                     },
                                 )
                             }
@@ -2760,6 +2913,78 @@ private fun ResultTable(
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.05f),
                             modifier = Modifier.padding(start = RESULT_GUTTER_DP.dp),
                         )
+                    }
+                    // 待插入行（仅非转置视图）：直接编辑，提交时生成 INSERT（未填列走库默认值）
+                    if (!transposed) {
+                        items(resultEdits.inserts, key = { it.id }) { ins ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colors.primary.copy(alpha = 0.06f))
+                                    .horizontalScroll(hScroll),
+                            ) {
+                                RowHeaderCell("＋", RESULT_GUTTER_DP, highlighted = false)
+                                cols.forEachIndexed { c, _ ->
+                                    val filled = ins.values[c]
+                                    val isEditable = editPlan?.columnAt(c) != null
+                                    val isEditing = editing == EditTarget.Insert(ins.id, c)
+                                    DataCell(
+                                        value = filled?.raw,
+                                        width = widths[c],
+                                        pending = filled != null,
+                                        nullText = if (c in ins.values) "(NULL)" else "未填",
+                                        onSelect = {
+                                            val cur = editing
+                                            if (cur != null && cur != EditTarget.Insert(ins.id, c)) commitEditDraft()
+                                        },
+                                        editor = if (isEditing) {
+                                            {
+                                                CellEditor(
+                                                    value = editDraft,
+                                                    onValueChange = { editDraft = it },
+                                                    onCommit = { commitEditDraft() },
+                                                    onCancel = { cancelEditDraft() },
+                                                )
+                                            }
+                                        } else null,
+                                        onDoubleClick = if (isEditable) {
+                                            { beginInsertEdit(ins.id, c) }
+                                        } else null,
+                                        menuItems = buildList {
+                                            if (isEditable) {
+                                                add(ContextMenuItem("编辑此格") { beginInsertEdit(ins.id, c) })
+                                                add(
+                                                    ContextMenuItem("在对话框中编辑…") {
+                                                        dialogEdit = EditRequest.Insert(
+                                                            ins.id, c,
+                                                            "${result.columns.getOrNull(c)?.name ?: "列"} · 待插入行",
+                                                            filled?.raw,
+                                                        )
+                                                    },
+                                                )
+                                                add(
+                                                    ContextMenuItem("置为 NULL") {
+                                                        onInsertCellEdit(ins.id, c, CellValue(null))
+                                                    },
+                                                )
+                                                if (c in ins.values) {
+                                                    add(
+                                                        ContextMenuItem("清除此格填写（走库默认值）") {
+                                                            onClearInsertCell(ins.id, c)
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                            add(ContextMenuItem("移除该待插入行") { onRemoveInsertRow(ins.id) })
+                                        },
+                                    )
+                                }
+                            }
+                            Divider(
+                                color = MaterialTheme.colors.primary.copy(alpha = 0.15f),
+                                modifier = Modifier.padding(start = RESULT_GUTTER_DP.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -2775,20 +3000,25 @@ private fun ResultTable(
             )
         }
     }
-    dialogEdit?.let { req ->
+    dialogEdit?.let { request ->
         EditCellDialog(
-            title = "编辑单元格 · ${req.title}",
-            initial = req.value,
+            title = "编辑单元格 · ${request.title}",
+            initial = request.value,
             onDismiss = { dialogEdit = null },
             onConfirm = { value ->
                 dialogEdit = null
-                val original = result.rows.getOrNull(req.key.row)?.getOrNull(req.key.col)
-                val raw = value.raw
-                // 改回原始值 → 撤销暂存；其余（含空串）写入 overlay
-                if (raw == original.orEmpty() && !(raw.isNullOrEmpty() && original == null)) {
-                    onClearCellEdit(req.key)
-                } else {
-                    onCellEdit(req.key, value)
+                when (request) {
+                    is EditRequest.Cell -> {
+                        val original = result.rows.getOrNull(request.key.row)?.getOrNull(request.key.col)
+                        val raw = value.raw
+                        // 改回原始值 → 撤销暂存；其余（含空串）写入 overlay
+                        if (raw == original.orEmpty() && !(raw.isNullOrEmpty() && original == null)) {
+                            onClearCellEdit(request.key)
+                        } else {
+                            onCellEdit(request.key, value)
+                        }
+                    }
+                    is EditRequest.Insert -> onInsertCellEdit(request.id, request.col, value)
                 }
             },
         )
@@ -3107,6 +3337,9 @@ private fun DataCell(
     width: Int,
     selected: Boolean = false,
     pending: Boolean = false,
+    deleted: Boolean = false,
+    /** value == null 时的占位文本（待插入行未填列用「未填」，区别于显式 NULL）。 */
+    nullText: String = "(NULL)",
     onSelect: () -> Unit = {},
     mono: Boolean = true,
     muted: Boolean = false,
@@ -3117,10 +3350,11 @@ private fun DataCell(
     val content: @Composable () -> Unit = {
         if (value == null) {
             Text(
-                "(NULL)",
+                nullText,
                 fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
                 fontSize = 12.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
+                textDecoration = if (deleted) TextDecoration.LineThrough else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 8.dp),
@@ -3130,8 +3364,12 @@ private fun DataCell(
                 value,
                 fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
                 fontSize = 12.sp,
-                color = if (muted) MaterialTheme.colors.onSurface.copy(alpha = 0.45f)
-                else MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+                color = when {
+                    deleted -> MaterialTheme.colors.onSurface.copy(alpha = 0.35f)
+                    muted -> MaterialTheme.colors.onSurface.copy(alpha = 0.45f)
+                    else -> MaterialTheme.colors.onSurface.copy(alpha = 0.9f)
+                },
+                textDecoration = if (deleted) TextDecoration.LineThrough else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 8.dp),
