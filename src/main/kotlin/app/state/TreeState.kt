@@ -127,8 +127,11 @@ class TreeState(
     }
 
     /** P5：导入连接档案包（id 冲突自动重映射，不覆盖现有），刷新树并返回统计。 */
-    fun importProfiles(bundle: ProfileTransfer.ProfileBundle): ProfileImportSummary {
-        val summary = repository.importProfiles(bundle.folders, bundle.connections)
+    fun importProfiles(
+        bundle: ProfileTransfer.ProfileBundle,
+        skipConnectionIds: Set<String> = emptySet(),
+    ): ProfileImportSummary {
+        val summary = repository.importProfiles(bundle.folders, bundle.connections, skipConnectionIds)
         refresh()
         return summary
     }

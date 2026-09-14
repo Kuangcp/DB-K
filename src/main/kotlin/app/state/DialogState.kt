@@ -49,12 +49,30 @@ sealed interface ConfirmRequest {
     /** 有未提交的结果修改时，刷新/重跑等动作会丢弃它们 → 确认；[onDiscard] 为确认后执行的动作。 */
     class DiscardResultEdits(val count: Int, val actionLabel: String, val onDiscard: () -> Unit) : ConfirmRequest
 
-    /** 导出含明文密码前的风险确认；[onConfirm] 为确认后的导出动作。 */
-    class ExportWithPasswords(val onConfirm: () -> Unit) : ConfirmRequest
-
     /** 危险命令（Redis FLUSHALL 等）执行前的二次确认；[onDecision] 回传用户选择。 */
     class DangerConfirm(val command: String, val onDecision: (Boolean) -> Unit) : ConfirmRequest
 }
+
+/**
+ * 导出加密 / 导入解密的口令输入弹窗。
+ * [onSubmit] 返回 null = 成功（弹窗关闭），非空 = 错误提示（保持打开）。
+ */
+data class PassphraseRequest(
+    val title: String,
+    val message: String,
+    val confirmLabel: String,
+    /** 是否要求二次输入确认（导出时防打错；导入时只需一次）。 */
+    val requireConfirmation: Boolean = false,
+    val onSubmit: (String) -> String?,
+)
+
+/**
+ * 导入同名冲突解决弹窗：[choices] 为「导入连接 id → 是否导入为新档案」（false = 跳过）。
+ */
+data class ImportConflictRequest(
+    val conflicts: List<ConnectionProfile>,
+    val onSubmit: (Map<String, Boolean>) -> Unit,
+)
 
 class DialogState {
     var connectionEditor by mutableStateOf<ConnectionEditorRequest?>(null)
@@ -63,6 +81,10 @@ class DialogState {
     var tableDdl by mutableStateOf<TableDdlRequest?>(null)
     var commitPreview by mutableStateOf<CommitPreviewRequest?>(null)
     var confirm by mutableStateOf<ConfirmRequest?>(null)
+    /** 导出加密 / 导入解密的口令弹窗。 */
+    var passphrase by mutableStateOf<PassphraseRequest?>(null)
+    /** 导入同名冲突解决弹窗。 */
+    var importConflicts by mutableStateOf<ImportConflictRequest?>(null)
     /** 设置窗口显隐。 */
     var showSettings by mutableStateOf(false)
 }

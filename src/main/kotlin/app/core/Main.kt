@@ -46,6 +46,8 @@ import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
 import app.dialog.DdlDialog
 import app.dialog.FolderNameDialog
+import app.dialog.ImportConflictDialog
+import app.dialog.PassphraseDialog
 import app.dialog.SettingsDialog
 import app.settings.EditorPrefs
 import app.settings.ThemePrefs
@@ -60,6 +62,8 @@ import app.state.ConsoleState
 import app.state.ConsoleRunUi
 import app.state.DialogState
 import app.state.FolderDialogRequest
+import app.state.ImportConflictRequest
+import app.state.PassphraseRequest
 import app.state.TableDdlRequest
 import app.state.TreeState
 import app.state.ToastState
@@ -457,50 +461,102 @@ private fun AppBody(
         toastState.show("已新建控制台「$name」（绑定 ${p.name}）")
     }
 
-    // ---------- P5 连接档案导出 / 导入（不自动连接，导入后刷新树） ----------
+    // ---------- P5 连接档案导出 / 导入（AES 口令加密；不自动连接，导入后刷新树） ----------
+
+    /** 真正入库 + toast（[skipConnectionIds] 为同名冲突中选择跳过的导入连接 id）。 */
+    fun applyImport(bundle: ProfileTransfer.ProfileBundle, skipConnectionIds: Set<String>) {
+        runCatching { treeState.importProfiles(bundle, skipConnectionIds) }
+            .onSuccess { summary ->
+                val notes = buildList {
+                    if (bundle.skipped > 0) add("跳过 ${bundle.skipped} 个未知类型连接")
+                    if (summary.connectionsSkipped > 0) add("跳过 ${summary.connectionsSkipped} 个同名数据源")
+                }
+                val skipNote = if (notes.isEmpty()) "" else "（${notes.joinToString("，")}）"
+                toastState.show(
+                    "已导入 ${summary.foldersAdded} 个文件夹 / ${summary.connectionsAdded} 个数据源$skipNote",
+                )
+            }
+            .onFailure {
+                Logger.error(it, "import profiles failed")
+                toastState.show("导入失败：${it.message?.take(140)}")
+            }
+    }
+
+    /** 解析成功后的导入流程：同名冲突则先弹选择框，否则直接导入。 */
+    fun startImport(bundle: ProfileTransfer.ProfileBundle) {
+        val conflicts = ProfileTransfer.findNameConflicts(bundle.connections, treeState.connections.map { it.name })
+        if (conflicts.isEmpty()) {
+            applyImport(bundle, emptySet())
+        } else {
+            dialogState.importConflicts = ImportConflictRequest(conflicts) { choices ->
+                applyImport(bundle, choices.filterValues { !it }.keys)
+                dialogState.importConflicts = null
+            }
+        }
+    }
 
     fun exportProfiles(includePasswords: Boolean) {
         // Linux 桌面支持无主窗口的 AWT 文件对话框（owner=null），与 CSV 导出同源
         val ownerFrame: java.awt.Frame? = null
         val fd = FileDialog(
             ownerFrame,
-            if (includePasswords) "导出连接档案（含明文密码）" else "导出连接档案",
+            if (includePasswords) "导出数据源（含密码）" else "导出数据源（不含密码）",
             FileDialog.SAVE,
         )
-        fd.file = "db-k-connections.json"
+        fd.file = "db-k-connections.dbk"
         fd.isVisible = true
         val name = fd.file ?: return
         val file = File(fd.directory, name)
-        runCatching {
-            ProfileTransfer.write(file, treeState.folders, treeState.connections, includePasswords)
-        }.onSuccess {
-            toastState.show(
-                "已导出 ${treeState.folders.size} 个文件夹 / ${treeState.connections.size} 个连接 → ${file.name}",
+        val passwordNote = if (includePasswords) {
+            "\n\n注意：本次导出包含明文密码，任何能解密该文件的人都能直接读取，请仅在可信环境使用。"
+        } else {
+            "\n\n本次导出不含密码，导入后需重新填写。"
+        }
+        dialogState.passphrase = PassphraseRequest(
+            title = "设置加密口令",
+            message = "文件将用 AES-256-GCM 加密，请设置口令（导入时需要输入相同口令）。$passwordNote",
+            confirmLabel = "加密导出",
+            requireConfirmation = true,
+        ) { passphrase ->
+            runCatching {
+                ProfileTransfer.write(file, treeState.folders, treeState.connections, includePasswords, passphrase)
+            }.fold(
+                onSuccess = {
+                    toastState.show(
+                        "已导出 ${treeState.folders.size} 个文件夹 / ${treeState.connections.size} 个数据源 → ${file.name}",
+                    )
+                    null
+                },
+                onFailure = {
+                    Logger.error(it, "export profiles failed")
+                    "导出失败：${it.message?.take(120)}"
+                },
             )
-        }.onFailure {
-            Logger.error(it, "export profiles failed")
-            toastState.show("导出失败：${it.message?.take(120)}")
         }
     }
 
     fun importProfiles() {
         val ownerFrame: java.awt.Frame? = null
-        val fd = FileDialog(ownerFrame, "导入连接档案", FileDialog.LOAD)
-        fd.file = "*.json"
+        val fd = FileDialog(ownerFrame, "导入数据源", FileDialog.LOAD)
+        fd.file = "*.dbk"
         fd.isVisible = true
         val name = fd.file ?: return
         val file = File(fd.directory, name)
-        runCatching {
-            val bundle = ProfileTransfer.read(file)
-            treeState.importProfiles(bundle) to bundle.skipped
-        }.onSuccess { (summary, skipped) ->
-            val skipNote = if (skipped > 0) "，跳过 $skipped 个未知类型连接" else ""
-            toastState.show(
-                "已导入 ${summary.foldersAdded} 个文件夹 / ${summary.connectionsAdded} 个连接$skipNote",
-            )
-        }.onFailure {
-            Logger.error(it, "import profiles failed")
-            toastState.show("导入失败：${it.message?.take(140)}")
+        dialogState.passphrase = PassphraseRequest(
+            title = "输入解密口令",
+            message = "该文件由 db-k 加密导出，请输入导出时设置的口令。",
+            confirmLabel = "解密导入",
+            requireConfirmation = false,
+        ) { passphrase ->
+            val result = runCatching { ProfileTransfer.read(file, passphrase) }
+            val error = result.exceptionOrNull()
+            if (error != null) {
+                Logger.error(error, "import profiles read failed")
+                "解密失败：${error.message?.take(100) ?: "口令错误或文件已损坏"}"
+            } else {
+                startImport(result.getOrThrow())
+                null
+            }
         }
     }
 
@@ -599,11 +655,7 @@ private fun AppBody(
                             }
                         },
                         onExportProfiles = { exportProfiles(includePasswords = false) },
-                        onExportProfilesWithPasswords = {
-                            dialogState.confirm = ConfirmRequest.ExportWithPasswords {
-                                exportProfiles(includePasswords = true)
-                            }
-                        },
+                        onExportProfilesWithPasswords = { exportProfiles(includePasswords = true) },
                         onImportProfiles = { importProfiles() },
                         onSelectDb = { p, db ->
                             val ns = connectionsState.schemasOf(p.id).orEmpty()
@@ -957,6 +1009,18 @@ private fun DialogHost(
             },
         )
     }
+    dialogState.passphrase?.let { request ->
+        PassphraseDialog(
+            request = request,
+            onDismiss = { dialogState.passphrase = null },
+        )
+    }
+    dialogState.importConflicts?.let { request ->
+        ImportConflictDialog(
+            request = request,
+            onDismiss = { dialogState.importConflicts = null },
+        )
+    }
     dialogState.confirm?.let { request ->
         ConfirmDialog(
             request = request,
@@ -974,7 +1038,6 @@ private fun DialogHost(
                     }
                     is ConfirmRequest.DeleteConsole -> consoleState.deleteConsole(request.id)
                     is ConfirmRequest.DiscardResultEdits -> request.onDiscard()
-                    is ConfirmRequest.ExportWithPasswords -> request.onConfirm()
                     is ConfirmRequest.DangerConfirm -> request.onDecision(true)
                 }
                 dialogState.confirm = null

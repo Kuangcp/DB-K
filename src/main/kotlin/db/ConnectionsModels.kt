@@ -110,4 +110,6 @@ data class FolderRow(
 data class ProfileImportSummary(
     val foldersAdded: Int,
     val connectionsAdded: Int,
+    /** 因同名冲突被用户选择「跳过」而未导入的连接数。 */
+    val connectionsSkipped: Int = 0,
 )

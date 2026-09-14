@@ -238,6 +238,8 @@ class ConnectionsRepository(
     fun importProfiles(
         folders: List<FolderRow>,
         connections: List<ConnectionProfile>,
+        /** 同名冲突中选择「跳过」的导入连接 id 集合（由 `ProfileTransfer.findNameConflicts` 得出）。 */
+        skipConnectionIds: Set<String> = emptySet(),
     ): ProfileImportSummary {
         conn.autoCommit = false
         try {
@@ -261,7 +263,12 @@ class ConnectionsRepository(
             }
             val connectionIds = existingIds("connections")
             var connectionsAdded = 0
+            var connectionsSkipped = 0
             connections.forEach { c ->
+                if (c.id in skipConnectionIds) {
+                    connectionsSkipped++
+                    return@forEach
+                }
                 val id = if (c.id in connectionIds) newId() else c.id
                 val folderId = c.folderId?.let { folderRemap[it] ?: it }
                 conn.prepareStatement(
@@ -292,7 +299,7 @@ class ConnectionsRepository(
                 connectionsAdded++
             }
             conn.commit()
-            return ProfileImportSummary(foldersAdded, connectionsAdded)
+            return ProfileImportSummary(foldersAdded, connectionsAdded, connectionsSkipped)
         } catch (e: Exception) {
             conn.rollback()
             throw e

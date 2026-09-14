@@ -80,10 +80,54 @@ class ProfileTransferTest {
 
     @Test
     fun `file write and read round-trips`() {
-        val file = dir.resolve("conns.json").toFile()
-        ProfileTransfer.write(file, folders, connections, includePasswords = false)
-        val back = ProfileTransfer.read(file)
+        val file = dir.resolve("conns.dbk").toFile()
+        ProfileTransfer.write(file, folders, connections, includePasswords = false, passphrase = "pw-123")
+        val back = ProfileTransfer.read(file, "pw-123")
         assertEquals(listOf("f1"), back.folders.map { it.id })
         assertEquals(listOf("c1", "c2"), back.connections.map { it.id })
+    }
+
+    @Test
+    fun `encrypted file is not plaintext and needs correct passphrase`() {
+        val file = dir.resolve("enc.dbk").toFile()
+        ProfileTransfer.write(file, folders, connections, includePasswords = true, passphrase = "pw-123")
+        val raw = file.readText()
+        assertTrue(ProfileTransfer.isEncrypted(raw))
+        assertFalse(raw.contains("s3cret"))
+        assertEquals("s3cret", ProfileTransfer.read(file, "pw-123").connections.first { it.id == "c1" }.password)
+        assertFailsWith<IllegalArgumentException> { ProfileTransfer.read(file, "wrong") }
+    }
+
+    @Test
+    fun `encrypt decrypt round-trips arbitrary text and rejects tampering`() {
+        val envelope = ProfileTransfer.encrypt("hello 世界", "pw")
+        assertTrue(ProfileTransfer.isEncrypted(envelope))
+        assertEquals("hello 世界", ProfileTransfer.decrypt(envelope, "pw"))
+        assertFailsWith<IllegalArgumentException> { ProfileTransfer.decrypt(envelope, "nope") }
+        val prefix = ProfileTransfer.ENCRYPTED_PREFIX
+        val raw = java.util.Base64.getDecoder().decode(envelope.removePrefix(prefix))
+        raw[raw.lastIndex - 1] = (raw[raw.lastIndex - 1].toInt() xor 0x01).toByte()
+        val tampered = prefix + java.util.Base64.getEncoder().encodeToString(raw)
+        assertFailsWith<IllegalArgumentException> { ProfileTransfer.decrypt(tampered, "pw") }
+        assertFailsWith<IllegalArgumentException> { ProfileTransfer.decrypt("{}", "pw") }
+    }
+
+    @Test
+    fun `read still accepts legacy plaintext json`() {
+        val file = dir.resolve("legacy.json").toFile()
+        file.writeText(ProfileTransfer.encode(folders, connections, includePasswords = false))
+        val back = ProfileTransfer.read(file, "ignored")
+        assertEquals(listOf("c1", "c2"), back.connections.map { it.id })
+    }
+
+    @Test
+    fun `find name conflicts matches case-insensitively and trims`() {
+        val imported = listOf(
+            ConnectionProfile(id = "x1", name = "Prod", dbType = DbType.POSTGRES),
+            ConnectionProfile(id = "x2", name = " stage ", dbType = DbType.POSTGRES),
+            ConnectionProfile(id = "x3", name = "fresh", dbType = DbType.POSTGRES),
+        )
+        val conflicts = ProfileTransfer.findNameConflicts(imported, listOf("prod", "STAGE"))
+        assertEquals(listOf("x1", "x2"), conflicts.map { it.id })
     }
 }

@@ -174,11 +174,11 @@ fun DbTreeSidebar(
     onPreviewObject: (TreeRowInfo) -> Unit = {},
     /** DB_OBJECT（表/视图/物化视图）：浮窗查看定义 DDL（Ctrl+Q 同源）。 */
     onViewObjectDef: (TreeRowInfo) -> Unit = {},
-    /** 连接档案导出（不含密码）。 */
+    /** 数据源导出（不含密码，AES 口令加密）。 */
     onExportProfiles: () -> Unit = {},
-    /** 连接档案导出（含明文密码；调用方先弹风险确认）。 */
+    /** 数据源导出（含明文密码，AES 口令加密；调用方先弹口令框并提示风险）。 */
     onExportProfilesWithPasswords: () -> Unit = {},
-    /** 连接档案导入（合并，不覆盖现有）。 */
+    /** 数据源导入（解密 + 合并，不覆盖现有）。 */
     onImportProfiles: () -> Unit = {},
     /** 过滤条：切换 DB（Redis）。 */
     onSelectDb: (ConnectionProfile, String) -> Unit = { _, _ -> },
@@ -541,13 +541,13 @@ private fun ArchiveMenu(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 onClick = { expanded = false; onExportProfiles() },
-            ) { Text("导出档案（不含密码）…", fontSize = 13.sp) }
+            ) { Text("导出数据源（不含密码）…", fontSize = 13.sp) }
             DropdownMenuItem(
                 onClick = { expanded = false; onExportProfilesWithPasswords() },
-            ) { Text("导出档案（含明文密码）…", fontSize = 13.sp) }
+            ) { Text("导出数据源（含密码）…", fontSize = 13.sp) }
             DropdownMenuItem(
                 onClick = { expanded = false; onImportProfiles() },
-            ) { Text("导入档案…", fontSize = 13.sp) }
+            ) { Text("导入数据源…", fontSize = 13.sp) }
         }
     }
 }

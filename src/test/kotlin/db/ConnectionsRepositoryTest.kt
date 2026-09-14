@@ -203,4 +203,19 @@ class ConnectionsRepositoryTest {
             assertEquals(allFolders[1].id, allConns[1].folderId)
         }
     }
+
+    @Test
+    fun `importProfiles skips connections selected to skip`() {
+        open().use { repo ->
+            val conns = listOf(
+                ConnectionProfile(id = "c1", name = "pg", dbType = DbType.POSTGRES),
+                ConnectionProfile(id = "c2", name = "pg2", dbType = DbType.POSTGRES),
+            )
+            val summary = repo.importProfiles(emptyList(), conns, skipConnectionIds = setOf("c1"))
+            assertEquals(1, summary.connectionsAdded)
+            assertEquals(1, summary.connectionsSkipped)
+            assertNull(repo.getConnection("c1"))
+            assertNotNull(repo.getConnection("c2"))
+        }
+    }
 }
