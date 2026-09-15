@@ -87,6 +87,8 @@ data class ExportRequest(
     val rowCount: Int,
     val truncated: Boolean,
     val defaultTableName: String,
+    /** 结果中存在因超限被截断的单元格：导出必须重跑 SQL 取完整值（否则会写出截断标记）。 */
+    val cellsTruncated: Boolean = false,
     val onSubmit: (ExportFormat, ExportOptions, Boolean) -> Unit,
 )
 

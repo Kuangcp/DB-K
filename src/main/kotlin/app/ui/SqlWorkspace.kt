@@ -148,6 +148,9 @@ private const val MAX_COL_WIDTH = 1600
 /** 结果表行号 gutter 宽（dp，表头与数据行共用）。 */
 private const val RESULT_GUTTER_DP = 44
 
+/** 结果网格单元格渲染预览上限：单元格本身可能很大（大到 1M 字符），直接交给 Compose 排版会拖垮内存。 */
+private const val RESULT_CELL_PREVIEW_CHARS = 512
+
 /** 单列结果 / 转置后只剩一个值列时，值列自适应加宽的上限（dp，避免超长字段把列撑成巨宽）。 */
 private const val MAX_FLEX_COL_WIDTH = 600
 
@@ -2495,7 +2498,7 @@ private fun TruncationBanner() {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            "结果已截断（超过 ${QueryExecutor.MAX_ROWS} 行）。可用工具栏「取更多」继续追加，" +
+            "结果已截断（达到 ${QueryExecutor.MAX_ROWS} 行上限或单次结果内存上限）。可用工具栏「取更多」继续追加，" +
                 "或用「导出」选「全量流式」重新执行并导出全部行。",
             fontSize = 11.sp,
             lineHeight = 15.sp,
@@ -2659,7 +2662,9 @@ private fun ResultTable(
         val plan = editPlan ?: return false
         val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, r, c) ?: return false
         if (orig.row in resultEdits.deletes) return false // 待删除行不可再改格
-        return plan.columnAt(orig.col) != null
+        if (plan.columnAt(orig.col) == null) return false
+        // 展示值被截断的单元格禁止编辑（否则会把截断内容写回库）
+        return !QueryExecutor.isTruncatedCell(result.rows.getOrNull(orig.row)?.getOrNull(orig.col))
     }
 
     fun beginEdit(r: Int, c: Int) {
@@ -2748,11 +2753,13 @@ private fun ResultTable(
             }
         }
     }
-    // 每行可生成的 INSERT（仅原布局；复杂查询/无法定表时 null）
+    // 每行可生成的 INSERT（仅原布局；复杂查询/无法定表时 null）。
+    // 不预生成 SQL：大字段下逐行拼 INSERT 会翻倍内存；点击时按需生成。
     val tableName = extractTableName(result.sql)
-    val insertSqls: List<String?> = if (transposed) view.rows.map { null }
-    else rowView.rowOrder.map { origIdx ->
-        rowToInsertSql(result.sql, result.columns.map { it.name }, result.rows[origIdx])
+    val canInsertRow = !transposed && tableName != null
+    // 含截断单元格的原始行：不能据此复制 INSERT（否则会把截断内容写回库）
+    val truncatedRows: Set<Int> = buildSet {
+        result.rows.forEachIndexed { idx, r -> if (r.any { QueryExecutor.isTruncatedCell(it) }) add(idx) }
     }
     Column(
         modifier = modifier
@@ -2811,7 +2818,6 @@ private fun ResultTable(
             Column(modifier = Modifier.fillMaxSize().padding(end = scrollbarStyle.thickness, bottom = scrollbarStyle.thickness)) {
                 LazyColumn(state = vScroll, modifier = Modifier.weight(1f).fillMaxWidth()) {
                     itemsIndexed(view.rows) { index, row ->
-                        val insertSql = insertSqls.getOrNull(index)
                         val rowSelected = sel.value?.row == index
                         val origRow = rowView.rowOrder.getOrNull(index)
                         val deleted = origRow != null && origRow in resultEdits.deletes
@@ -2895,13 +2901,17 @@ private fun ResultTable(
                                         if (cellView != null) {
                                             add(ContextMenuItem("查看完整内容") { viewer = cellView })
                                         }
-                                        if (insertSql != null) {
+                                        if (canInsertRow && origRow != null && origRow !in truncatedRows) {
                                             add(
                                                 ContextMenuItem("复制本行 → INSERT") {
-                                                    onCopyText(
-                                                        insertSql,
-                                                        "已复制本行 → INSERT（表 ${tableName ?: "?"}）",
+                                                    val insertSql = rowToInsertSql(
+                                                        result.sql,
+                                                        result.columns.map { it.name },
+                                                        result.rows[origRow],
                                                     )
+                                                    if (insertSql != null) {
+                                                        onCopyText(insertSql, "已复制本行 → INSERT（表 $tableName）")
+                                                    }
                                                 },
                                             )
                                         }
@@ -3132,6 +3142,8 @@ private fun ColumnResizeHandle(
 private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colName: String) {
     if (v == null) {
         onCopyText("", "已复制（NULL → 空串），列 $colName")
+    } else if (QueryExecutor.isTruncatedCell(v)) {
+        onCopyText(v, "已复制单元格（列 $colName）：内容过大已截断，仅复制了显示部分")
     } else {
         val preview = if (v.length > 28) v.take(28) + "…" else v
         onCopyText(v, "已复制单元格（列 $colName）：$preview")
@@ -3393,8 +3405,14 @@ private fun DataCell(
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
         } else {
+            // 只渲染前缀预览：完整值仍在模型中（查看/复制走原字符串），避免 Compose 按巨大段落排版
+            val shown = if (value.length > RESULT_CELL_PREVIEW_CHARS) {
+                value.take(RESULT_CELL_PREVIEW_CHARS) + "…"
+            } else {
+                value
+            }
             Text(
-                value,
+                shown,
                 fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
                 fontSize = 12.sp,
                 color = when {

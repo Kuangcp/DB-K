@@ -173,7 +173,7 @@ object DialectRegistry { fun forType(t: DbType): DbDialect }
   - 生命周期由 `ConnectionsState` 管理：连接/断开/重连/刷新，以及应用退出时全部 close。
 - **UI 线程永不碰 JDBC**。所有同步 JDBC 调用包成 `suspend fun`（内部 `withContext(ioDispatcher) { executor.submit {...} }`），Compose 主线程只改 `mutableStateOf`。
 - **取消执行**：记录当前 `Statement` 引用，取消时投递 `statement.cancel()`（JDBC 原生线程安全）；真卡死可降级为整连接 close + 重建。
-- 查询防呆：默认 `maxRows=1000`、超时 30s、大字段（blob/json/longvarchar）在单元格截断并提示。
+- 查询防呆：默认 `maxRows=1000`、超时 30s；**大字段内存治理**（`QueryExecutor`）：单格超 `MAX_CELL_CHARS`(1M) 截断并加标记（`isTruncatedCell`，截断单元格禁止就地编辑）；单次结果总字符预算 `MAX_RESULT_CHARS`(16M) 超出即停止读取并置 `truncated`；BLOB 走 `getBinaryStream` 只统计字节数。网格渲染只取前缀预览（512 字符），避免 Compose 按巨大段落排版。
 
 ---
 

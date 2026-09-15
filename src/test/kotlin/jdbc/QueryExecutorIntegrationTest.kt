@@ -63,4 +63,49 @@ class QueryExecutorIntegrationTest {
             assertTrue(r.truncated)
         }
     }
+
+    @Test
+    fun `oversized cell is truncated with marker`() {
+        withH2 { conn ->
+            conn.createStatement().use { st -> st.execute("CREATE TABLE t (txt CLOB)") }
+            val big = "x".repeat(QueryExecutor.MAX_CELL_CHARS + 5_000)
+            conn.prepareStatement("INSERT INTO t VALUES (?)").use { ps ->
+                ps.setString(1, big)
+                ps.executeUpdate()
+            }
+            val cell = QueryExecutor.execute(conn, "SELECT txt FROM t").rows[0][0]
+            assertTrue(QueryExecutor.isTruncatedCell(cell))
+            assertTrue(cell!!.length < big.length)
+        }
+    }
+
+    @Test
+    fun `result memory budget stops reading before MAX_ROWS`() {
+        withH2 { conn ->
+            conn.createStatement().use { st -> st.execute("CREATE TABLE wide (txt CLOB)") }
+            val chunk = "y".repeat(100_000)
+            conn.prepareStatement("INSERT INTO wide VALUES (?)").use { ps ->
+                repeat(200) {
+                    ps.setString(1, chunk)
+                    ps.addBatch()
+                }
+                ps.executeBatch()
+            }
+            val r = QueryExecutor.execute(conn, "SELECT txt FROM wide")
+            assertTrue(r.truncated)
+            assertTrue(r.rows.size in 1 until 200)
+        }
+    }
+
+    @Test
+    fun `binary cell reports byte count`() {
+        withH2 { conn ->
+            conn.createStatement().use { st -> st.execute("CREATE TABLE b (data BLOB)") }
+            conn.prepareStatement("INSERT INTO b VALUES (?)").use { ps ->
+                ps.setBytes(1, ByteArray(10) { it.toByte() })
+                ps.executeUpdate()
+            }
+            assertEquals("[10 bytes]", QueryExecutor.execute(conn, "SELECT data FROM b").rows[0][0])
+        }
+    }
 }

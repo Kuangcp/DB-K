@@ -44,7 +44,9 @@ fun ExportDialog(
     var tableName by remember { mutableStateOf(request.defaultTableName) }
     var batchSizeText by remember { mutableStateOf("100") }
     var prettyJson by remember { mutableStateOf(true) }
-    var fullStream by remember { mutableStateOf(false) }
+    // 有单元格被截断时强制全量流式（重跑 SQL 取完整值，否则会导出截断标记）
+    var fullStream by remember { mutableStateOf(request.cellsTruncated) }
+    val forceStream = request.cellsTruncated
 
     val batchSize = batchSizeText.toIntOrNull()?.coerceIn(1, 10_000) ?: 100
     val canConfirm = format != ExportFormat.SQL_INSERT || tableName.isNotBlank()
@@ -58,7 +60,10 @@ fun ExportDialog(
                 Text(
                     buildString {
                         append("当前 ${request.rowCount} 行")
-                        if (request.truncated) append("（结果已截断，可勾选下方「全量流式」导出全部）")
+                        when {
+                            request.cellsTruncated -> append("（含超大字段，已截断展示；导出将重跑 SQL 取完整值）")
+                            request.truncated -> append("（结果已截断，可勾选下方「全量流式」导出全部）")
+                        }
                     },
                     fontSize = 12.sp,
                     color = secondary,
@@ -107,11 +112,16 @@ fun ExportDialog(
                     )
                 }
 
-                if (request.truncated) {
+                if (request.truncated || request.cellsTruncated) {
                     OptionRow(
                         checked = fullStream,
-                        label = "全量流式：重跑 SQL，游标逐行导出（不受 ${request.rowCount} 行限制）",
-                        onCheckedChange = { fullStream = it },
+                        label = if (forceStream) {
+                            "全量流式：存在超大字段，必须重跑 SQL 按游标取完整内容"
+                        } else {
+                            "全量流式：重跑 SQL，游标逐行导出（不受 ${request.rowCount} 行限制）"
+                        },
+                        onCheckedChange = { if (!forceStream) fullStream = it },
+                        enabled = !forceStream,
                         bold = fullStream,
                     )
                 }
@@ -145,20 +155,21 @@ private fun OptionRow(
     label: String,
     onCheckedChange: (Boolean) -> Unit,
     bold: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(top = 4.dp),
     ) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         Text(
             label,
             fontSize = 12.sp,
             fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
-            color = MaterialTheme.colors.onSurface,
+            color = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 1f else 0.6f),
             modifier = Modifier.width(360.dp),
         )
     }

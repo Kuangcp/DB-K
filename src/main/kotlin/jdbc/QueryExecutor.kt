@@ -15,6 +15,27 @@ object QueryExecutor {
     const val MAX_ROWS = 1000
     private const val QUERY_TIMEOUT_SECONDS = 30
 
+    /**
+     * 单格展示字符上限：超过则截断并追加 [CELL_TRUNCATION_MARKER]。
+     * 防单个超大字段（如整段 base64 图片 / 大 JSON）撑爆内存。
+     */
+    const val MAX_CELL_CHARS = 1_000_000
+
+    /**
+     * 一次查询结果保留的总字符预算（所有单元格累加）：超出即停止读取本结果并置 `truncated`。
+     * 这是大结果内存的**主闸门**——即便单格不大，1000 行 × 数十 KB 也会爆。
+     */
+    const val MAX_RESULT_CHARS = 16_000_000
+
+    /** 单格二进制读取上限（BLOB 仅展示字节数，无需全量）。 */
+    const val MAX_CELL_BYTES = 1_000_000
+
+    /** 单元格因超限被截断时追加的后缀标记（可被 [isTruncatedCell] 识别）。 */
+    const val CELL_TRUNCATION_MARKER = "…【db-k：内容过大已截断】"
+
+    /** 该单元格值是否为被截断的显示值（截断后禁止就地编辑，避免把截断内容写回库）。 */
+    fun isTruncatedCell(v: String?): Boolean = v != null && v.endsWith(CELL_TRUNCATION_MARKER)
+
     /** 可产生结果集的语句首关键字。 */
     private val QUERY_HEADS = setOf("select", "with", "show", "explain", "desc", "describe", "pragma", "table", "values")
 
@@ -85,6 +106,7 @@ object QueryExecutor {
         val columns = columnMetas(meta)
         val rows = ArrayList<List<String?>>(minOf(MAX_ROWS, 256))
         var truncated = false
+        var charsUsed = 0L
         while (rs.next()) {
             if (rows.size >= MAX_ROWS) {
                 truncated = true
@@ -92,19 +114,95 @@ object QueryExecutor {
                 break
             }
             val row = ArrayList<String?>(count)
+            var rowChars = 0L
             for (i in 1..count) {
-                row.add(readCell(rs, i))
+                val v = readCell(rs, i, columns[i - 1].sqlType)
+                rowChars += v?.length ?: 0
+                row.add(v)
             }
+            // 总字符预算：防大字段累积（本行已读完，超预算则不保留该行并停止）
+            if (rows.isNotEmpty() && charsUsed + rowChars > MAX_RESULT_CHARS) {
+                truncated = true
+                Logger.info(
+                    "query truncated by memory budget at {} rows / {} chars: {}",
+                    rows.size, charsUsed, sql.substringBefore('\n').take(80),
+                )
+                break
+            }
+            charsUsed += rowChars
             rows.add(row)
         }
         return QueryResult(sql, columns, rows, durationMs = System.currentTimeMillis() - started, truncated = truncated)
     }
 
+    /**
+     * 读一个单元格（带内存阀）：二进制走流式只数字节；字符类走字符流限读上限；
+     * 其余走 `getObject` 后按规定长度截断。
+     */
+    private fun readCell(rs: ResultSet, i: Int, sqlType: Int): String? = when {
+        isBinaryColumn(sqlType) -> readBinaryCell(rs, i)
+        isCharColumn(sqlType) -> readTextCell(rs, i)
+        else -> clampCell(cellToString(runCatching { rs.getObject(i) }.getOrNull()))
+    }
+
+    /** 字符类：用 `getCharacterStream` 限读，避免超大 CLOB/TEXT 一次性进内存；驱动不支持时回退 `getString`。 */
+    private fun readTextCell(rs: ResultSet, i: Int): String? {
+        val reader = runCatching { rs.getCharacterStream(i) }.getOrNull()
+            ?: return clampCell(runCatching { rs.getString(i) }.getOrNull())
+        reader.use { r ->
+            val sb = StringBuilder(256)
+            val buf = CharArray(8192)
+            while (true) {
+                val n = r.read(buf)
+                if (n < 0) break
+                if (sb.length + n > MAX_CELL_CHARS) {
+                    sb.append(buf, 0, MAX_CELL_CHARS - sb.length)
+                    return sb.append(CELL_TRUNCATION_MARKER).toString()
+                }
+                sb.append(buf, 0, n)
+            }
+            return sb.toString()
+        }
+    }
+
+    /** 二进制：流式读取只统计字节数（结果本来就是有损的 `[N bytes]`，无需全量）。 */
+    private fun readBinaryCell(rs: ResultSet, i: Int): String? {
+        val stream = runCatching { rs.getBinaryStream(i) }.getOrNull()
+            ?: return cellToString(runCatching { rs.getObject(i) }.getOrNull())
+        stream.use { s ->
+            val buf = ByteArray(8192)
+            var total = 0L
+            while (true) {
+                val n = s.read(buf)
+                if (n < 0) break
+                total += n
+                if (total >= MAX_CELL_BYTES) return "[≥$MAX_CELL_BYTES bytes]"
+            }
+            return "[$total bytes]"
+        }
+    }
+
+    private fun clampCell(s: String?): String? {
+        if (s == null || s.length <= MAX_CELL_CHARS) return s
+        return s.take(MAX_CELL_CHARS) + CELL_TRUNCATION_MARKER
+    }
+
+    private fun isBinaryColumn(sqlType: Int): Boolean = when (sqlType) {
+        Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> true
+        else -> false
+    }
+
+    private fun isCharColumn(sqlType: Int): Boolean = when (sqlType) {
+        Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR, Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR,
+        Types.CLOB, Types.NCLOB, Types.SQLXML,
+        -> true
+
+        else -> false
+    }
+
     /** 读整表列元数据（供普通结果读取与 N8 流式导出复用）。 */
     fun columnMetas(meta: ResultSetMetaData): List<QueryColumn> =
         (1..meta.columnCount).map { readColumnMeta(meta, it) }
-
-    private fun readCell(rs: ResultSet, i: Int): String? = cellToString(rs.getObject(i))
 
     /**
      * 读单列元数据；各取值独立 runCatching，个别驱动不支持的 API 不影响整体（降级为不可编辑）。

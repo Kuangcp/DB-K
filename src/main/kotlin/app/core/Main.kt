@@ -97,6 +97,7 @@ import engine.model.SchemaMeta
 import engine.model.displayNoun
 import engine.model.isPreviewable
 import jdbc.ExternalDrivers
+import jdbc.QueryExecutor
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -930,10 +931,13 @@ private fun AppBody(
                             if (c != null && p != null && result != null) {
                                 // SQL INSERT 默认表名取结果列的真实基表（单表查询时可用）
                                 val defaultTable = result.columns.firstNotNullOfOrNull { it.table } ?: "exported_data"
+                                // 结果里若有被截断的单元格，缓存导出会写出截断标记 → 强制全量流式
+                                val cellsTruncated = result.rows.any { r -> r.any { QueryExecutor.isTruncatedCell(it) } }
                                 dialogState.export = ExportRequest(
                                     rowCount = result.rowCount,
                                     truncated = result.truncated,
                                     defaultTableName = defaultTable,
+                                    cellsTruncated = cellsTruncated,
                                     onSubmit = { format, options, fullStream ->
                                         dialogState.export = null
                                         // Linux 桌面支持无主窗口的 AWT 文件对话框（owner=null）

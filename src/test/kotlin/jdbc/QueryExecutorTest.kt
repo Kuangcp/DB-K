@@ -42,4 +42,12 @@ class QueryExecutorTest {
         assertEquals("42", QueryExecutor.cellToString(42))
         assertEquals("[3 bytes]", QueryExecutor.cellToString(byteArrayOf(1, 2, 3)))
     }
+
+    @Test
+    fun `isTruncatedCell detects the truncation marker`() {
+        assertFalse(QueryExecutor.isTruncatedCell(null))
+        assertFalse(QueryExecutor.isTruncatedCell("正常内容"))
+        assertFalse(QueryExecutor.isTruncatedCell("普通文本…"))
+        assertTrue(QueryExecutor.isTruncatedCell("开头" + QueryExecutor.CELL_TRUNCATION_MARKER))
+    }
 }
