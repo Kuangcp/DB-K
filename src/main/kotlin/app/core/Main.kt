@@ -120,6 +120,8 @@ import java.io.File
 fun main() = application {
     // 首条日志触发 tinylog 初始化 → SessionLogWriter 立即创建本次会话日志文件（logs/yyyy-MM/yyyy-MM-dd_N.log）
     Logger.info("db-k session start; dataDir={}", AppPaths.dataDirectory())
+    // glibc 原生内存治理：压低 mmap/trim 阈值，避免大块分配的峰值变成常驻 RSS
+    NativeMemory.configure()
     // 外部 JDBC 驱动（SQL Server / Oracle）：<dataDir>/drivers 下的 jar 以独立 classloader 加载。
     // 需重启才生效（新增 jar 后重启应用）。
     ExternalDrivers.ensureLoaded()
@@ -424,11 +426,11 @@ private fun AppBody(
         val pending = consoleState.editCount(c.id)
         if (pending > 0) {
             dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "重新执行") {
-                scope.launch { consoleState.run(c, p, target) }
+                scope.launch { consoleState.run(c, p, target); NativeMemory.trim("after query") }
             }
             return
         }
-        scope.launch { consoleState.run(c, p, target) }
+        scope.launch { consoleState.run(c, p, target); NativeMemory.trim("after query") }
     }
 
     fun suggestConsoleName(profile: ConnectionProfile): String {

@@ -38,6 +38,8 @@ dependencies {
     implementation("com.neoutils.highlight:highlight-compose:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+    // glibc 原生内存治理（malloc_trim/mallopt）：NativeMemory 用，Linux 下把空闲页还给 OS
+    implementation("net.java.dev.jna:jna:5.13.0")
     implementation("org.tinylog:tinylog-api:2.7.0")
     // impl 含 writers 抽象类，SessionLogWriter 编译需在 compileClasspath
     implementation("org.tinylog:tinylog-impl:2.7.0")
@@ -70,6 +72,15 @@ tasks.register<JavaExec>("smokeJdbc") {
     description = "Verify JDBC dialects against embedded/temp databases"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("jdbc.JdbcSmokeKt")
+}
+
+// glibc 多线程 arena 会把峰值变成常驻 RSS（每线程一个 64MB arena，free 后跨线程不复用）。
+// 实测：不限制时同一会话可涨到 ~1GB；限制为 1 后稳定。必须在 JVM 启动前用环境变量设置
+// （main() 里再 mallopt 已太晚：JVM 线程已各自建了 arena）。同时给 AppImage 的 AppRun 加同一导出。
+tasks.matching { it.name == "run" || it.name == "runDistributable" }.configureEach {
+    if (this is JavaExec) {
+        environment("MALLOC_ARENA_MAX", "1")
+    }
 }
 
 // Redis 后端自检：gradle smokeRedis （需可连的 Redis；连不上则 SKIP）
@@ -247,7 +258,10 @@ val makeAppImage by tasks.registering {
         )
         val appRun = appDir.resolve("AppRun")
         appRun.writeText(
-            "#!/bin/sh\nHERE=\"\$(dirname \"\$(readlink -f \"\$0\")\")\"\nexec \"\$HERE/usr/bin/db-k\" \"\$@\"\n",
+            "#!/bin/sh\n" +
+                "export MALLOC_ARENA_MAX=1\n" +
+                "HERE=\"\$(dirname \"\$(readlink -f \"\$0\")\")\"\n" +
+                "exec \"\$HERE/usr/bin/db-k\" \"\$@\"\n",
         )
         appRun.setExecutable(true)
 

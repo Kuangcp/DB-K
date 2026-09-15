@@ -48,6 +48,7 @@ import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
+import app.core.NativeMemory
 import app.ui.applyJsonHighlightRules
 import app.ui.applySqlHighlightRules
 import app.ui.decodeBase64Bytes
@@ -64,6 +65,10 @@ import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
+import org.jetbrains.skia.Rect
+import org.tinylog.Logger
+import kotlin.math.max
+import kotlin.math.sqrt
 import com.neoutils.highlight.compose.remember.rememberAnnotatedString
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import db.ConnectionProfile
@@ -83,6 +88,14 @@ private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
 private const val MAX_IMAGE_PIXELS = 40_000_000L
 
 /**
+ * 查看器只做预览，解码后像素预算（约 2MP ≈ 8MB ARGB）。
+ *
+ * 实测：Compose Desktop 渲染/持有大 `ImageBitmap` 时，原生内存按图片尺寸线性滞留，
+ * 关窗后也回收不完全。把底图缩到预览尺寸，可把单次查看的原生占用从几十 MB 降到几 MB。
+ */
+private const val MAX_PREVIEW_PIXELS = 2_000_000L
+
+/**
  * 主动释放 Compose `ImageBitmap` 背后的 **Skia 原生像素内存**。
  *
  * Skia 资源靠 Cleaner 在 Java GC 时才回收；反复查看大图（尤其 base64 图片）时 Java 堆压力很小、
@@ -94,6 +107,18 @@ private const val MAX_IMAGE_PIXELS = 40_000_000L
 internal fun recycleImageBitmap(bitmap: ImageBitmap?) {
     if (bitmap == null) return
     runCatching { bitmap.asSkiaBitmap().close() }
+    NativeMemory.trim("image recycle")
+}
+
+/**
+ * 预算内的预览尺寸：像素数不超过 [MAX_PREVIEW_PIXELS] 时原样返回，否则等比例缩小。
+ * 纯函数，便于单测。
+ */
+internal fun previewSize(width: Int, height: Int): Pair<Int, Int> {
+    val pixels = width.toLong() * height
+    if (pixels <= MAX_PREVIEW_PIXELS || pixels == 0L) return width to height
+    val scale = sqrt(MAX_PREVIEW_PIXELS.toDouble() / pixels)
+    return max(1, (width * scale).toInt()) to max(1, (height * scale).toInt())
 }
 
 /**
@@ -102,17 +127,31 @@ internal fun recycleImageBitmap(bitmap: ImageBitmap?) {
  * 直接用 `ByteArray.decodeToImageBitmap()` 会在内部遗留未 close 的 `skia.Image` / `skia.Canvas`，
  * 大图反复查看时原生内存只涨不降。这里显式创建 Bitmap → 画入 → 关闭源 Image/Canvas，
  * 仅把最终 Bitmap 交给 Compose（由 [recycleImageBitmap] 在离开组合时释放）。
+ *
+ * 另：超过 [MAX_PREVIEW_PIXELS] 的原图直接**缩放绘制到预览尺寸**，不分配全尺寸 Bitmap。
  */
 private fun decodeImageSafely(bytes: ByteArray): ImageBitmap {
     val image = Image.makeFromEncoded(bytes)
     val bitmap = Bitmap()
     try {
-        require(image.width.toLong() * image.height <= MAX_IMAGE_PIXELS) {
-            "图片分辨率过大（${image.width}×${image.height}）"
+        val srcW = image.width
+        val srcH = image.height
+        require(srcW.toLong() * srcH <= MAX_IMAGE_PIXELS) {
+            "图片分辨率过大（$srcW×$srcH）"
         }
-        val info = ImageInfo.makeN32Premul(image.width, image.height)
-        check(bitmap.allocPixels(info)) { "无法分配图片内存" }
-        Canvas(bitmap).use { canvas -> canvas.drawImage(image, 0f, 0f) }
+        val (dstW, dstH) = previewSize(srcW, srcH)
+        check(bitmap.allocPixels(ImageInfo.makeN32Premul(dstW, dstH))) { "无法分配图片内存" }
+        Canvas(bitmap).use { canvas ->
+            if (dstW == srcW && dstH == srcH) {
+                canvas.drawImage(image, 0f, 0f)
+            } else {
+                canvas.drawImageRect(
+                    image,
+                    Rect.makeWH(srcW.toFloat(), srcH.toFloat()),
+                    Rect.makeWH(dstW.toFloat(), dstH.toFloat()),
+                )
+            }
+        }
         bitmap.setImmutable()
         return bitmap.asComposeImageBitmap()
     } catch (t: Throwable) {
@@ -444,6 +483,10 @@ fun CellViewerDialog(
                 image = bmp
                 imageMeta = "$fmt · ${bmp.width}×${bmp.height} · ${humanSize(size)}"
                 showImage = true
+                Logger.info(
+                    "viewer image: {} {}x{} bytes={} rss={} kB",
+                    fmt, bmp.width, bmp.height, size, NativeMemory.rssKb(),
+                )
             }.onFailure {
                 imageError = it.message ?: "无法识别为图片"
                 showImage = false
