@@ -19,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,9 +34,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.WindowScope
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import app.core.export.ExportFormat
@@ -171,33 +174,44 @@ private fun AppRoot(onExit: () -> Unit) {
         }
     }
 
+    // 窗口几何：只在浮动状态落盘（最大化/全屏时尺寸是桌面给的，不是用户的恢复尺寸）；
+    // 位置不是绝对坐标（如首次启动居中）时仍保存尺寸，但不保存 x/y。
+    fun persistWindowGeometry() {
+        if (windowState.placement != WindowPlacement.Floating) return
+        if (!windowState.size.isSpecified) return
+        val pos = windowState.position as? WindowPosition.Absolute
+        WindowPrefs.save(
+            WindowPrefs.Geometry(
+                x = pos?.x?.value?.times(density)?.roundToInt(),
+                y = pos?.y?.value?.times(density)?.roundToInt(),
+                width = (windowState.size.width.value * density).roundToInt(),
+                height = (windowState.size.height.value * density).roundToInt(),
+            ),
+        )
+    }
+
     // 退出流程（先落盘控制台草稿 + 保存窗口几何）；有未提交结果修改时先确认。
     val performExit: () -> Unit = {
         consoleState.flushAllSync()
-        val size = windowState.size
-        val pos = windowState.position
-        WindowPrefs.save(
-            WindowPrefs.Geometry(
-                x = if (pos.isSpecified) (pos.x.value * density).roundToInt() else null,
-                y = if (pos.isSpecified) (pos.y.value * density).roundToInt() else null,
-                width = (size.width.value * density).roundToInt(),
-                height = (size.height.value * density).roundToInt(),
-            ),
-        )
+        persistWindowGeometry()
         onExit()
+    }
+
+    // 自定义标题栏的关闭按钮与系统窗口关闭走同一条路径（含未提交修改确认）。
+    val requestClose: () -> Unit = {
+        val pending = consoleState.totalEditCount()
+        if (pending > 0) {
+            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "退出应用") { performExit() }
+        } else {
+            performExit()
+        }
     }
 
     Window(
         title = "DB-K",
         state = windowState,
-        onCloseRequest = {
-            val pending = consoleState.totalEditCount()
-            if (pending > 0) {
-                dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "退出应用") { performExit() }
-            } else {
-                performExit()
-            }
-        },
+        undecorated = true,
+        onCloseRequest = requestClose,
     ) {
         // 运行时窗口图标（X11 任务栏/装饰、Windows 任务栏）：从 classpath 读 png 设到 AWT Frame。
         // 不用 compose painterResource(String)——已废弃且工程 -Werror。
@@ -214,18 +228,22 @@ private fun AppRoot(onExit: () -> Unit) {
             consoleState = consoleState,
             dialogState = dialogState,
             toastState = toastState,
+            mainWindowState = windowState,
+            onWindowCloseRequest = requestClose,
         )
     }
 }
 
 @Composable
-private fun AppBody(
+private fun WindowScope.AppBody(
     repository: ConnectionsRepository,
     treeState: TreeState,
     connectionsState: ConnectionsState,
     consoleState: ConsoleState,
     dialogState: DialogState,
     toastState: ToastState,
+    mainWindowState: WindowState,
+    onWindowCloseRequest: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
@@ -995,6 +1013,8 @@ private fun AppBody(
                         },
                         editorSettings = editorSettings,
                         onOpenSettings = { dialogState.showSettings = true },
+                        mainWindowState = mainWindowState,
+                        onWindowCloseRequest = onWindowCloseRequest,
                     )
                 }
 

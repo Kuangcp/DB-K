@@ -43,6 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
@@ -117,6 +118,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowScope
+import androidx.compose.ui.window.WindowState
 import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
 import app.state.StatementOutcome
@@ -161,7 +165,7 @@ private const val MAX_FLEX_COL_WIDTH = 600
  * 每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）；纯展示组件，编排在 Main/ConsoleState。
  */
 @Composable
-fun SqlWorkspace(
+fun WindowScope.SqlWorkspace(
     profile: ConnectionProfile?,
     status: ConnUiStatus,
     statusMessage: String?,
@@ -271,6 +275,10 @@ fun SqlWorkspace(
     /** 编辑器外观设置（字体族 / 字号）。 */
     editorSettings: EditorSettings,
     onOpenSettings: () -> Unit,
+    /** 主窗口状态：自定义标题栏的最小化/最大化/还原用。 */
+    mainWindowState: WindowState,
+    /** 自定义标题栏关闭按钮回调（与系统窗口关闭同一条路径）。 */
+    onWindowCloseRequest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // 当前快捷键表（业务命令可配置；基础编辑键固定）。读取一次，供根级 onPreviewKeyEvent 匹配。
@@ -356,6 +364,8 @@ fun SqlWorkspace(
             historyOpen = showHistory,
             onToggleHistory = { showHistory = !showHistory },
             onOpenSettings = onOpenSettings,
+            mainWindowState = mainWindowState,
+            onWindowCloseRequest = onWindowCloseRequest,
             showEditorActions = activeConsole != null,
             findOpen = findReplaceOpen,
             onFormatSql = { formatRef.value?.invoke() },
@@ -621,69 +631,124 @@ private fun selectedSqlOf(v: TextFieldValue): String? {
 }
 
 @Composable
-private fun HeaderBar(
+private fun WindowScope.HeaderBar(
     isDark: Boolean,
     onToggleTheme: () -> Unit,
     showHistoryButton: Boolean,
     historyOpen: Boolean,
     onToggleHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    mainWindowState: WindowState,
+    onWindowCloseRequest: () -> Unit,
     /** 有激活控制台时显示编辑器动作（格式化 / 查找替换）。 */
     showEditorActions: Boolean = false,
     findOpen: Boolean = false,
     onFormatSql: () -> Unit = {},
     onOpenFindReplace: () -> Unit = {},
 ) {
+    val topBarIconTint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+    val isWindowMaximized = mainWindowState.placement == WindowPlacement.Maximized ||
+            mainWindowState.placement == WindowPlacement.Fullscreen
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 12.dp),
+        modifier = Modifier.fillMaxWidth().height(40.dp),
     ) {
-        if (showEditorActions) {
-            IconButton(onClick = onFormatSql, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    imageVector = DbIcons.Format,
-                    contentDescription = "格式化 SQL（Ctrl+Alt+L）",
-                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.size(17.dp),
-                )
-            }
-            IconButton(onClick = onOpenFindReplace, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    imageVector = DbIcons.FindReplace,
-                    contentDescription = "查找替换（Ctrl+F / Ctrl+H）",
-                    tint = if (findOpen) MaterialTheme.colors.primary
-                    else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.size(17.dp),
-                )
+        // 左侧整块可拖拽（等效系统标题栏）；窗口控制按钮在右侧、不可拖拽。
+        WindowDraggableArea(
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            ) {
+                if (showEditorActions) {
+                    IconButton(onClick = onFormatSql, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = DbIcons.Format,
+                            contentDescription = "格式化 SQL（Ctrl+Alt+L）",
+                            tint = topBarIconTint,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                    IconButton(onClick = onOpenFindReplace, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = DbIcons.FindReplace,
+                            contentDescription = "查找替换（Ctrl+F / Ctrl+H）",
+                            tint = if (findOpen) MaterialTheme.colors.primary
+                            else topBarIconTint,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                }
+                // 左侧留白：后续在此放更多工具 icon（标题文字已去掉）
+                Spacer(Modifier.weight(1f))
+                if (showHistoryButton) {
+                    IconButton(onClick = onToggleHistory, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = DbIcons.History,
+                            contentDescription = if (historyOpen) "收起执行历史" else "打开执行历史",
+                            tint = if (historyOpen) MaterialTheme.colors.primary
+                            else topBarIconTint,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                }
+                IconButton(onClick = onToggleTheme, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        imageVector = if (isDark) DbIcons.Sun else DbIcons.Moon,
+                        contentDescription = if (isDark) "切换浅色主题" else "切换深色主题",
+                        tint = topBarIconTint,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "设置",
+                        tint = topBarIconTint,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
             }
         }
-        // 左侧留白：后续在此放更多工具 icon（标题文字已去掉）
-        Spacer(Modifier.weight(1f))
-        if (showHistoryButton) {
-            IconButton(onClick = onToggleHistory, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    imageVector = DbIcons.History,
-                    contentDescription = if (historyOpen) "收起执行历史" else "打开执行历史",
-                    tint = if (historyOpen) MaterialTheme.colors.primary
-                    else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.size(17.dp),
-                )
-            }
-        }
-        IconButton(onClick = onToggleTheme, modifier = Modifier.size(28.dp)) {
+        IconButton(
+            onClick = { mainWindowState.isMinimized = true },
+            modifier = Modifier.size(40.dp),
+        ) {
             Icon(
-                imageVector = if (isDark) DbIcons.Sun else DbIcons.Moon,
-                contentDescription = if (isDark) "切换浅色主题" else "切换深色主题",
-                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.size(17.dp),
+                imageVector = DbIcons.WindowMinimize,
+                contentDescription = "最小化",
+                tint = topBarIconTint,
+                modifier = Modifier.size(16.dp),
             )
         }
-        IconButton(onClick = onOpenSettings, modifier = Modifier.size(28.dp)) {
+        IconButton(
+            onClick = {
+                mainWindowState.placement = if (isWindowMaximized) {
+                    WindowPlacement.Floating
+                } else {
+                    WindowPlacement.Maximized
+                }
+            },
+            modifier = Modifier.size(40.dp),
+        ) {
             Icon(
-                imageVector = Icons.Filled.Settings,
-                contentDescription = "设置",
-                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.size(17.dp),
+                imageVector = if (isWindowMaximized) DbIcons.WindowRestore else DbIcons.WindowMaximize,
+                contentDescription = if (isWindowMaximized) "还原" else "最大化",
+                tint = topBarIconTint,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        IconButton(
+            onClick = onWindowCloseRequest,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "关闭",
+                tint = topBarIconTint,
+                modifier = Modifier.size(16.dp),
             )
         }
     }

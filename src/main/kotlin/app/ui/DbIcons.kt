@@ -127,6 +127,21 @@ object DbIcons {
         vector("format", "M15 15H3v2h12v-2zm0-8H3v2h12V7zM3 13h18v-2H3v2zm0 8h18v-2H3v2zM3 3v2h18V3H3z")
     }
 
+    /** 窗口最小化（减号）：自定义标题栏。 */
+    val WindowMinimize: ImageVector by lazy {
+        vector("window-minimize", "M19 13H5v-2h14v2z")
+    }
+
+    /** 窗口最大化（空心方框，普通状态）：自定义标题栏，点击去最大化。 */
+    val WindowMaximize: ImageVector by lazy {
+        vector("window-maximize", "M5 5h14v14H5V5zm2 2v10h10V7H7z")
+    }
+
+    /** 窗口还原（双斜向重叠方框，已最大化状态）：点击还原为浮动窗口。 */
+    val WindowRestore: ImageVector by lazy {
+        vector("window-restore", "M9 5h10v10h-2V7H9V5zm-4 4h10v10H5V9zm2 2v6h6v-6H7z")
+    }
+
     /** 查找替换（上下箭头 + 循环）。 */
     val FindReplace: ImageVector by lazy {
         vector(
