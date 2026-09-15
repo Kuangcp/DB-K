@@ -6,11 +6,15 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,10 +48,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ConnectionEditorRequest
@@ -160,13 +166,17 @@ fun ConnectionEditorDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isEdit) "编辑连接" else "新建连接") },
         text = {
-            Column(
-                modifier = Modifier
-                    .width(480.dp)
-                    .heightIn(max = 460.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
+            // 表单默认按内容撑高（独立弹窗，高度随内容自适应），把底部「测试连接」等一次展示完；
+            // 上限按屏幕可用高度推算，只有屏幕真装不下时才滚动，并显示右侧滚动条。
+            val density = LocalDensity.current
+            val maxFormHeight = remember(density) {
+                val usablePx = runCatching {
+                    java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                        .maximumWindowBounds.height
+                }.getOrDefault(900)
+                (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(280.dp)
+            }
+            FormBody(maxFormHeight) {
                 FormRow("名称") {
                     CompactField(value = name, onValueChange = { name = it })
                 }
@@ -330,6 +340,34 @@ fun ConnectionEditorDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
+}
+
+/**
+ * 连接表单本体：宽度 480dp、高度随内容自适应（独立弹窗），把底部「测试连接」等一次展示完。
+ * 仅当内容超过 [maxHeight]（由屏幕可用高度推算）时才滚动，并在右侧显示可见滚动条，
+ * 避免「必须滚动才能看到底部、又没有滚动条」的隐性截断。
+ */
+@Composable
+private fun FormBody(maxHeight: Dp, content: @Composable ColumnScope.() -> Unit) {
+    val scrollState = rememberScrollState()
+    Box(modifier = Modifier.width(480.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = maxHeight)
+                .verticalScroll(scrollState)
+                .padding(end = if (scrollState.maxValue > 0) 12.dp else 0.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+            content = content,
+        )
+        if (scrollState.maxValue > 0) {
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(scrollState),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                style = viewerScrollbarStyle(),
+            )
+        }
+    }
 }
 
 /** 单行：左标签 + 全宽内容。 */
