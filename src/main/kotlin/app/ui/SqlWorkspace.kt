@@ -1447,6 +1447,21 @@ private fun EditorPane(
     // 拖拽选区自动滚动循环：指针在边缘区时持续滚动，并把选区焦点移到边缘所在文本位置
     // （固定端 = 开始拖拽时远离指针的那一端，锁在 scrollAnchor 里）。
     val currentValue = rememberUpdatedState(value)
+    // 指针坐标 → 文本 offset（含滚动偏移；夹在排版范围内，避免指针拖到窗口外时坐标失控）。
+    // 做成随组合更新的 lambda，供「边缘自动滚动循环」与「指针旁路」共用同一套换算。
+    val offsetAtPointer = rememberUpdatedState<(Offset) -> Int?>(
+        { p ->
+            val lay = textLayout
+            if (lay == null) {
+                null
+            } else {
+                val clampedY = p.y.coerceIn(textTopPx, (boxH - textTopPx).coerceAtLeast(textTopPx + 1f))
+                val textY = (clampedY - textTopPx + scroll.value).coerceIn(0f, lay.size.height.toFloat())
+                val textX = (p.x - gutterWpx - textPadLPx).coerceIn(0f, textWpxInt.toFloat())
+                lay.getOffsetForPosition(Offset(textX, textY))
+            }
+        },
+    )
     val edgeZonePx = with(density) { 30.dp.toPx() }
     val scrollDir = when {
         !dragActive || dragPointer == null -> 0
@@ -1465,13 +1480,7 @@ private fun EditorPane(
                 (p.y - (boxH - textTopPx - edgeZonePx)).coerceAtLeast(0f)
             }
             scroll.dispatchRawDelta(scrollDir * (8f + overshoot * 0.6f).coerceAtMost(48f))
-            val lay = textLayout ?: break
-            // 指针 y → 文本排版坐标（加滚动偏移）；夹在可视区内，避免滚出后坐标失控
-            val clampedY = p.y.coerceIn(textTopPx, (boxH - textTopPx).coerceAtLeast(textTopPx + 1f))
-            val textY = (clampedY - textTopPx + scroll.value)
-                .coerceIn(0f, lay.size.height.toFloat())
-            val textX = (p.x - gutterWpx - textPadLPx).coerceIn(0f, textWpxInt.toFloat())
-            val focusOff = lay.getOffsetForPosition(Offset(textX, textY))
+            val focusOff = offsetAtPointer.value(p) ?: break
             val curSel = currentValue.value.selection
             val anchor = scrollAnchor ?: (if (scrollDir < 0) curSel.max else curSel.min)
             scrollAnchor = anchor
@@ -1537,7 +1546,24 @@ private fun EditorPane(
                                 }
                                 PointerEventType.Move -> if (dragActive) {
                                     if (e.buttons.isPrimaryPressed) {
-                                        dragPointer = e.changes.firstOrNull()?.position
+                                        val pos = e.changes.firstOrNull()?.position
+                                        dragPointer = pos
+                                        // 一旦自动滚动接管过选区（scrollAnchor 已锁定），后续拖拽
+                                        // 也由我们用同一锚点驱动：否则 BasicTextField 内部锚点会被
+                                        // 之前的合成选区带偏，反向拖动时把「刚才的边」当成起始行。
+                                        val anchor = scrollAnchor
+                                        if (pos != null && anchor != null) {
+                                            offsetAtPointer.value(pos)?.let { focusOff ->
+                                                val curSel = currentValue.value.selection
+                                                val ns = TextRange(
+                                                    minOf(anchor, focusOff),
+                                                    maxOf(anchor, focusOff),
+                                                )
+                                                if (ns != curSel) {
+                                                    onValueChange(currentValue.value.copy(selection = ns))
+                                                }
+                                            }
+                                        }
                                     } else {
                                         // 兜底：在窗口外松开时 Release 可能丢失，用无按键 Move 复位
                                         dragActive = false
