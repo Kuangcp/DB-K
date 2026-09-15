@@ -22,6 +22,7 @@ import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,7 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.decodeToImageBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -58,6 +60,10 @@ import app.ui.parseJsonDocument
 import app.ui.sqlHighlightKeywords
 import app.ui.sqlSyntaxPalette
 import engine.Protocol
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.Canvas
+import org.jetbrains.skia.Image
+import org.jetbrains.skia.ImageInfo
 import com.neoutils.highlight.compose.remember.rememberAnnotatedString
 import com.neoutils.highlight.compose.remember.rememberHighlight
 import db.ConnectionProfile
@@ -72,6 +78,50 @@ private val VIEWER_WINDOW_SIZE = DpSize(780.dp, 580.dp)
 
 /** 单元格内容按 Base64 图片解码的字节上限（防超大图撑爆内存）。 */
 private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
+
+/** 解码后像素总数上限（防「小体积、大分辨率」的解压炸弹把内存打爆）。 */
+private const val MAX_IMAGE_PIXELS = 40_000_000L
+
+/**
+ * 主动释放 Compose `ImageBitmap` 背后的 **Skia 原生像素内存**。
+ *
+ * Skia 资源靠 Cleaner 在 Java GC 时才回收；反复查看大图（尤其 base64 图片）时 Java 堆压力很小、
+ * GC 不触发，原生内存（RSS）只涨不降。这里在查看器关闭 / 切换图片时直接 close 底层
+ * `org.jetbrains.skia.Bitmap`，立即释放，不再等 GC。
+ *
+ * 调用方必须确保该 bitmap 已不再被绘制（本文件用 [DisposableEffect] 在离开组合时调用）。
+ */
+internal fun recycleImageBitmap(bitmap: ImageBitmap?) {
+    if (bitmap == null) return
+    runCatching { bitmap.asSkiaBitmap().close() }
+}
+
+/**
+ * 把图片字节解码成 Compose [ImageBitmap]，并**主动释放中间 Skia 原生对象**。
+ *
+ * 直接用 `ByteArray.decodeToImageBitmap()` 会在内部遗留未 close 的 `skia.Image` / `skia.Canvas`，
+ * 大图反复查看时原生内存只涨不降。这里显式创建 Bitmap → 画入 → 关闭源 Image/Canvas，
+ * 仅把最终 Bitmap 交给 Compose（由 [recycleImageBitmap] 在离开组合时释放）。
+ */
+private fun decodeImageSafely(bytes: ByteArray): ImageBitmap {
+    val image = Image.makeFromEncoded(bytes)
+    val bitmap = Bitmap()
+    try {
+        require(image.width.toLong() * image.height <= MAX_IMAGE_PIXELS) {
+            "图片分辨率过大（${image.width}×${image.height}）"
+        }
+        val info = ImageInfo.makeN32Premul(image.width, image.height)
+        check(bitmap.allocPixels(info)) { "无法分配图片内存" }
+        Canvas(bitmap).use { canvas -> canvas.drawImage(image, 0f, 0f) }
+        bitmap.setImmutable()
+        return bitmap.asComposeImageBitmap()
+    } catch (t: Throwable) {
+        bitmap.close()
+        throw t
+    } finally {
+        image.close()
+    }
+}
 
 /** 与结果表格一致的滚动条样式（主题色半透明，深浅色下都可见）。 */
 @Composable
@@ -347,6 +397,13 @@ fun CellViewerDialog(
     var imageBusy by remember(content) { mutableStateOf(false) }
     var imageError by remember(content) { mutableStateOf<String?>(null) }
 
+    // 图片的原生内存不随普通 GC 及时回收：离开组合（关闭弹窗 / 内容切换）时主动释放。
+    // 键为 image：下一张图替换旧图（或置空）时也会先释放旧图。
+    DisposableEffect(image) {
+        val held = image
+        onDispose { recycleImageBitmap(held) }
+    }
+
     // JSON 识别：初筛通过后后台解析；成功则默认进入树视图（可切回原文，原文按 JSON 高亮）
     val looksJson = remember(content) { looksLikeJson(content) }
     var jsonRoot by remember(content) { mutableStateOf<JsonElement?>(null) }
@@ -379,7 +436,7 @@ fun CellViewerDialog(
                 runCatching {
                     val bytes = decodeBase64Bytes(content)
                     require(bytes.size <= MAX_IMAGE_BYTES) { "图片过大（${humanSize(bytes.size)}）" }
-                    val bmp = bytes.decodeToImageBitmap()
+                    val bmp = decodeImageSafely(bytes)
                     Triple(bmp, imageFormatName(bytes) ?: "图片", bytes.size)
                 }
             }
