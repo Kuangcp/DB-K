@@ -17,6 +17,9 @@ open class MySqlLikeDialect(
     driverClass: String,
 ) : GenericDialect(dbType, driverClass) {
 
+    /** MySQL / MariaDB：fetchSize=Integer.MIN_VALUE 启用逐行流式结果集。 */
+    override val cursorStrategy: CursorStrategy get() = CursorStrategy.MYSQL_STREAM
+
     private val systemSchemas = """(
         SELECT 'INFORMATION_SCHEMA' UNION ALL SELECT 'PERFORMANCE_SCHEMA'
         UNION ALL SELECT 'MYSQL' UNION ALL SELECT 'SYS'

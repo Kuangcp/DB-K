@@ -18,6 +18,9 @@ import java.sql.Connection
  */
 object OracleDialect : GenericDialect(DbType.ORACLE, "oracle.jdbc.OracleDriver") {
 
+    /** Oracle 只有 row prefetch（无对外 REF CURSOR），按 fetchSize 批量预取。 */
+    override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH
+
     /** 12c+ 的 `ORACLE_MAINTAINED` 可干净过滤系统账号；旧库回报错后回落全量 + 名称过滤。 */
     private val usersSql = "SELECT username FROM all_users WHERE oracle_maintained = 'N' ORDER BY username"
     private val allUsersSql = "SELECT username FROM all_users ORDER BY username"

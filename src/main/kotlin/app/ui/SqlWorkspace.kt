@@ -238,11 +238,9 @@ fun SqlWorkspace(
     onClearInsertCell: (Long, Int) -> Unit = { _, _ -> },
     /** 标记/撤销某原始行的待删除状态。 */
     onToggleRowDelete: (Int) -> Unit = {},
-    onExportCsv: () -> Unit,
+    onExport: () -> Unit,
     /** 取消当前执行（取消按钮 / Esc）。 */
     onCancelRun: () -> Unit,
-    /** 全量导出：结果被截断时重新执行 SQL 导出全部行。 */
-    onExportAllCsv: () -> Unit,
     /** 执行历史（当前数据源）。 */
     history: List<SqlHistoryRow>,
     onRefreshHistory: () -> Unit,
@@ -543,8 +541,7 @@ fun SqlWorkspace(
                             onInsertCellEdit = onInsertCellEdit,
                             onClearInsertCell = onClearInsertCell,
                             onToggleRowDelete = onToggleRowDelete,
-                            onExportCsv = onExportCsv,
-                            onExportAllCsv = onExportAllCsv,
+                            onExport = onExport,
                             onCancelRun = onCancelRun,
                             onCopyText = onCopyText,
                             modifier = Modifier.weight(resultFrac).fillMaxWidth(),
@@ -2040,8 +2037,7 @@ private fun ResultToolbar(
     selectedRowDeleted: Boolean,
     onInsertRow: () -> Unit,
     onToggleRowDelete: () -> Unit,
-    onExportCsv: () -> Unit,
-    onExportAllCsv: () -> Unit,
+    onExport: () -> Unit,
     onCancelRun: () -> Unit,
 ) {
     val result = run.result
@@ -2149,18 +2145,10 @@ private fun ResultToolbar(
             }
             ResultIconButton(
                 icon = DbIcons.Download,
-                description = "导出 CSV",
+                description = "导出结果（CSV / JSON / SQL INSERT / Excel）",
                 enabled = exportEnabled,
-                onClick = onExportCsv,
+                onClick = onExport,
             )
-            // 结果被截断时提供全量导出（重新执行 SQL，不受 1000 行上限）
-            if (exportEnabled && result?.truncated == true) {
-                ResultIconButton(
-                    icon = DbIcons.Database,
-                    description = "导出全量 CSV（重新执行，不受 1000 行上限）",
-                    onClick = onExportAllCsv,
-                )
-            }
         }
     }
 }
@@ -2367,8 +2355,7 @@ private fun ResultTabs(
     onInsertCellEdit: (Long, Int, CellValue) -> Unit,
     onClearInsertCell: (Long, Int) -> Unit,
     onToggleRowDelete: (Int) -> Unit,
-    onExportCsv: () -> Unit,
-    onExportAllCsv: () -> Unit,
+    onExport: () -> Unit,
     onCancelRun: () -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
@@ -2399,8 +2386,7 @@ private fun ResultTabs(
                 selectedRowDeleted = selectedRow != null && selectedRow in resultEdits.deletes,
                 onInsertRow = onInsertRow,
                 onToggleRowDelete = { selectedRow?.let(onToggleRowDelete) },
-                onExportCsv = onExportCsv,
-                onExportAllCsv = onExportAllCsv,
+                onExport = onExport,
                 onCancelRun = onCancelRun,
             )
             Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
@@ -2456,7 +2442,7 @@ private fun ResultPane(
         var viewSpec by remember(result?.sql) { mutableStateOf(ResultViewSpec()) }
         when {
             error != null -> CenteredHint(error, isError = true)
-            result == null -> CenteredHint("执行 SELECT 后在此查看结果表格；可导出 CSV", isError = false)
+            result == null -> CenteredHint("执行 SELECT 后在此查看结果表格；可导出 CSV / JSON / SQL / Excel", isError = false)
             result.isQuery && result.rowCount == 0 && resultEdits.inserts.isEmpty() ->
                 CenteredHint("查询完成：0 行", isError = false)
             result.isQuery -> Column(modifier = Modifier.fillMaxSize()) {
@@ -2510,7 +2496,7 @@ private fun TruncationBanner() {
         Spacer(Modifier.width(8.dp))
         Text(
             "结果已截断（超过 ${QueryExecutor.MAX_ROWS} 行）。可用工具栏「取更多」继续追加，" +
-                "或「导出全量 CSV」重新执行并导出全部行。",
+                "或用「导出」选「全量流式」重新执行并导出全部行。",
             fontSize = 11.sp,
             lineHeight = 15.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),

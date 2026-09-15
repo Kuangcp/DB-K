@@ -3,6 +3,8 @@ package app.state
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.core.export.ExportFormat
+import app.core.export.ExportOptions
 import db.ConnectionProfile
 import db.FolderRow
 import engine.model.SchemaMeta
@@ -77,6 +79,17 @@ data class ImportConflictRequest(
     val onSubmit: (Map<String, Boolean>) -> Unit,
 )
 
+/**
+ * 结果导出弹窗请求（N8）：选格式与参数，确认后由 Main 打开文件对话框并写出。
+ * [onSubmit] 参数：格式、参数、是否全量流式（重跑 SQL，仅结果被截断时可选）。
+ */
+data class ExportRequest(
+    val rowCount: Int,
+    val truncated: Boolean,
+    val defaultTableName: String,
+    val onSubmit: (ExportFormat, ExportOptions, Boolean) -> Unit,
+)
+
 class DialogState {
     var connectionEditor by mutableStateOf<ConnectionEditorRequest?>(null)
     var folderDialog by mutableStateOf<FolderDialogRequest?>(null)
@@ -90,4 +103,6 @@ class DialogState {
     var importConflicts by mutableStateOf<ImportConflictRequest?>(null)
     /** 设置窗口显隐。 */
     var showSettings by mutableStateOf(false)
+    /** 结果导出弹窗（N8）。 */
+    var export by mutableStateOf<ExportRequest?>(null)
 }

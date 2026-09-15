@@ -109,6 +109,15 @@ interface DbDialect {
      */
     fun paginate(baseSql: String, offset: Long, limit: Int): String =
         "$baseSql LIMIT $limit OFFSET $offset"
+
+    /**
+     * N8 全量流式导出用的游标策略。默认无服务端游标；能走服务端游标/流式的方言覆写
+     * （PostgreSQL `TRANSACTION_PORTAL`、MySQL/MariaDB `MYSQL_STREAM`、其余大库 `PREFETCH`）。
+     */
+    val cursorStrategy: CursorStrategy get() = CursorStrategy.NONE
+
+    /** 流式导出的建议 fetchSize（行）；[CursorStrategy.MYSQL_STREAM] 忽略此值。 */
+    val streamFetchSize: Int get() = 1000
 }
 
 /**

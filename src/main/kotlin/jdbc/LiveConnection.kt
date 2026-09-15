@@ -8,6 +8,7 @@ import engine.Protocol
 import engine.model.ColumnMeta
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
+import engine.model.QueryColumn
 import engine.model.QueryResult
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
@@ -122,6 +123,9 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
 
     override fun sessionContextSql(ns: SchemaMeta): String? = dialect.sessionContextSql(ns)
 
+    /** 标识符引用（N8 SQL INSERT 导出按方言用反引号 / 双引号）。 */
+    fun quoteIdent(name: String): String = dialect.quoteIdent(name)
+
     // ---------- 执行 ----------
 
     override fun runStatement(statement: String, sessionContextSql: String?): QueryResult =
@@ -132,6 +136,20 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
 
     override fun paginate(statement: String, offset: Long, limit: Int): String? =
         dialect.paginate(statement, offset, limit)
+
+    /**
+     * N8 全量流式导出：重跑 [sql] 并按方言游标策略逐行回调（[onMeta] 一次 / [onRow] 每行）。
+     * JDBC 专属（同 [EditableSession] 思路，不进 `engine` 通用契约）。返回数据行数。
+     */
+    fun streamQuery(
+        sql: String,
+        sessionContextSql: String?,
+        onMeta: (List<QueryColumn>) -> Unit,
+        onRow: (List<String?>) -> Unit,
+    ): Long = onConnection { conn ->
+        QueryExecutor.applyContext(conn, sessionContextSql)
+        StreamingQuery.stream(conn, sql, dialect.cursorStrategy, dialect.streamFetchSize, onMeta, onRow)
+    }
 
     override fun applyWriteOps(ops: List<WriteOp>, sessionContextSql: String?): Int =
         onConnection { conn ->

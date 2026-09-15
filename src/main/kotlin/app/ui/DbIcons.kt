@@ -65,7 +65,7 @@ object DbIcons {
         vector("transpose", "M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z")
     }
 
-    /** 下载（导出 CSV）：结果区导出当前结果。 */
+    /** 下载（导出结果）：结果区导出当前结果（CSV / JSON / SQL INSERT / Excel）。 */
     val Download: ImageVector by lazy {
         vector("download", "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z")
     }

@@ -162,4 +162,16 @@ class DbDialectTest {
         // 外部驱动标记只给 SQL Server / Oracle
         assertEquals(setOf(DbType.SQLSERVER, DbType.ORACLE), DbType.entries.filter { it.externalDriver }.toSet())
     }
+
+    @Test
+    fun `cursor strategy is chosen per database`() {
+        assertEquals(CursorStrategy.TRANSACTION_PORTAL, PostgresDialect.cursorStrategy)
+        assertEquals(CursorStrategy.MYSQL_STREAM, MySqlDialect.cursorStrategy)
+        assertEquals(CursorStrategy.MYSQL_STREAM, MariaDbDialect.cursorStrategy)
+        assertEquals(CursorStrategy.PREFETCH, SqlServerDialect.cursorStrategy)
+        assertEquals(CursorStrategy.PREFETCH, OracleDialect.cursorStrategy)
+        assertEquals(CursorStrategy.PREFETCH, ClickHouseDialect.cursorStrategy)
+        assertEquals(CursorStrategy.NONE, SQLiteDialect.cursorStrategy)
+        assertEquals(CursorStrategy.NONE, H2Dialect.cursorStrategy)
+    }
 }

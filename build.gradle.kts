@@ -32,6 +32,8 @@ dependencies {
     implementation("com.clickhouse:clickhouse-jdbc:0.7.2")
     // Redis（N5 多协议后端：Jedis 阻塞客户端，契合现有阻塞 API + app 层 IO 包裹模型）
     implementation("redis.clients:jedis:5.2.0")
+    // N8 Excel 导出：POI OOXML（SXSSF 流式写出，大数据量不 OOM）；版本/许可确认见 doc/EXPORT.md §3
+    implementation("org.apache.poi:poi-ooxml:5.5.1")
     // SQL 编辑器语法高亮（api-x 同源：NeoUtils Highlight Compose）
     implementation("com.neoutils.highlight:highlight-compose:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
@@ -144,8 +146,9 @@ compose.desktop {
             targetFormats(TargetFormat.Deb, TargetFormat.Msi)
             packageName = "db-k"
             packageVersion = appVersion
-            // JDBC 驱动需要这些模块（jlink 默认运行时未包含）；java.net.http 供 Elasticsearch 后端
-            modules("java.sql", "java.naming", "java.management", "java.net.http")
+            // JDBC 驱动需要这些模块（jlink 默认运行时未包含）；java.net.http 供 Elasticsearch 后端；
+            // java.xml/java.desktop 供 POI（xmlbeans 解析 + 字体/颜色）
+            modules("java.sql", "java.naming", "java.management", "java.net.http", "java.xml", "java.desktop")
             // 应用图标：母版 icon/db-k.svg（1024，纯几何无字体）
             linux {
                 iconFile.set(project.file("icon/db-k-512.png"))

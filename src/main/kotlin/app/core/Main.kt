@@ -40,11 +40,16 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import app.core.export.ExportFormat
+import app.core.export.ExportOptions
+import app.core.export.ResultExport
+import app.core.export.defaultQuoteIdent
 import app.dialog.CommitPreviewDialog
 import app.dialog.ConfirmDialog
 import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
 import app.dialog.DdlDialog
+import app.dialog.ExportDialog
 import app.dialog.FolderNameDialog
 import app.dialog.ImportConflictDialog
 import app.dialog.PassphraseDialog
@@ -64,6 +69,7 @@ import app.state.ConsoleRenameRequest
 import app.state.ConsoleState
 import app.state.ConsoleRunUi
 import app.state.DialogState
+import app.state.ExportRequest
 import app.state.FolderDialogRequest
 import app.state.ImportConflictRequest
 import app.state.PassphraseRequest
@@ -86,11 +92,11 @@ import db.ProfileTransfer
 import engine.EditorLanguage
 import engine.Protocol
 import engine.model.ObjectKind
+import engine.model.QueryResult
 import engine.model.SchemaMeta
 import engine.model.displayNoun
 import engine.model.isPreviewable
 import jdbc.ExternalDrivers
-import jdbc.QueryExecutor
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -237,6 +243,51 @@ private fun AppBody(
             consoleState.commitEdits(c, p)
                 .onSuccess { n -> toastState.show(if (n > 0) "已提交 $n 处修改" else "没有修改") }
                 .onFailure { t -> toastState.show("提交失败：${t.message?.take(120)}") }
+        }
+    }
+
+    /**
+     * N8 结果导出：内存结果直接写（≤1000 行）；用户选「全量流式」时重跑 SQL，
+     * 按方言游标逐行导出（不受行数上限、内存常量级）。文件写出在 `Dispatchers.IO`。
+     */
+    fun startResultExport(
+        c: ConsoleRecord,
+        p: ConnectionProfile,
+        result: QueryResult,
+        file: File,
+        format: ExportFormat,
+        options: ExportOptions,
+        fullStream: Boolean,
+    ) {
+        if (!fullStream) {
+            val quote = connectionsState.jdbcConnection(p.id)?.let { l -> l::quoteIdent } ?: ::defaultQuoteIdent
+            runCatching { ResultExport.writeCached(file, format, result, options, quote) }
+                .onSuccess { n -> toastState.show("已导出 $n 行 → ${file.name}") }
+                .onFailure { t ->
+                    Logger.error(t, "result export failed")
+                    toastState.show("导出失败：${t.message?.take(80)}")
+                }
+            return
+        }
+        scope.launch {
+            // 重跑需要活连接：先确保就绪（已连接时为幂等空操作）
+            connectionsState.ensureConnectionReady(p)
+            val live = connectionsState.jdbcConnection(p.id)
+            if (live == null) {
+                toastState.show("全量导出需要可用的 JDBC 连接，请重连后再试")
+                return@launch
+            }
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val contextSql = consoleState.sessionContextSqlFor(c, p)
+                    ResultExport.writeStreamed(file, format, live, result.sql, contextSql, options, live::quoteIdent)
+                }
+            }
+            outcome.onSuccess { n -> toastState.show("已导出 $n 行 → ${file.name}") }
+                .onFailure { t ->
+                    Logger.error(t, "stream export failed")
+                    toastState.show("全量导出失败：${t.message?.take(80)}")
+                }
         }
     }
 
@@ -872,26 +923,30 @@ private fun AppBody(
                                 }
                             }
                         },
-                        onExportCsv = {
-                            val result = activeConsole?.let { consoleState.runStateOf(it.id).result }
-                            if (result != null) {
-                                // Linux 桌面支持无主窗口的 AWT 文件对话框（owner=null）
-                                val ownerFrame: java.awt.Frame? = null
-                                val fd = FileDialog(ownerFrame, "导出 CSV", FileDialog.SAVE)
-                                fd.file = "${activeProfile?.name ?: "query"}.csv"
-                                fd.isVisible = true
-                                val name = fd.file
-                                if (name != null) {
-                                    val file = File(fd.directory, name)
-                                    runCatching { CsvExport.write(file, result) }
-                                        .onSuccess {
-                                            toastState.show("已导出 ${result.rowCount} 行 → ${file.name}")
+                        onExport = {
+                            val c = activeConsole
+                            val p = activeProfile
+                            val result = c?.let { consoleState.runStateOf(it.id).result }
+                            if (c != null && p != null && result != null) {
+                                // SQL INSERT 默认表名取结果列的真实基表（单表查询时可用）
+                                val defaultTable = result.columns.firstNotNullOfOrNull { it.table } ?: "exported_data"
+                                dialogState.export = ExportRequest(
+                                    rowCount = result.rowCount,
+                                    truncated = result.truncated,
+                                    defaultTableName = defaultTable,
+                                    onSubmit = { format, options, fullStream ->
+                                        dialogState.export = null
+                                        // Linux 桌面支持无主窗口的 AWT 文件对话框（owner=null）
+                                        val fd = FileDialog(null as java.awt.Frame?, "导出 ${format.label}", FileDialog.SAVE)
+                                        fd.file = "${p.name}.${format.extension}"
+                                        fd.isVisible = true
+                                        val name = fd.file
+                                        if (name != null) {
+                                            val file = File(fd.directory, name)
+                                            startResultExport(c, p, result, file, format, options, fullStream)
                                         }
-                                        .onFailure {
-                                            Logger.error(it, "csv export failed")
-                                            toastState.show("导出失败：${it.message?.take(80)}")
-                                        }
-                                }
+                                    },
+                                )
                             }
                         },
                         onCancelRun = {
@@ -902,42 +957,6 @@ private fun AppBody(
                                     if (hit) "已请求取消当前查询"
                                     else "取消未生效（语句未开始或驱动不支持取消）",
                                 )
-                            }
-                        },
-                        onExportAllCsv = {
-                            val c = consoleState.activeConsole()
-                            val p = activeProfile
-                            val runState = c?.let { consoleState.runStateOf(it.id) }
-                            val result = runState?.result
-                            if (c == null || p == null || result == null || !result.truncated) {
-                                return@SqlWorkspace
-                            }
-                            val ownerFrame: java.awt.Frame? = null
-                            val fd = FileDialog(ownerFrame, "导出全量 CSV（重新执行，不受 1000 行限制）", FileDialog.SAVE)
-                            fd.file = "${p.name}.csv"
-                            fd.isVisible = true
-                            val name = fd.file
-                            if (name != null) {
-                                val file = File(fd.directory, name)
-                                scope.launch {
-                                    val contextSql = consoleState.sessionContextSqlFor(c, p)
-                                    val outcome = withContext(Dispatchers.IO) {
-                                        runCatching {
-                                            val live = connectionsState.jdbcConnection(p.id)
-                                                ?: error("连接已断开，请重连后再导出")
-                                            live.onConnection { conn ->
-                                                QueryExecutor.applyContext(conn, contextSql)
-                                                CsvExport.exportAll(file, conn, result.sql)
-                                            }
-                                        }
-                                    }
-                                    outcome.onSuccess { n ->
-                                        toastState.show("全量导出 ${n} 行 → ${file.name}")
-                                    }.onFailure { t ->
-                                        Logger.error(t, "full csv export failed")
-                                        toastState.show("导出失败：${t.message?.take(80)}")
-                                    }
-                                }
                             }
                         },
                         history = activeProfile?.let { consoleState.historyOf(it.id) }.orEmpty(),
@@ -1088,6 +1107,13 @@ private fun DialogHost(
         ImportConflictDialog(
             request = request,
             onDismiss = { dialogState.importConflicts = null },
+        )
+    }
+    dialogState.export?.let { request ->
+        ExportDialog(
+            request = request,
+            onDismiss = { dialogState.export = null },
+            onConfirm = { format, options, fullStream -> request.onSubmit(format, options, fullStream) },
         )
     }
     dialogState.confirm?.let { request ->

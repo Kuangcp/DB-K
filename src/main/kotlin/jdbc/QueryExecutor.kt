@@ -82,7 +82,7 @@ object QueryExecutor {
     private fun readResultSet(sql: String, rs: ResultSet, started: Long): QueryResult {
         val meta = rs.metaData
         val count = meta.columnCount
-        val columns = (1..count).map { readColumnMeta(meta, it) }
+        val columns = columnMetas(meta)
         val rows = ArrayList<List<String?>>(minOf(MAX_ROWS, 256))
         var truncated = false
         while (rs.next()) {
@@ -99,6 +99,10 @@ object QueryExecutor {
         }
         return QueryResult(sql, columns, rows, durationMs = System.currentTimeMillis() - started, truncated = truncated)
     }
+
+    /** 读整表列元数据（供普通结果读取与 N8 流式导出复用）。 */
+    fun columnMetas(meta: ResultSetMetaData): List<QueryColumn> =
+        (1..meta.columnCount).map { readColumnMeta(meta, it) }
 
     private fun readCell(rs: ResultSet, i: Int): String? = cellToString(rs.getObject(i))
 

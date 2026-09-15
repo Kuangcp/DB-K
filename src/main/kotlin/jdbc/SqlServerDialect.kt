@@ -18,6 +18,9 @@ import java.sql.Connection
  */
 object SqlServerDialect : GenericDialect(DbType.SQLSERVER, "com.microsoft.sqlserver.jdbc.SQLServerDriver") {
 
+    /** adaptive buffering 下 fetchSize 即批大小（doc/EXPORT.md §2）。 */
+    override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH
+
     private val schemasSql = """
         SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA
         WHERE SCHEMA_NAME NOT IN ('sys','INFORMATION_SCHEMA','guest')

@@ -47,7 +47,7 @@
 | 数据源 | PG / MySQL / MariaDB / SQLite / H2 / ClickHouse（HTTP）+ **Redis（N5）** + **Elasticsearch（N6）**；SQL Server / Oracle 走 `<dataDir>/drivers` 外部驱动 |
 | 对象树 | 文件夹 → 连接（状态点/懒加载）→ schema → 对象按类型分组计数（**组类型由会话提供，JDBC 11 类 / Redis 仅「键」**）；组折叠 + **按组懒加载**；展开持久化 |
 | 编辑器 | 高亮、行号、当前行高亮；关键字 / 表视图 / 列名补全（非 SQL 后端关闭）；选中执行、多语句多 Tab；`Ctrl+Q` DDL、`Ctrl+S` |
-| 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / CSV（含全量流式）；**客户端排序 + 每列筛选 + 快速过滤（不重跑 SQL）+ 取更多（方言分页追加）**；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销**；**增行 / 删行（N3，主键定位，与改格同单事务提交）** |
+| 结果区 | 网格滚动 / 列宽拖动 / 单元格选中复制 / 转置 / 导出（CSV / JSON / SQL INSERT / Excel，全量走游标流式）；**客户端排序 + 每列筛选 + 快速过滤（不重跑 SQL）+ 取更多（方言分页追加）**；**单元格编辑 + 提交（含 UPDATE 预览）+ 刷新 + 撤销**；**增行 / 删行（N3，主键定位，与改格同单事务提交）** |
 | 查看器 | 长文本弹窗、JSON 树 + 高亮、Base64 图片预览、MD5 |
 | 控制台 | 跨源多标签、独立执行目标（库/schema）、光标记忆、关闭可重开 |
 | 连接与存储 | app.db SQLite v8（迁移 + FK 级联）、列缓存、密码 AES-256-GCM、连接档案 JSON 导入导出、正文独立 `.sql` |
@@ -78,7 +78,7 @@
 | 增 / 删行 | ✅ | ✅ | ✅ | N3（主键定位，已完成） |
 | 手动事务 | ✅ | ✅ | 🚫 暂不做 | 决策 3 |
 | 导入 | ✅ 多格式 | ✅ | ❌ | 后置 |
-| 导出 | ✅ 多格式 | ✅ | ◐ CSV | N8：+JSON / SQL INSERT / Excel |
+| 导出 | ✅ 多格式 | ✅ | ✅ CSV / JSON / SQL INSERT / Excel | N8 完成（全量走游标流式） |
 | 表结构设计 | ✅ GUI | ✅ | 🚫 GUI | 用 DDL 编辑替代（决策 5） |
 | Schema / 数据对比 | ✅ | ◐ | ❌ | 可选深化 |
 | 用户 / 权限 | ✅ | ✅ | ❌ | 可选深化 |
@@ -222,11 +222,13 @@
 - **不做** GUI 表设计器（决策 5）。DDL 由方言 `tableDdl` 生成初稿，用户自行修改。
 - **验收**：编辑后的 DDL 可在演示库执行；失败有可读错误。
 
-#### N8 导出扩展：JSON / SQL INSERT / Excel
-- 结果区导出格式新增 JSON、SQL INSERT（可指定表名/批量大小）、Excel（Apache POI）。
-- CSV 已支持（含全量流式）；导入（CSV 向导）后置。
-- **待定**：POI 体积/许可确认（§8 Q5）。
-- **验收**：导出文件可被第三方工具读回；大结果导出不 OOM（流式写入）。
+#### N8 导出扩展：JSON / SQL INSERT / Excel ✅ 已实现
+- 结果区导出格式新增 JSON、SQL INSERT（可指定表名/批量大小）、Excel（Apache POI `SXSSFWorkbook` 流式写出）。
+- 统一导出弹窗（`app/dialog/ExportDialog.kt`）选格式与参数；结果被截断（>1000 行）时可勾「全量流式」——
+  重跑 SQL 按**方言游标策略**逐行导出（PostgreSQL 服务端 portal / MySQL·MariaDB 逐行流式 / 其余预取），内存常量级不 OOM。
+- 设计见 [doc/EXPORT.md](doc/EXPORT.md)（含各库游标支持矩阵）；导入（CSV 向导）后置。
+- **验收**：`compileKotlin / test / smokeJdbc` 全绿；新增 `ExportTextTest / ExportSinkTest / StreamingQueryIntegrationTest /
+  ResultExportIntegrationTest`（XLSX 用 POI 回读、JSON/CSV 内容断言）。
 
 #### N9 树导航增强
 - 表子节点（列 / 索引 / 外键 / 触发器，按需懒加载，复用列缓存）；树内搜索 / 过滤；
@@ -350,7 +352,7 @@ interface DataSourceSession : AutoCloseable {
 | Q2 | Redis 客户端：Jedis（倾向）还是 Lettuce？ | ✅ 已定：Jedis（N5 已实现） |
 | Q3 | ES：走 `HttpClient`（倾向）还是官方 `elasticsearch-java`？兼容 ES 7.x / 8.x 哪些？ | ✅ 已定：`java.net.http.HttpClient` + `kotlinx.serialization.json`（N6 已实现）；未特化版本，按 REST 通用处理 |
 | Q4 | Redis/ES 控制台是否允许写命令（SET/DEL/PUT/POST）？还是第一版纯只读？ | ✅ 已定：允许写命令 + 危险命令二次确认（N5） |
-| Q5 | Excel 导出确认引入 Apache POI？体积 / 许可可接受吗？ | N8 依赖 |
+| Q5 | Excel 导出确认引入 Apache POI？体积 / 许可可接受吗？ | 已采用 `poi-ooxml:5.5.1`（Apache-2.0）；体积换取流式 xlsx，见 N8 / doc/EXPORT.md |
 | Q6 | Redis TLS / ES HTTPS 是否 N5/N6 就要求？（SSH 已延后，TLS 场景不同） | 连接层设计 |
 
 ---

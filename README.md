@@ -129,13 +129,15 @@ src/main/kotlin/
 - [x] N3 增行/删行
 - [x] N5 Redis 后端：Jedis 会话实现 + 数据驱动对象组（`ObjectKind.KEY`）+ 命名空间过滤器（DB/类型/key 模式搜索，`SCAN` 游标分页）+ 危险命令确认
 - [x] N6 Elasticsearch 后端：`HttpClient` + JSON DSL（集群命名空间 / 索引·别名 / `_mapping` / JSON 高亮 / `from·size` 取更多）
-- [ ] N7 DDL 编辑执行 → N8 导出 JSON/SQL INSERT/Excel →
-  N9 树导航 → N10 SSL/驱动管理 → N11 EXPLAIN/会话锁 → N12 发布验证（最低）。
+- [ ] N7 DDL 编辑执行
+- [x] N8 导出 JSON / SQL INSERT / Excel（POI `SXSSFWorkbook` 流式；全量重跑走方言游标策略，大结果不 OOM；见 [doc/EXPORT.md](doc/EXPORT.md)）
+- [ ] N9 树导航 → N10 SSL/驱动管理 → N11 EXPLAIN/会话锁 → N12 发布验证（最低）。
 
 ## 文档
 
 - **[AGENTS.md](AGENTS.md)**：工具链、分层、主题硬性规则、持久化约定、验证习惯
 - **[doc/DESIGN.md](doc/DESIGN.md)**：数据模型、方言抽象、线程模型、打包风险
+- **[doc/EXPORT.md](doc/EXPORT.md)**：N8 导出设计（格式规则 + 各数据库游标支持矩阵）
 - **[Roadmap.md](Roadmap.md)**：分阶段发展计划与完成状态
 - **[doc/PACKAGING.md](doc/PACKAGING.md)**：Deb / AppImage / MSI 打包
 - **[TODO.md](TODO.md)**：零散待办

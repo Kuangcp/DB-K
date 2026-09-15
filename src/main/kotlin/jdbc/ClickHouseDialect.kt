@@ -14,6 +14,9 @@ import java.sql.Connection
  */
 object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdbc.ClickHouseDriver") {
 
+    /** CH 走 HTTP 响应流，fetchSize 控制批大小。 */
+    override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH
+
     /** 引擎名（大写）判定为“视图”。 */
     private val viewEngines = setOf("VIEW", "MATERIALIZEDVIEW", "LIVEVIEW", "WINDOWVIEW")
 

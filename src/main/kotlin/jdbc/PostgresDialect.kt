@@ -20,6 +20,9 @@ import java.sql.ResultSet
  */
 object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver") {
 
+    /** PG 必须 autoCommit=false + fetchSize 才走服务端 portal，否则整表进内存（doc/EXPORT.md §2）。 */
+    override val cursorStrategy: CursorStrategy get() = CursorStrategy.TRANSACTION_PORTAL
+
     private val schemasSql = """
         SELECT schema_name FROM information_schema.schemata
         WHERE schema_name NOT LIKE 'pg\_%' AND schema_name <> 'information_schema'
