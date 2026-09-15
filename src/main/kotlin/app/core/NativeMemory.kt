@@ -30,8 +30,16 @@ object NativeMemory {
 
     private val libc: LibC? = runCatching { Native.load("c", LibC::class.java) }.getOrNull()
 
+    /** 非 Linux（Windows/macOS）没有 glibc 的 mallopt/malloc_trim，也无 /proc/self/statm，整体降级为 no-op。 */
+    private val isLinux: Boolean =
+        System.getProperty("os.name").orEmpty().lowercase().contains("linux")
+
     /** 启动早期调用：压低 mmap/trim 阈值并限制 arena 数，避免峰值变成常驻。 */
     fun configure() {
+        if (!isLinux) {
+            Logger.debug("native mem: 非 Linux（os.name={}），跳过 glibc 调优", System.getProperty("os.name"))
+            return
+        }
         val ok = runCatching {
             val c = libc ?: return@runCatching false
             c.mallopt(M_MMAP_THRESHOLD, THRESHOLD_BYTES)
@@ -44,6 +52,7 @@ object NativeMemory {
 
     /** 重活（查询完成 / 导出 / 关闭大图）后调用，把 glibc 空闲页归还 OS。 */
     fun trim(tag: String) {
+        if (!isLinux) return
         val before = rssKb()
         val trimmed = runCatching { libc?.malloc_trim(0) == 1 }.getOrDefault(false)
         val after = rssKb()
@@ -58,6 +67,7 @@ object NativeMemory {
 
     /** 当前进程 RSS（kB）；非 Linux 返回 -1。 */
     fun rssKb(): Long {
+        if (!isLinux) return -1
         val f = File("/proc/self/statm")
         if (!f.canRead()) return -1
         return runCatching {

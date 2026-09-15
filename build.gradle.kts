@@ -80,6 +80,10 @@ tasks.register<JavaExec>("smokeJdbc") {
 tasks.matching { it.name == "run" || it.name == "runDistributable" }.configureEach {
     if (this is JavaExec) {
         environment("MALLOC_ARENA_MAX", "1")
+        // Windows 上 System.out 默认按 native.encoding（GBK）编码，而 Gradle 控制台按 UTF-8 解码，
+        // 造成中文日志乱码（“锟斤拷”）。强制子进程 stdout/stderr 走 UTF-8，与 Gradle/tinylog 一致。
+        // Linux 本机 native.encoding 通常已是 UTF-8，此处设置无副作用。
+        jvmArgs("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
     }
 }
 
