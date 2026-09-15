@@ -22,6 +22,13 @@ interface DbDialect {
     /** 建立连接（阻塞；DriverManager + 显式 Class.forName 保证驱动已注册）。 */
     fun openConnection(profile: ConnectionProfile): Connection
 
+    /**
+     * 连接健康策略（见 `doc/CONNECTION_HEALTH.md`）：空闲超阈值时先用前探活，死连接自动重建。
+     * null = 该库无网络空闲问题（嵌入式/本地文件），跳过校验。
+     * 需按连接形态判断的方言（如 H2 嵌入式 vs `tcp://`）覆写。
+     */
+    fun healthFor(profile: ConnectionProfile): ConnectionHealth? = null
+
     /** 探测“库”层级（顶层节点，对应 UI 树的 schema 行）。 */
     fun loadSchemas(conn: Connection): List<SchemaMeta>
 

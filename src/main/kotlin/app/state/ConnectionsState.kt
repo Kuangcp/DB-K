@@ -17,6 +17,7 @@ import engine.model.SchemaMeta
 import engine.model.SchemaObjects
 import engine.model.SQL_OBJECT_KINDS
 import jdbc.LiveConnection
+import jdbc.isConnectionLost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.tinylog.Logger
@@ -27,6 +28,8 @@ import java.sql.SQLException
 /** 把异常压成一行可读短消息（供状态栏/弹层展示）。 */
 internal fun friendlySqlError(t: Throwable?): String {
     val cause = t ?: return "未知错误"
+    // 连接中断：读操作已自动重试，写操作不重试（可能已执行）但连接已重建，提示用户重试
+    if (isConnectionLost(cause)) return "连接已中断，已尝试自动重连，请重试执行"
     val root = generateSequence(cause) { it.cause }.last()
     return when (root) {
         is SQLException -> {

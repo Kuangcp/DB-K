@@ -24,39 +24,6 @@
 - 未做（Redis 可选深化）：专用 value viewer（JSON 树 / TTL 编辑）、Redis 命令补全与语法高亮（`editorLanguage` 能力位已预留）、工作台表格式 key 浏览器（方案 B）
 - （远期）Elasticsearch 后端（N6）
 - （远期）SSH 隧道连内网库
-- 连接的 可用性检测，现在执行会报错
-
-Caused by: com.mysql.cj.exceptions.ConnectionIsClosedException: No operations allowed after connection closed.
-        at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccesso
-r.java:62)
-        at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499)
-        at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:483)
-        at com.mysql.cj.exceptions.ExceptionFactory.createException(ExceptionFactory.java:52)
-        at com.mysql.cj.exceptions.ExceptionFactory.createException(ExceptionFactory.java:95)
-        at com.mysql.cj.exceptions.ExceptionFactory.createException(ExceptionFactory.java:140)
-        at com.mysql.cj.NativeSession.checkClosed(NativeSession.java:929)
-        at com.mysql.cj.jdbc.ConnectionImpl.checkClosed(ConnectionImpl.java:565)
-        at com.mysql.cj.jdbc.ConnectionImpl.createStatement(ConnectionImpl.java)
-        ... 8 more
-Caused by: com.mysql.cj.exceptions.CJCommunicationsException: The client was disconnected by the server because of i
-nactivity. See wait_timeout and interactive_timeout for configuring this behavior.
-        at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccesso
-r.java:62)
-        at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499)
-        at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:483)
-        at com.mysql.cj.exceptions.ExceptionFactory.createException(ExceptionFactory.java:52)
-        at com.mysql.cj.exceptions.ExceptionFactory.createException(ExceptionFactory.java:95)
-        at com.mysql.cj.exceptions.ExceptionFactory.createException(ExceptionFactory.java:140)
-        at com.mysql.cj.protocol.a.NativeProtocol.checkErrorMessage(NativeProtocol.java:851)
-        at com.mysql.cj.protocol.a.NativeProtocol.checkErrorMessage(NativeProtocol.java:778)
-        at com.mysql.cj.protocol.a.NativeProtocol.sendCommand(NativeProtocol.java:708)
-        at com.mysql.cj.protocol.a.NativeProtocol.sendQueryPacket(NativeProtocol.java:940)
-        at com.mysql.cj.NativeSession.execSQL(NativeSession.java:817)
-        at com.mysql.cj.jdbc.StatementImpl.executeQuery(StatementImpl.java:1274)
-        at jdbc.QueryExecutor.execute(QueryExecutor.kt:80)
-        ... 6 more
-2026-09-15 12:43:08 [jdbc-1b67a0] jdbc.QueryExecutor.readResultSet()
-INFO: query truncated by memory budget at 78 rows / 15850413 chars: select * from channel_config_bench
 
 **树区域**
 

@@ -1,5 +1,6 @@
 package jdbc
 
+import db.ConnectionProfile
 import db.DbType
 import engine.model.ColumnMeta
 import engine.model.SchemaMeta
@@ -17,6 +18,10 @@ import java.sql.Connection
  * - DDL 优先 `DBMS_METADATA.GET_DDL`，失败回落列元数据重建。
  */
 object OracleDialect : GenericDialect(DbType.ORACLE, "oracle.jdbc.OracleDriver") {
+
+    /** Oracle 探活用 `SELECT 1 FROM DUAL`（老的 ojdbc 无 `isValid`）。 */
+    override fun healthFor(profile: ConnectionProfile): ConnectionHealth =
+        ConnectionHealth(validationQuery = "SELECT 1 FROM DUAL")
 
     /** Oracle 只有 row prefetch（无对外 REF CURSOR），按 fetchSize 批量预取。 */
     override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH

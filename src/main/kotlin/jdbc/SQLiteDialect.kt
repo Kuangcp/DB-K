@@ -1,5 +1,6 @@
 package jdbc
 
+import db.ConnectionProfile
 import db.DbType
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
@@ -12,6 +13,9 @@ import java.sql.Connection
  * （JDBC getTables 在 sqlite-jdbc 上行为不稳定）。
  */
 object SQLiteDialect : GenericDialect(DbType.SQLITE, "org.sqlite.JDBC") {
+
+    /** 本地单文件无网络空闲问题，跳过用前校验。 */
+    override fun healthFor(profile: ConnectionProfile): ConnectionHealth? = null
 
     /** 单文件无库/schema 可切。 */
     override val supportsTargetSwitch: Boolean get() = false

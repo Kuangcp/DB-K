@@ -175,6 +175,10 @@ object DialectRegistry { fun forType(t: DbType): DbDialect }
 - **取消执行**：记录当前 `Statement` 引用，取消时投递 `statement.cancel()`（JDBC 原生线程安全）；真卡死可降级为整连接 close + 重建。
 - 查询防呆：默认 `maxRows=1000`、超时 30s；**大字段内存治理**（`QueryExecutor`）：单格超 `MAX_CELL_CHARS`(1M) 截断并加标记（`isTruncatedCell`，截断单元格禁止就地编辑）；单次结果总字符预算 `MAX_RESULT_CHARS`(16M) 超出即停止读取并置 `truncated`；BLOB 走 `getBinaryStream` 只统计字节数。网格渲染只取前缀预览（512 字符），避免 Compose 按巨大段落排版。
 - **原生内存治理**（`app/core/NativeMemory`）：Skia/Compose 资源靠 Cleaner 在 GC 时才回收，JVM 堆小时 GC 不触发 → RSS 只涨不降。两条措施：① 图片查看器显式 close 底层 Skia 对象，并把底图缩到预览预算（`MAX_PREVIEW_PIXELS` 2MP）；② glibc 多线程 arena 会把峰值锁成常驻（每线程 64MB arena，free 后不跨线程复用）——`gradle run` / AppImage 启动前置 `MALLOC_ARENA_MAX=1`（必须在 JVM 启动前设，`main()` 里 mallopt 已太晚），重活后 `malloc_trim(0)` 归还空闲页。
+- **连接健康（用前校验）**：长连接会被服务端/中间件空闲踢掉（MySQL `wait_timeout`、PG `idle_session_timeout`、NAT 等），
+  而客户端 `Connection.isClosed` 仍为 false，直到下次发 SQL 才暴露。`LiveConnection` 把所有 JDBC 调用收敛到 `onConnection` 单点入口：
+  空闲超阈值（默认 60s，`DbDialect.healthFor` 给策略）先用 `isValid` / 方言校验语句探活，探不通即重建；
+  读操作若途中断连自动重试一次，写操作不重试（服务端可能已执行）但强制重建连接。嵌入式/本地库跳过校验。详见 `doc/CONNECTION_HEALTH.md`。
 
 ---
 

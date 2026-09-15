@@ -19,6 +19,12 @@ open class GenericDialect(
     private val driverClass: String,
 ) : DbDialect {
 
+    /**
+     * 网络库默认启用「用前校验」：空闲 60s 后探活一次，死连接自动重建。
+     * 嵌入式/本地库（SQLite、H2 file/mem）覆写为 null 跳过。
+     */
+    override fun healthFor(profile: ConnectionProfile): ConnectionHealth? = ConnectionHealth()
+
     override fun openConnection(profile: ConnectionProfile): Connection {
         val url = profile.urlPreview()
         // 外部驱动（SQL Server / Oracle）不在内置 classpath：<dataDir>/drivers 的 jar 由独立

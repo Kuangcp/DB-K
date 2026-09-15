@@ -1,5 +1,6 @@
 package jdbc
 
+import db.ConnectionProfile
 import db.DbType
 import engine.model.ColumnMeta
 import engine.model.SchemaMeta
@@ -13,6 +14,10 @@ import java.sql.Connection
  * 标识符引用用反引号（双引号在默认设置下不是标识符引号）。
  */
 object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdbc.ClickHouseDriver") {
+
+    /** CH 驱动对 `isValid` 支持不一，探活显式用 `SELECT 1`。 */
+    override fun healthFor(profile: ConnectionProfile): ConnectionHealth =
+        ConnectionHealth(validationQuery = "SELECT 1")
 
     /** CH 走 HTTP 响应流，fetchSize 控制批大小。 */
     override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH
