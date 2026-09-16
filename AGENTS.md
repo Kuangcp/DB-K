@@ -147,8 +147,20 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 - 窗口几何：`WindowPrefs` 存 `<dataDir>/window.properties`（px 值）；退出 onCloseRequest 保存
   `windowState.position/size`（position 单位 Dp，需 *density 转 px；isSpecified=false 时不存 x/y，下次居中）。
 - CSV 导出：`CsvExport` 写 UTF-8、双引号转义、NULL→空；AWT FileDialog 以 null owner 在 Linux 可用。
-- UI 自动化（xdotool 合成点击）在本机对 Compose 窗口无效：布局/像素用截图+python3 分析，
-  交互最终一律人工验收；不要为合成点击耗费时间。
+- 需要人工确认的交互（拖拽、悬浮弹层、主题可读性…）：不要自己上 xdotool/截图分析，
+  按「UI 验证方式」给步骤让用户验收。
+
+## UI 验证方式（★ 必读，别再犯）
+
+- **不要自己去做 UI 自动化验证**。禁止：xdotool 合成点击/输入、截图 + python3 像素分析、
+  建临时沙箱数据目录后启动 GUI 实例（含改 `~/.local/share/db-k/app-settings.properties` 的
+  `debugHome`、或 `XDG_DATA_HOME` 重定向）。历史事故：写全局 `app-settings.properties` 把用户的
+  db-k 窗口重定向到了沙箱副本（里面只剩一个测试连接），用户看到的是“数据源全没了”，实际是虚惊。
+  另一个浪费：合成点击对 Compose 窗口无效，盲猜坐标、diff 截图基本定位不到弹层。
+- 需要验证 UI 行为时：**只给人工验证步骤**（前置条件 → 操作 → 期望结果），由用户执行并反馈，
+  再根据反馈改代码。不要代替用户跑 GUI，不要为了“顺手验证”去动用户的数据目录/环境变量。
+- 程序化可验的部分（纯逻辑、DB 迁移、方言、驱动、导出格式…）照旧自己跑 `gradle test` /
+  `gradle smokeJdbc` 等，不受此限。
 
 ## 验证习惯（每阶段必做）
 
