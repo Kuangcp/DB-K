@@ -33,27 +33,45 @@ import java.util.concurrent.atomic.AtomicReference
  */
 fun main() {
     val dir = Files.createTempDirectory("dbk-smoke")
-    Logger.info("smoke dir: {}", dir)
+    Logger.info("smoke dir: {} (run ends with cleanup)", dir)
+    try {
+        smokeSqlite(dir)
+        smokeH2(dir)
+        smokeCancel(dir)
+        smokeDbStore(dir)
 
-    smokeSqlite(dir)
-    smokeH2(dir)
-    smokeCancel(dir)
-    smokeDbStore(dir)
+        // ClickHouse 无本地服务：仅验证驱动类可加载 + URL 格式（真实连接靠用户环境）
+        val chDriver = Class.forName(DbType.CLICKHOUSE.driverClass)
+        val chProfile = ConnectionProfile(
+            id = "smoke-ch", name = "smoke", dbType = DbType.CLICKHOUSE,
+            host = "localhost", port = DbType.CLICKHOUSE.defaultPort, database = "default",
+        )
+        Logger.info("[ClickHouse] driver={} url={}", chDriver.name, chProfile.urlPreview())
+        check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
 
-    // ClickHouse 无本地服务：仅验证驱动类可加载 + URL 格式（真实连接靠用户环境）
-    val chDriver = Class.forName(DbType.CLICKHOUSE.driverClass)
-    val chProfile = ConnectionProfile(
-        id = "smoke-ch", name = "smoke", dbType = DbType.CLICKHOUSE,
-        host = "localhost", port = DbType.CLICKHOUSE.defaultPort, database = "default",
-    )
-    Logger.info("[ClickHouse] driver={} url={}", chDriver.name, chProfile.urlPreview())
-    check(chProfile.urlPreview().startsWith("jdbc:clickhouse://localhost:8123/default"))
+        smokeEditorUtils()
+        smokeColumnCompletion()
+        smokeRowUpdater(dir)
+        smokeExternalDrivers(dir)
+        Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion + row-updater + external-drivers PASS (ClickHouse driver load OK)")
+    } finally {
+        // 先释放外部驱动 classloader（否则 Windows 上 jar 句柄会挡住删除）
+        runCatching { ExternalDrivers.reset() }
+        // 临时库不小（H2 cancel 负载 ~95MB/次），必须在结束时清掉，否则 /tmp 越堆越多
+        deleteRecursively(dir)
+    }
+}
 
-    smokeEditorUtils()
-    smokeColumnCompletion()
-    smokeRowUpdater(dir)
-    smokeExternalDrivers(dir)
-    Logger.info("smoke result: {}", "SQLite + H2 + cancel + db-store(vault/meta-cache) + editor-utils + column-completion + row-updater + external-drivers PASS (ClickHouse driver load OK)")
+/** 递归删除临时目录（失败只告警，不影响自检结果）。 */
+private fun deleteRecursively(dir: Path) {
+    runCatching {
+        if (Files.exists(dir)) {
+            Files.walk(dir).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+            }
+        }
+        Logger.info("smoke dir cleaned: {} (exists={})", dir, Files.exists(dir))
+    }.onFailure { Logger.warn(it, "smoke dir cleanup failed: {}", dir) }
 }
 
 /** 编辑器补全 / 转置 / 行转 INSERT 的纯逻辑自检（SqlEditing.kt）。 */

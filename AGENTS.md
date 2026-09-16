@@ -148,7 +148,9 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 
 1. `gradle compileKotlin` 无错
 2. `gradle test` 通过（单元测试：jdbc/tree/db 纯逻辑 + 嵌入式库集成，`src/test/kotlin`）
-3. `gradle smokeJdbc` 通过（驱动层 + QueryExecutor 冒烟）
+3. `gradle smokeJdbc` 通过（驱动层 + QueryExecutor 冒烟）——**自检临时目录必须自行清理**：
+   `main()` 用 `try/finally` 递归删除 `Files.createTempDirectory("dbk-smoke")`（H2 cancel 负载单次 ~95MB，
+   不清理会堆爆 /tmp）；失败只告警不改判定。
 4. `gradle smokeRedis`（可选：连得上 Redis 才跑，连不上打印 SKIP；`-Ddbk.redisHost/-Ddbk.redisPort/-Ddbk.redisUser/-Ddbk.redisPassword` 覆盖）
 4b. `gradle smokeEs`（可选：连得上 ES 才跑，连不上打印 SKIP；`-Ddbk.esUrl/-Ddbk.esUser/-Ddbk.esPassword/-Ddbk.esIndex` 覆盖；会建/删临时索引）
 5. 程序化可验的部分用 sqlite3/python3 直查 `~/.local/share/db-k/app.db`（库表、迁移、演示连接）
