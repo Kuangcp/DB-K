@@ -40,6 +40,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -49,8 +50,6 @@ import androidx.compose.ui.window.rememberDialogState
 import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
 import app.core.NativeMemory
-import app.ui.applyJsonHighlightRules
-import app.ui.applySqlHighlightRules
 import app.ui.decodeBase64Bytes
 import app.ui.humanSize
 import app.ui.imageFormatName
@@ -58,7 +57,9 @@ import app.ui.jsonSyntaxPalette
 import app.ui.looksLikeJson
 import app.ui.md5Hex
 import app.ui.parseJsonDocument
-import app.ui.sqlHighlightKeywords
+import app.ui.sqlHighlightKeywordSet
+import app.ui.sqlHighlightSpans
+import app.ui.jsonHighlightSpans
 import app.ui.sqlSyntaxPalette
 import engine.Protocol
 import org.jetbrains.skia.Bitmap
@@ -69,8 +70,7 @@ import org.jetbrains.skia.Rect
 import org.tinylog.Logger
 import kotlin.math.max
 import kotlin.math.sqrt
-import com.neoutils.highlight.compose.remember.rememberAnnotatedString
-import com.neoutils.highlight.compose.remember.rememberHighlight
+import kotlin.math.max
 import db.ConnectionProfile
 import engine.model.SchemaMeta
 import kotlinx.coroutines.Dispatchers
@@ -215,18 +215,17 @@ private fun ViewerText(content: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * 只读 SQL 代码视图：与编辑器共用 [applySqlHighlightRules] 语法高亮，等宽 + 主题色。
+ * 只读 SQL 代码视图：与编辑器共用 [sqlHighlightSpans] 语法高亮，等宽 + 主题色。
  * 仅用于 DDL（表/视图等数据库对象定义）；任意单元格文本仍用 [ViewerText]，不按 SQL 误染。
  */
 @Composable
 private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
     val isDark = MaterialTheme.colors.isLight.not()
-    val keywords = remember { sqlHighlightKeywords().distinct() }
-    // isDark 作 key：主题切换时重建 Highlight（与 EditorPane 一致，否则旧色板不刷新）。
-    val highlight = rememberHighlight(isDark) {
-        applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
+    val keywords = remember { sqlHighlightKeywordSet() }
+    // isDark 作 key：主题切换时重算色板（与 EditorPane 一致）。
+    val annotated = remember(content, isDark, keywords) {
+        AnnotatedString(content, spanStyles = sqlHighlightSpans(content, sqlSyntaxPalette(isDark), keywords))
     }
-    val annotated = highlight.rememberAnnotatedString(content)
     ViewerFrame(modifier) {
         Text(
             annotated,
@@ -244,10 +243,10 @@ private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
 @Composable
 private fun JsonCodeText(content: String, modifier: Modifier = Modifier) {
     val isDark = MaterialTheme.colors.isLight.not()
-    val palette = remember(isDark) { jsonSyntaxPalette(isDark) }
-    // isDark 作 key：主题切换时重建 Highlight（与 SqlCodeText 一致）。
-    val highlight = rememberHighlight(isDark) { applyJsonHighlightRules(palette) }
-    val annotated = highlight.rememberAnnotatedString(content)
+    // isDark 作 key：主题切换时重算色板（与 SqlCodeText 一致）。
+    val annotated = remember(content, isDark) {
+        AnnotatedString(content, spanStyles = jsonHighlightSpans(content, jsonSyntaxPalette(isDark)))
+    }
     ViewerFrame(modifier) {
         Text(
             annotated,

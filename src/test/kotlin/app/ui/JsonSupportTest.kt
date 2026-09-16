@@ -2,8 +2,6 @@ package app.ui
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
-import com.neoutils.highlight.compose.extension.toAnnotatedString
-import com.neoutils.highlight.core.Highlight
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -146,7 +144,7 @@ class JsonSupportTest {
     private val pal = jsonSyntaxPalette(isDark = false)
 
     private fun highlight(text: String): AnnotatedString =
-        Highlight { applyJsonHighlightRules(pal) }.toAnnotatedString(text)
+        AnnotatedString(text, spanStyles = jsonHighlightSpans(text, pal))
 
     private fun colorAt(a: AnnotatedString, index: Int): Color? =
         a.spanStyles.lastOrNull { index >= it.start && index < it.end }?.item?.color
@@ -171,6 +169,51 @@ class JsonSupportTest {
         val a = highlight("{\"k\": \"v\"}")
         assertEquals(pal.key, colorAt(a, 2))
         assertEquals(pal.string, colorAt(a, 7))
+    }
+
+    @Test
+    fun keyDetectionToleratesWhitespaceBeforeColon() {
+        assertEquals(pal.key, colorAt(highlight("{\"a\"   : 1}"), 1))
+        assertEquals(pal.string, colorAt(highlight("{\"a\"  1}"), 1), "后面不是冒号则按普通字符串着色")
+    }
+
+    @Test
+    fun numbersWithSignDotAndExponent() {
+        val a = highlight("[-1, 2.5, 3e10, -4.2E-3]")
+        assertEquals(pal.number, colorAt(a, 1), "-1")
+        assertEquals(pal.number, colorAt(a, 5), "2.5")
+        assertEquals(pal.number, colorAt(a, 10), "3e10")
+        assertEquals(pal.number, colorAt(a, 16), "-4.2E-3")
+    }
+
+    @Test
+    fun nestedObjectsHighlightEachLevel() {
+        val a = highlight("{\"a\":{\"b\":[{\"c\":1}]}}")
+        assertEquals(pal.key, colorAt(a, 1), "外层键")
+        assertEquals(pal.key, colorAt(a, 6), "内层键")
+        assertEquals(pal.key, colorAt(a, 13), "数组内对象的键")
+        assertEquals(pal.number, colorAt(a, 16), "内层数字")
+    }
+
+    @Test
+    fun bareWordsThatAreNotLiteralsStayUncolored() {
+        assertNull(colorAt(highlight("{\"k\": truestuff}"), 7), "truestuff 不是布尔字面量")
+    }
+
+    /**
+     * 回归：长字符串值（含大量转义）必须先扫完不爆栈。
+     * 旧实现的正则 `("(?:\\.|[^"\\])*")` 在 ~5k 字符就 StackOverflowError（UI 线程卡死事故）。
+     */
+    @Test
+    fun longStringValueDoesNotOverflowStack() {
+        val long = "{\"k\":\"" + "x".repeat(300_000) + "\"}"
+        assertEquals(pal.string, colorAt(highlight(long), 100_000), "超长字符串值应整体着色且不爆栈")
+
+        val escapes = "{\"k\":\"" + "\\n".repeat(150_000) + "\"}"
+        assertEquals(pal.string, colorAt(highlight(escapes), 100_000), "大量转义序列不应爆栈")
+
+        val manyKeys = "{" + "\"k\":1,".repeat(50_000) + "\"z\":0}"
+        assertTrue(highlight(manyKeys).spanStyles.isNotEmpty(), "海量短字段不应崩")
     }
 
     @Test

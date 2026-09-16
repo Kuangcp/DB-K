@@ -1,9 +1,6 @@
 package app.ui
 
 import androidx.compose.ui.graphics.Color
-import com.neoutils.highlight.core.extension.textColor
-import com.neoutils.highlight.core.scope.HighlightScope
-import com.neoutils.highlight.core.util.UiColor
 
 /**
  * SQL 编辑器语法高亮的色板与词表。
@@ -39,48 +36,17 @@ internal fun sqlSyntaxPalette(isDark: Boolean): SqlSyntaxPalette =
         )
     }
 
-/** androidx Color → NeoUtils UiColor（api-x 同款转换，ARGB 打包）。 */
-internal fun Color.toUiColor(): UiColor {
-    val r = (this.red * 255).toInt()
-    val g = (this.green * 255).toInt()
-    val b = (this.blue * 255).toInt()
-    val a = (this.alpha * 255).toInt()
-    return UiColor.Integer((a shl 24) or (r shl 16) or (g shl 8) or b)
-}
-
 /**
- * 向 [HighlightScope] 注册 SQL 高亮规则（编辑器与只读 DDL 查看器共用同一份，避免两边漂移）。
+ * 高亮用关键字集合（大写，供 [sqlHighlightSpans] O(1) 比对；调用处 remember 一次即可）。
  *
- * 用**单次交替正则**（leftmost-first）分词，而非多条独立规则：字符串/注释排在关键字前，
- * 一旦整段被消费就不再回扫，因此字符串/注释内的关键字不会被再染（`'select'` 全橙、
- * `-- select` 全绿），同时 `-- don't` 的撇号不会误开字符串、`'-- x'` 的 `--` 不会误当注释。
- * [keywords] 可在调用处 remember，避免每次重组重建词表。
+ * 高亮本体在 `SyntaxHighlight.kt`：**不能用正则**——`('(?:[^']|'')*')` 这类 `(a|b)*` 在
+ * java.util.regex 里按重复次数递归，长字符串字面量会把栈打爆（见那里的注释）。
  */
-internal fun HighlightScope.applySqlHighlightRules(
-    pal: SqlSyntaxPalette,
-    keywords: List<String> = sqlHighlightKeywords(),
-) {
-    val pattern = buildString {
-        // 分组顺序即取色顺序（1..7），字符串/注释必须在关键字之前
-        append("('(?:[^']|'')*')") // 1 单引号字符串
-        append("|(\"(?:[^\"]|\"\")*\")") // 2 双引号字符串
-        append("|(--[^\n]*)") // 3 行注释
-        append("|(/\\*[\\s\\S]*?\\*/)") // 4 块注释
-        append("|(\\b\\d+(?:\\.\\d+)?\\b)") // 5 数字
-        append("|(\\b(?:${keywords.distinct().joinToString("|")})\\b)") // 6 关键字
-        append("|([(),;.])") // 7 标点
-    }
-    // 顺序与 pattern 内的分组一一对应（groups 按 1..n 取色）。
-    val colors = arrayOf(
-        pal.string.toUiColor(), pal.string.toUiColor(),
-        pal.comment.toUiColor(), pal.comment.toUiColor(),
-        pal.number.toUiColor(), pal.keyword.toUiColor(), pal.punctuation.toUiColor(),
-    )
-    textColor { Regex(pattern, RegexOption.IGNORE_CASE).groups(*colors) }
-}
+internal fun sqlHighlightKeywordSet(): Set<String> =
+    sqlHighlightKeywords().mapTo(HashSet()) { it.uppercase() }
 
 /**
- * SQL 关键字词表（高亮与补全共用）。规则说明见 [applySqlHighlightRules]。
+ * SQL 关键字词表（高亮与补全共用）。
  */
 internal fun sqlHighlightKeywords(): List<String> = listOf(
     // 查询

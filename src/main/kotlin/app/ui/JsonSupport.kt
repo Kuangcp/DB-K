@@ -1,8 +1,6 @@
 package app.ui
 
 import androidx.compose.ui.graphics.Color
-import com.neoutils.highlight.core.extension.textColor
-import com.neoutils.highlight.core.scope.HighlightScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -216,32 +214,4 @@ internal fun jsonInlinePreview(
         append(close)
     }
     return if (s.length <= maxChars) s else s.take(maxChars - 1) + "…"
-}
-
-/**
- * 向 [HighlightScope] 注册 JSON 高亮规则（原文视图用；树视图逐 token 直接着色，不走这里）。
- *
- * 单次交替正则（leftmost-first）：字段名（字符串后跟冒号）优先于普通字符串，
- * 避免键被当值染色；数字/布尔/null/标点依次兜底。
- */
-internal fun HighlightScope.applyJsonHighlightRules(pal: JsonSyntaxPalette) {
-    val pattern = buildString {
-        append("(\"(?:\\\\.|[^\"\\\\])*\")(?=\\s*:)") // 1 字段名（后随冒号的字符串）
-        append("|(\\s*:)") // 2 冒号（含前导空白）
-        append("|(\"(?:\\\\.|[^\"\\\\])*\")") // 3 字符串值
-        append("|(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)") // 4 数字
-        append("|\\b(true|false)\\b") // 5 布尔
-        append("|\\b(null)\\b") // 6 null
-        append("|([{}\\[\\],:])") // 7 标点
-    }
-    val colors = arrayOf(
-        pal.key.toUiColor(),
-        pal.punctuation.toUiColor(),
-        pal.string.toUiColor(),
-        pal.number.toUiColor(),
-        pal.boolean.toUiColor(),
-        pal.nullLiteral.toUiColor(),
-        pal.punctuation.toUiColor(),
-    )
-    textColor { Regex(pattern).groups(*colors) }
 }

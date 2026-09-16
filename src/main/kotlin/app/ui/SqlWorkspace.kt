@@ -66,6 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -130,8 +131,6 @@ import app.settings.ShortcutCommand
 import app.dialog.CellViewerDialog
 import app.dialog.EditCellDialog
 import app.dialog.TextViewerDialog
-import com.neoutils.highlight.compose.remember.rememberHighlight
-import com.neoutils.highlight.compose.remember.rememberTextFieldValue
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
@@ -198,7 +197,8 @@ fun WindowScope.SqlWorkspace(
     onSelectTarget: (String) -> Unit,
     editorText: String,
     editorDirty: Boolean,
-    onTextChange: (String) -> Unit,
+    /** 编辑器正文变更：参数 (consoleId, 文本)。带 id 是为了让写入目标 = 编辑器节点所属控制台。 */
+    onTextChange: (String, String) -> Unit,
     /** 待插入编辑器的文本（预览 / 历史 SQL）：在激活控制台光标/选区处插入，不覆盖草稿。 */
     insertRequest: String?,
     /** 编辑器消费 insertRequest 后回调清空，保证同一文本可再次触发。 */
@@ -460,7 +460,7 @@ fun WindowScope.SqlWorkspace(
             )
             tfv = TextFieldValue(newText, TextRange(caret))
             onCaretChange(consoleId, caret, caret)
-            onTextChange(newText)
+            onTextChange(consoleId, newText)
         }
         // N2：格式化 = 有选区只格式化选区，否则整段；只调空白/关键字大小写，语义不变。
         val doFormat: () -> Unit = {
@@ -479,7 +479,7 @@ fun WindowScope.SqlWorkspace(
             }
             tfv = TextFieldValue(newText, TextRange(caret))
             onCaretChange(consoleId, caret, caret)
-            onTextChange(newText)
+            onTextChange(consoleId, newText)
         }
         SideEffect { formatRef.value = doFormat }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -492,36 +492,42 @@ fun WindowScope.SqlWorkspace(
                 Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                     // 编辑器吃满剩余高，结果区按 resultFrac 分配；中间只隔一根 5dp 可拖细线，不留空隙。
                     // 执行动作/状态/多语句 tabs 全部收在结果区顶部一条 28dp 工具条里（无结果时不显示）。
-                    EditorPane(
-                        value = tfv,
-                        consoleId = consoleId,
-                        dirty = editorDirty,
-                        onValueChange = { v ->
-                            val textChanged = v.text != tfv.text
-                            tfv = v
-                            // 记录本控制台最后的光标/选区（点击、输入、选择都更新；内存即时、防抖落库）
-                            onCaretChange(consoleId, v.selection.start, v.selection.end)
-                            // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
-                            // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
-                            if (textChanged) onTextChange(v.text)
-                        },
-                        onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
-                        completionIdentifiers = completionIdentifiers,
-                        completionTables = completionTables,
-                        completionFunctions = completionFunctions,
-                        completionEnabled = completionEnabled,
-                        editorLanguage = editorLanguage,
-                        columnCatalog = columnCatalog,
-                        schemas = schemas.orEmpty(),
-                        defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
-                        profile = profile,
-                        editorSettings = editorSettings,
-                        findOpen = findReplaceOpen,
-                        onCloseFind = { findReplaceOpen = false },
-                        modifier = Modifier
-                            .weight(if (resultsVisible) 1f - resultFrac else 1f)
-                            .fillMaxWidth(),
-                    )
+                    // 每个控制台一个独立的编辑器节点。Compose 的 BasicTextField 在 value 被外部替换
+                    // （切控制台/预览/清空）后可能再上报一次旧文本；若复用同一节点，这次“回弹”会被
+                    // 当成当前控制台的编辑内容写进去 —— 历史事故：A1 的正文整体覆盖 B4，只能靠 Ctrl+Z 回退。
+                    // key(consoleId) 让切控制台换一个文本域实例，旧节点的输入会话随之销毁，串台不可能发生。
+                    key(consoleId) {
+                        EditorPane(
+                            value = tfv,
+                            consoleId = consoleId,
+                            dirty = editorDirty,
+                            onValueChange = { v ->
+                                val textChanged = v.text != tfv.text
+                                tfv = v
+                                // 记录本控制台最后的光标/选区（点击、输入、选择都更新；内存即时、防抖落库）
+                                onCaretChange(consoleId, v.selection.start, v.selection.end)
+                                // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
+                                // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
+                                if (textChanged) onTextChange(consoleId, v.text)
+                            },
+                            onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
+                            completionIdentifiers = completionIdentifiers,
+                            completionTables = completionTables,
+                            completionFunctions = completionFunctions,
+                            completionEnabled = completionEnabled,
+                            editorLanguage = editorLanguage,
+                            columnCatalog = columnCatalog,
+                            schemas = schemas.orEmpty(),
+                            defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
+                            profile = profile,
+                            editorSettings = editorSettings,
+                            findOpen = findReplaceOpen,
+                            onCloseFind = { findReplaceOpen = false },
+                            modifier = Modifier
+                                .weight(if (resultsVisible) 1f - resultFrac else 1f)
+                                .fillMaxWidth(),
+                        )
+                    }
                     if (resultsVisible) {
                         // 拖动分隔条：像素差 / 可用高 → 比例增量；窗口缩放不改变已设比例。
                         ResultSplitter(
@@ -1160,8 +1166,8 @@ private fun StarterPane(
  * SQL 编辑器（语法高亮 + 自动补全）。
  *
  * 结构：外层自绘边框/底；左侧行号槽（Canvas 绘制、只画可视行、随滚动重绘）；内部
- * BasicTextField 消费带 span 高亮的 TextFieldValue（NeoUtils rememberHighlight +
- * rememberTextFieldValue 实时着色），自身 verticalScroll 滚动。行号/补全弹层共用同一份
+ * BasicTextField 消费带 span 高亮的 TextFieldValue（`SQL/JSON：SyntaxHighlight.kt 手写扫描器`
+ * 实时着色），自身 verticalScroll 滚动。行号/补全弹层共用同一份
  * TextMeasurer 排版结果，保证与编辑区逐行对齐（含自动换行）。
  * 文本/选区权威仍在上层 SqlWorkspace 持有的 tfv（受控），高亮是纯派生渲染。
  *
@@ -1196,14 +1202,18 @@ private fun EditorPane(
     // 快捷键表：编辑器内的执行/补全用可配置键，其余为语义固定的编辑交互。
     val keymap = LocalKeymap.current
     val isDark = MaterialTheme.colors.isLight.not()
-    val keywords = remember { sqlHighlightKeywords().distinct() }
-    // isDark / editorLanguage 作 key：主题切换或后端变化时重建 Highlight，否则记住的旧色板不会刷新。
-    val highlightedValue = rememberHighlight(isDark, editorLanguage) {
+    val keywords = remember { sqlHighlightKeywordSet() }
+    // 语法高亮：手写扫描出 token 区间（无正则）——`(a|b)*` 型正则在长字符串字面量上会递归爆栈，
+    // 见 `SyntaxHighlight.kt`。isDark / editorLanguage 作 key：主题或后端变化时重算色板。
+    val highlightSpans = remember(value.text, isDark, editorLanguage, keywords) {
         when (editorLanguage) {
-            EditorLanguage.JSON -> applyJsonHighlightRules(jsonSyntaxPalette(isDark))
-            else -> applySqlHighlightRules(sqlSyntaxPalette(isDark), keywords)
+            EditorLanguage.JSON -> jsonHighlightSpans(value.text, jsonSyntaxPalette(isDark))
+            else -> sqlHighlightSpans(value.text, sqlSyntaxPalette(isDark), keywords)
         }
-    }.rememberTextFieldValue(value)
+    }
+    val highlightedValue = remember(value.text, value.selection, value.composition, highlightSpans) {
+        value.withHighlightSpans(highlightSpans)
+    }
 
     val scroll = rememberScrollState()
 

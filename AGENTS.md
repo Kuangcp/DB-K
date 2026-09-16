@@ -140,6 +140,11 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 - 编辑器文本：内存 buffer 为唯一权威；防抖 3s 自动写回 .sql 文件
   （`ConsoleState.setText` 内 scope.launch { delay(AUTOSAVE_MS); withContext(IO){ flushNow } }）。
   **必须落盘时机**：切控制台 / 执行前 / 退出（`onCloseRequest` 调 `flushAllSync`）。
+- **编辑器节点必须 `key(consoleId)`**（`SqlWorkspace`）：Compose 的 `BasicTextField(value = TextFieldValue)`
+  在 value 被外部替换（切控制台 / 预览插入 / 清空）后可能再上报一次旧文本；复用同一节点时这次
+  “回弹”会被当成当前控制台的输入，把上一个控制台的正文写进去（历史事故：A1 整体覆盖 B4，
+  只能 Ctrl+Z 回退）。同理 `onTextChange` 必须带 `consoleId`，不能在回调里现取 Main 的“当前控制台”。
+  代价：切控制台会丢该控制台的撤销（undo）历史——换来的是不可能串台。
 - 执行目标 = 控制台绑定的数据源（`activeConsole.connectionId`），与树选中解耦；
   树选中只是导航（选中即 `activateForProfile`）。
 - 双击表/视图 → 预览 SELECT（`DialectRegistry.previewSelect`）：当前控制台空则复用，否则新建

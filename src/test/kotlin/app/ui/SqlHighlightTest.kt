@@ -2,8 +2,6 @@ package app.ui
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
-import com.neoutils.highlight.compose.extension.toAnnotatedString
-import com.neoutils.highlight.core.Highlight
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -11,15 +9,19 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 守卫 [applySqlHighlightRules]：编辑器与只读 DDL 查看器共用这份规则，
+ * 守卫 [sqlHighlightSpans]：编辑器与只读 DDL 查看器共用这份规则，
  * 抽出来后用纯逻辑断言 token 命中情况（不依赖 Compose 运行时，可直接跑单测）。
+ *
+ * 规则此前是单条正则，因 `('(?:[^']|'')*')` 的 `(a|b)*` 在 java.util.regex 里按重复次数
+ * **递归**，长字符串字面量会 StackOverflowError（2026-09-16 卡死事故），故改为手写扫描。
  */
 class SqlHighlightTest {
 
     private val pal = sqlSyntaxPalette(isDark = false)
+    private val keywords = sqlHighlightKeywordSet()
 
     private fun highlight(text: String): AnnotatedString =
-        Highlight { applySqlHighlightRules(pal) }.toAnnotatedString(text)
+        AnnotatedString(text, spanStyles = sqlHighlightSpans(text, pal, keywords))
 
     /** 覆盖 [index] 的最内层 span 颜色；无 span 覆盖则 null。 */
     private fun colorAt(a: AnnotatedString, index: Int): Color? =
@@ -74,12 +76,45 @@ class SqlHighlightTest {
     }
 
     @Test
+    fun blockCommentAndDoubleQuotedString() {
+        val a = highlight("/* c */ \"tbl\" ;")
+        assertEquals(pal.comment, colorAt(a, 1), "块注释应取 comment 色")
+        assertEquals(pal.string, colorAt(a, 9), "双引号标识符应取 string 色")
+        assertEquals(pal.punctuation, colorAt(a, 14), "分号应取 punctuation 色")
+    }
+
+    @Test
     fun bothPalettesRenderWithoutError() {
         listOf(true, false).forEach { dark ->
             val p = sqlSyntaxPalette(dark)
-            val a = Highlight { applySqlHighlightRules(p) }
-                .toAnnotatedString("CREATE TABLE t (id INT DEFAULT 0); -- c")
+            val a = AnnotatedString(
+                "CREATE TABLE t (id INT DEFAULT 0); -- c",
+                spanStyles = sqlHighlightSpans("CREATE TABLE t (id INT DEFAULT 0); -- c", p, keywords),
+            )
             assertTrue(a.spanStyles.isNotEmpty(), "isDark=$dark 未产生任何高亮 span")
         }
+    }
+
+    /** 回归：长字符串字面量（含 `''` 转义）必须先扫完不爆栈——旧正则在 ~5k 字符就崩。 */
+    @Test
+    fun longStringLiteralDoesNotOverflowStack() {
+        val literal = "'" + "x".repeat(300_000) + "'"
+        val a = highlight("SELECT $literal AS s")
+        assertEquals(pal.string, colorAt(a, 100_000), "超长字符串字面量应整体着色且不爆栈")
+
+        val escaped = "'" + "''".repeat(150_000) + "'"
+        val b = highlight("SELECT $escaped")
+        assertEquals(pal.string, colorAt(b, 100_000), "大量 '' 转义字面量不应爆栈")
+    }
+
+    /** 未闭合的字面量/注释不能越界，也不能吞掉后续扫描。 */
+    @Test
+    fun unterminatedTokensAreClamped() {
+        val a = highlight("SELECT 'oops")
+        assertEquals(pal.string, colorAt(a, 7))
+        val b = highlight("-- no newline")
+        assertEquals(pal.comment, colorAt(b, 3))
+        val c = highlight("/* unterminated")
+        assertEquals(pal.comment, colorAt(c, 3))
     }
 }
