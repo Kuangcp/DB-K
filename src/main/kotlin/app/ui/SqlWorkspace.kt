@@ -50,6 +50,7 @@ import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
@@ -1272,22 +1273,16 @@ private fun EditorPane(
     // 补全活性判定：本机 Compose Desktop 中 CoreTextField 的焦点在内部节点，外层 onFocusChanged
     // 收不到事件（实测输入时 focused 恒为 false）。且 BasicTextField 在纯鼠标点击/移动光标时
     // 也会以新选区上报 onValueChange——因此**只有文本真正变化**（敲字/删除/粘贴）才激活补全，
-    // 点击与光标移动立即关闭；再用 4s 空闲看门狗收尾。
-    var lastEdit by remember { mutableStateOf(0L) }
+    // 点击与光标移动立即关闭。
+    // 不设空闲自动关闭：弹层只在 光标移动/点击、Esc、上屏（Enter/Tab）、切控制台 时收起，
+    // 否则用方向键浏览候选时（计时器到点）会突然消失。
     // 显式 Ctrl+Space 唤起：允许空前缀（列出上下文列/表）；任意编辑/移动光标后复位
     var forceComplete by remember { mutableStateOf(false) }
     fun commitEdit(v: TextFieldValue) {
         val typed = v.text != value.text
-        lastEdit = System.currentTimeMillis()
         editing = typed
         forceComplete = false
         onValueChange(v)
-    }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(2000)
-            if (editing && System.currentTimeMillis() - lastEdit > 4000) editing = false
-        }
     }
     var boxW by remember { mutableStateOf(0) }
     var boxH by remember { mutableStateOf(0) }
@@ -1704,9 +1699,8 @@ private fun EditorPane(
                         }
                         // 基础编辑键（固定）：Ctrl+Space 显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
                         if (keymap.matches(ShortcutCommand.COMPLETE, e)) {
-                            // 显式唤起：允许空前缀（列/表）；未敲字也行，顺便标记“正在编辑”并续期看门狗
+                            // 显式唤起：允许空前缀（列/表）；未敲字也行
                             editing = true
-                            lastEdit = System.currentTimeMillis()
                             forceComplete = true
                             dismissed = false
                             return@onPreviewKeyEvent true
@@ -1774,14 +1768,39 @@ private fun EditorPane(
             val gapPx = with(density) { 6.dp.toPx() }
             val caretRect = textLayout?.getCursorRect(sel.start.coerceIn(0, value.text.length))
             val textLeftPx = gutterWpx + textPadLPx
-            val popW = with(density) { COMPLETION_W.toPx() }
+            // 宽度自适应：最长候选名 + 最长详情（+ 色点 6dp / 间距 8dp / 左右内边距 20dp），
+            // 夹在 [COMPLETION_W, COMPLETION_MAX_W] 且不超过编辑区内宽 - 4dp，长表名不再被省略成 table_…
+            // 测量样式必须与 Text 实际用的样式同源：Text 会在 LocalTextStyle 基础上合并显式参数
+            // （字号/字族被覆盖，但 letterSpacing 等继承），不带上它会低估宽度 → 刚好放不下又出现省略号。
+            val baseTextStyle = LocalTextStyle.current
+            val popupWidth: Dp = remember(shown, boxW, density, textMeasurer, baseTextStyle) {
+                val nameStyle = baseTextStyle.merge(
+                    TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                )
+                val detailStyle = baseTextStyle.merge(TextStyle(fontSize = 10.sp))
+                val nameW = shown.maxOfOrNull {
+                    textMeasurer.measure(AnnotatedString(it.text), nameStyle).size.width
+                } ?: 0
+                val detailW = shown.asSequence().mapNotNull { it.detail }
+                    .maxOfOrNull { textMeasurer.measure(AnnotatedString(it), detailStyle).size.width }
+                    ?: 0
+                with(density) {
+                    // chrome: 左右内边距 20 + 色点 6 + 间距 8（有详情时再加 8）+ 2dp 取整/字距余量
+                    val chrome = 36.dp.roundToPx() + if (detailW > 0) 8.dp.roundToPx() else 0
+                    val max = (boxW - 4.dp.toPx())
+                        .coerceAtLeast(COMPLETION_W.toPx())
+                        .coerceAtMost(COMPLETION_MAX_W.toPx())
+                    (nameW + detailW + chrome).coerceIn(COMPLETION_W.roundToPx(), max.toInt()).toDp()
+                }
+            }
+            val popW = with(density) { popupWidth.toPx() }
             val popH = with(density) { popupH.toPx() }
             CompletionPopup(
                 items = shown,
                 selectedIndex = selIdx,
                 onSelect = { i -> accept(shown[i]) },
                 modifier = Modifier
-                    .width(COMPLETION_W)
+                    .width(popupWidth)
                     .height(popupH)
                     .offset {
                         val x = if (caretRect != null) {
@@ -2017,7 +2036,9 @@ private fun FindSmallButton(label: String, onClick: () -> Unit) {
 }
 
 private val GUTTER_W = 40.dp
+// 补全弹层宽度：300dp 为下限（原固定宽度，保持观感）；实际宽度按候选内容自适应，上限 960dp
 private val COMPLETION_W = 300.dp
+private val COMPLETION_MAX_W = 1260.dp
 private val COMPLETION_H = 176.dp
 private const val MAX_COMPLETIONS = 60
 

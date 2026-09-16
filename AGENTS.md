@@ -86,6 +86,12 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 
 ## UI 交互基线
 
+- 补全弹层（`SqlWorkspace` 的 `CompletionPopup`）：
+  - 宽度按候选内容自适应（最长名字 + 最长详情），夹在 `[300dp, COMPLETION_MAX_W]` 且不超过编辑区内宽；
+    测量样式必须用 `LocalTextStyle.current.merge(...)` 与 `Text` 同源（`Text` 只覆盖字号/字族，
+    会继承 `letterSpacing`，不带它会少算宽度 → 长表名刚好看不到又被省略号截掉）。
+  - **不设空闲自动关闭**：只在光标移动/点击、Esc、上屏（Enter/Tab）、切控制台时收起，
+    否则方向键浏览候选时会中途消失。
 - 编辑器执行快捷键：`Ctrl+Enter`（`SqlWorkspace` 内 `onPreviewKeyEvent` 拦截）。
 - **单字段输入弹窗必须支持 Enter 提交**：新建/重命名文件夹、重命名/新建控制台等
   「只有一个输入框 + 确定/取消」的弹窗，回车（含数字键盘回车）等同于点「确定」，
