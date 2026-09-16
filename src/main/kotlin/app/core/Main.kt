@@ -28,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -80,6 +82,8 @@ import app.state.TableDdlRequest
 import app.state.TreeState
 import app.state.ToastState
 import app.ui.CompletionTable
+import app.ui.CompletionDismissSignal
+import app.ui.LocalCompletionDismiss
 import app.ui.LocalKeymap
 import app.ui.ResultEdits
 import app.ui.SqlWorkspace
@@ -651,12 +655,14 @@ private fun WindowScope.AppBody(
         }
     }
 
+    val completionDismiss = remember { CompletionDismissSignal() }
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colors.onSurface,
             LocalKeymap provides keymap,
+            LocalCompletionDismiss provides completionDismiss,
         ) {
             // 窗口级业务键（显示/隐藏结果区、查看定义 DDL）用 AWT 级 KeyEventDispatcher 拦截：
             // Linux/X11 实测，修饰键+字母除 KEY_PRESSED 外还会派发一次字符事件
@@ -698,7 +704,18 @@ private fun WindowScope.AppBody(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colors.background),
+                    .background(MaterialTheme.colors.background)
+                    .pointerInput(Unit) {
+                        // 补全弹层是编辑器内 overlay，收不到别处（树/结果区/工具栏）的点击。
+                        // Final pass 旁路观察（只读不消费）：弹层已在 Initial pass 标记命中，
+                        // 没标记的按下就是“点弹层外” → 收起弹层。
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent(PointerEventPass.Final)
+                                if (e.type == PointerEventType.Press) completionDismiss.onPress()
+                            }
+                        }
+                    },
             ) {
                 Row(modifier = Modifier.fillMaxSize()) {
                     DbTreeSidebar(

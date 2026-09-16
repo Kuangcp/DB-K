@@ -1210,6 +1210,14 @@ private fun EditorPane(
     // N2 查找替换的替换动作会写 editing（替换后不弹补全），故提前声明；补全活性判定见下。
     var editing by remember { mutableStateOf(false) }
 
+    // 鼠标按在补全弹层外（左侧树 / 结果区 / 工具栏 / 其它控制台标签…）→ 收起弹层：语义就是
+    // “不要这个提示了”。弹层是编辑器内 overlay，收不到别处的点击，由 Main 根布局的窗口级
+    // 指针监听转发（见 CompletionDismissSignal）；编辑区内的点击/移光标另有 commitEdit 通道。
+    val completionDismiss = LocalCompletionDismiss.current
+    LaunchedEffect(completionDismiss.tick) {
+        if (completionDismiss.tick > 0) editing = false
+    }
+
     // ---- N2 查找替换：纯逻辑在 SqlFindReplace.kt，这里只管状态与交互 ----
     var findText by remember(consoleId) { mutableStateOf("") }
     var replaceText by remember(consoleId) { mutableStateOf("") }
@@ -2050,12 +2058,23 @@ private fun CompletionPopup(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val dismissSignal = LocalCompletionDismiss.current
     Column(
         modifier = modifier
             .shadow(6.dp, RoundedCornerShape(8.dp))
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colors.surface)
-            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.25f), RoundedCornerShape(8.dp)),
+            .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+            // 标记「这一下按在弹层内」：根布局在 Final pass 据此判定是否属于“点弹层外”。
+            // Initial pass 先于根布局的 Final，命中/不命中两种情况都不会消费事件。
+            .pointerInput(dismissSignal) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                        if (e.type == PointerEventType.Press) dismissSignal.markPressInside()
+                    }
+                }
+            },
     ) {
         Text(
             "补全 ${items.size} 项 · Enter 上屏 · Esc 关闭",
