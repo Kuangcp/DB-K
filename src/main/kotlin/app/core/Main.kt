@@ -323,6 +323,15 @@ private fun WindowScope.AppBody(
     }
 
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
+    // 左侧树搜索关键字（瞬态，不落盘）；空 = 普通树。
+    var treeSearchQuery by remember { mutableStateOf("") }
+    // 搜索时补齐懒加载方言尚未加载的对象组（PG 例程/触发器/类型…），让搜索覆盖全部对象：
+    // 防抖 400ms，且只在查询至少 2 个字符时触发（避免单字符误触把大库所有对象组拉一遍）。
+    LaunchedEffect(treeSearchQuery) {
+        if (treeSearchQuery.trim().length < 2) return@LaunchedEffect
+        delay(400)
+        connectionsState.ensureAllGroupsLoaded(treeState.connections)
+    }
     // Redis key pattern 防抖搜索：输入停 300ms 后才重扫（类型切换立即生效）
     var keySearchRequest by remember { mutableStateOf<Pair<ConnectionProfile, String>?>(null) }
     LaunchedEffect(keySearchRequest) {
@@ -339,6 +348,7 @@ private fun WindowScope.AppBody(
         treeState.expandedSchemaKeys,
         treeState.expandedGroupKeys,
         connectionsState,
+        search = treeSearchQuery,
     )
 
     fun toggleRow(row: TreeRowInfo) {
@@ -736,6 +746,8 @@ private fun WindowScope.AppBody(
                         rows = rows,
                         selectedKey = treeState.selectedRowKey,
                         onSelectRow = ::selectRow,
+                        searchQuery = treeSearchQuery,
+                        onSearchQueryChange = { treeSearchQuery = it },
                         onToggleExpand = ::toggleRow,
                         onDisconnectConnection = ::disconnectProfile,
                         onRefreshMetadata = { p ->

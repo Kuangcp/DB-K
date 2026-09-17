@@ -124,6 +124,25 @@ fun buildTreeRows(
     expandedSchemaKeys: Set<String>,
     expandedGroupKeys: Set<String>,
     runtime: ConnectionRuntimeView,
+    /** 非空时进入搜索模式：只保留命中节点及其祖先，全部强制展开（见 [buildTreeRowsSearch]）。 */
+    search: String = "",
+): List<TreeRowInfo> {
+    val query = search.trim()
+    if (query.isNotEmpty()) return buildTreeRowsSearch(folders, connections, runtime, query)
+    return buildTreeRowsNormal(
+        folders, connections, expandedFolderIds, expandedConnectionIds,
+        expandedSchemaKeys, expandedGroupKeys, runtime,
+    )
+}
+
+private fun buildTreeRowsNormal(
+    folders: List<FolderRow>,
+    connections: List<ConnectionProfile>,
+    expandedFolderIds: Set<String>,
+    expandedConnectionIds: Set<String>,
+    expandedSchemaKeys: Set<String>,
+    expandedGroupKeys: Set<String>,
+    runtime: ConnectionRuntimeView,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
     val byFolder = connections.groupBy { it.folderId }
@@ -374,4 +393,172 @@ private fun loadingPlaceholder(depth: Int, key: String, text: String) = TreeRowI
 private fun infoPlaceholder(depth: Int, key: String, text: String) = TreeRowInfo(
     key = key, kind = TreeRowKind.PLACEHOLDER, depth = depth, name = text,
     placeholderKind = PlaceholderKind.INFO,
+)
+
+// ---------------- 搜索模式 ----------------
+
+/** 大小写不敏感子串命中（query 已 trim）。 */
+private fun nameHas(name: String, query: String): Boolean = name.contains(query, ignoreCase = true)
+
+/** 对象是否自身命中（名称；触发器也只看触发器名，不看所属表，保证高亮与命中一致）。 */
+private fun objectHas(obj: DbObjectMeta, query: String): Boolean = nameHas(obj.name, query)
+
+/**
+ * 行名称是否自身命中搜索——供结果计数/跳转/高亮使用。
+ * 必须与 [buildTreeRowsSearch] 的「自身命中」判定保持一致：
+ * 仅因后代命中而被保留的祖先行（如库行）不算命中。
+ */
+internal fun treeRowSelfMatches(row: TreeRowInfo, query: String): Boolean = when (row.kind) {
+    TreeRowKind.FOLDER, TreeRowKind.CONNECTION, TreeRowKind.SCHEMA -> nameHas(row.name, query)
+    TreeRowKind.DB_OBJECT -> row.dbObject?.let { objectHas(it, query) } == true
+    else -> false
+}
+
+/** 某 schema 下命中的**已加载**对象（按组；未加载组无正文，不参与搜索）。 */
+private fun matchingObjects(
+    runtime: ConnectionRuntimeView,
+    profileId: String,
+    schema: SchemaMeta,
+    query: String,
+): Map<ObjectKind, List<DbObjectMeta>> {
+    val objects = runtime.objectsOf(profileId, schema.key) ?: return emptyMap()
+    val out = linkedMapOf<ObjectKind, List<DbObjectMeta>>()
+    objects.objects.forEach { (kind, list) ->
+        val hit = list.filter { objectHas(it, query) }
+        if (hit.isNotEmpty()) out[kind] = hit
+    }
+    return out
+}
+
+/** 该连接是否有任何命中（自身名 / 库名 / 已加载对象名）——文件夹可见性判定用。 */
+private fun connectionHasMatch(
+    runtime: ConnectionRuntimeView,
+    conn: ConnectionProfile,
+    query: String,
+): Boolean {
+    if (nameHas(conn.name, query)) return true
+    if (runtime.flatNamespaceOf(conn.id)) return false
+    return runtime.schemasOf(conn.id).orEmpty().any { s ->
+        nameHas(s.displayName, query) || matchingObjects(runtime, conn.id, s, query).isNotEmpty()
+    }
+}
+
+/**
+ * 搜索模式扁平行：只保留自身命中的节点与承载它们的祖先链，全部强制展开。
+ * 容器行（文件夹/连接/库/组）在搜索模式下不可折叠（`expandable = false`），
+ * 避免“点了箭头但命中内容不移除”的错觉；表/视图双击预览仍然可用。
+ *
+ * 「命名空间即过滤器」后端（Redis）的键由过滤条走服务端 `SCAN MATCH`，这里只按连接名命中。
+ */
+private fun buildTreeRowsSearch(
+    folders: List<FolderRow>,
+    connections: List<ConnectionProfile>,
+    runtime: ConnectionRuntimeView,
+    query: String,
+): List<TreeRowInfo> {
+    val out = mutableListOf<TreeRowInfo>()
+    val byFolder = connections.groupBy { it.folderId }
+
+    fun appendConnection(conn: ConnectionProfile, depth: Int) {
+        val schemas = runtime.schemasOf(conn.id).orEmpty()
+        val self = nameHas(conn.name, query)
+        if (runtime.flatNamespaceOf(conn.id)) {
+            if (!self) return
+            out += searchConnectionRow(conn, depth, expanded = false, childCount = 0, runtime = runtime)
+            appendFlatNamespace(out, conn, schemas, depth + 1, emptySet(), runtime)
+            return
+        }
+        val schemaHits = schemas.mapNotNull { s ->
+            val hit = matchingObjects(runtime, conn.id, s, query)
+            if (hit.isEmpty() && !nameHas(s.displayName, query)) null else s to hit
+        }
+        if (!self && schemaHits.isEmpty()) return
+        out += searchConnectionRow(
+            conn, depth,
+            expanded = schemaHits.isNotEmpty(), childCount = schemaHits.size, runtime = runtime,
+        )
+        schemaHits.forEach { (schema, hit) ->
+            val rowKey = schemaRowKey(conn.id, schema)
+            val groups = runtime.objectGroupsOf(conn.id).filter { hit[it]?.isNotEmpty() == true }
+            out += TreeRowInfo(
+                key = rowKey,
+                kind = TreeRowKind.SCHEMA,
+                depth = depth + 1,
+                name = schema.displayName,
+                profile = conn,
+                schema = schema,
+                expanded = groups.isNotEmpty(),
+                childCount = groups.sumOf { hit[it]?.size ?: 0 },
+                expandable = false,
+            )
+            groups.forEach { kind ->
+                val objs = hit[kind].orEmpty()
+                val groupKey = "$rowKey:g:${kind.name}"
+                out += TreeRowInfo(
+                    key = groupKey,
+                    kind = TreeRowKind.OBJECT_GROUP,
+                    depth = depth + 2,
+                    name = kind.displayNoun,
+                    profile = conn,
+                    schema = schema,
+                    groupKind = kind,
+                    expanded = true,
+                    childCount = objs.size,
+                    expandable = false,
+                )
+                objs.forEach { obj ->
+                    out += TreeRowInfo(
+                        key = "$groupKey:o:${obj.name}",
+                        kind = TreeRowKind.DB_OBJECT,
+                        depth = depth + 3,
+                        name = obj.name,
+                        profile = conn,
+                        schema = schema,
+                        dbObject = obj,
+                    )
+                }
+            }
+        }
+    }
+
+    folders.sortedBy { it.sortOrder }.forEach { folder ->
+        val children = byFolder[folder.id].orEmpty().sortedBy { it.sortOrder }
+            .filter { connectionHasMatch(runtime, it, query) }
+        if (!nameHas(folder.name, query) && children.isEmpty()) return@forEach
+        out += TreeRowInfo(
+            key = "f:${folder.id}",
+            kind = TreeRowKind.FOLDER,
+            depth = 0,
+            name = folder.name,
+            folderId = folder.id,
+            expanded = children.isNotEmpty(),
+            childCount = children.size,
+            expandable = false,
+        )
+        children.forEach { appendConnection(it, 1) }
+    }
+    byFolder[null].orEmpty().sortedBy { it.sortOrder }
+        .filter { connectionHasMatch(runtime, it, query) }
+        .forEach { appendConnection(it, 0) }
+    return out
+}
+
+private fun searchConnectionRow(
+    conn: ConnectionProfile,
+    depth: Int,
+    expanded: Boolean,
+    childCount: Int,
+    runtime: ConnectionRuntimeView,
+): TreeRowInfo = TreeRowInfo(
+    key = connectionRowKey(conn.id),
+    kind = TreeRowKind.CONNECTION,
+    depth = depth,
+    name = conn.name,
+    folderId = conn.folderId,
+    profile = conn,
+    expanded = expanded,
+    childCount = childCount,
+    connStatus = runtime.statusOf(conn.id),
+    message = runtime.statusMessageOf(conn.id),
+    expandable = false,
 )

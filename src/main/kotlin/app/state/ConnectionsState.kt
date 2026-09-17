@@ -327,6 +327,26 @@ class ConnectionsState(
         }
     }
 
+    /**
+     * 补齐懒加载方言尚未加载正文的对象组（左侧树搜索用）：对**已连接且已持库列表**的连接，
+     * 逐 schema 拉未加载组；已加载/计数为 0 的组跳过，本身幂等（[ensureGroupObjects] 内有防重）。
+     * 「命名空间即过滤器」后端跳过（Redis 键由过滤条服务端 pattern 搜索，不在此铺全量）。
+     */
+    suspend fun ensureAllGroupsLoaded(profiles: List<ConnectionProfile>) {
+        profiles.forEach { p ->
+            val rt = runtimes[p.id] ?: return@forEach
+            if (rt.status != ConnUiStatus.CONNECTED) return@forEach
+            if (rt.live.capabilities.namespaceAsFilter) return@forEach
+            val schemas = rt.schemas ?: return@forEach
+            schemas.forEach { s ->
+                val objs = rt.objects[s.key] ?: return@forEach
+                (objs.objects.keys + objs.counts.keys).distinct().forEach { kind ->
+                    if (!objs.isLoaded(kind) && objs.countOf(kind) > 0) ensureGroupObjects(p, s, kind)
+                }
+            }
+        }
+    }
+
     /** 主动断开：只放连接与会话内存，磁盘缓存保留（下次连接/离线仍可用）。 */
     fun disconnect(profile: ConnectionProfile) {
         columns.evict(profile.id)

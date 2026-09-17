@@ -59,9 +59,10 @@ class DbTreeRowsTest {
         expandedSchemaKeys: Set<String> = emptySet(),
         expandedGroupKeys: Set<String> = emptySet(),
         runtime: ConnectionRuntimeView = NoRuntime,
+        search: String = "",
     ) = buildTreeRows(
         folders, connections, expandedFolderIds, expandedConnectionIds,
-        expandedSchemaKeys, expandedGroupKeys, runtime,
+        expandedSchemaKeys, expandedGroupKeys, runtime, search,
     )
 
     @Test
@@ -402,5 +403,109 @@ class DbTreeRowsTest {
         val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS)
         val out = rows(connections = listOf(redis), expandedConnectionIds = setOf("r1"), runtime = runtime)
         assertEquals("尚未选择库", out.single { it.kind == TreeRowKind.PLACEHOLDER }.name)
+    }
+
+    // ---------------- 搜索模式 ----------------
+
+    private fun searchRuntime(): FakeRuntime {
+        val schema = SchemaMeta(null, "main")
+        return FakeRuntime().apply {
+            statuses["c1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["c1"] = listOf(schema)
+            objectsBySchema["c1" to schema.key] = SchemaObjects.simple(
+                tables = listOf("users", "orders"),
+                views = listOf("sales_view"),
+            )
+        }
+    }
+
+    private fun search(c1: ConnectionProfile = conn("c1"), query: String, runtime: FakeRuntime = searchRuntime()) =
+        rows(connections = listOf(c1), runtime = runtime, search = query)
+
+    @Test
+    fun `search keeps matches and ancestors, expanded and not collapsible`() {
+        val out = search(query = "user")
+        assertEquals(
+            listOf(TreeRowKind.CONNECTION, TreeRowKind.SCHEMA, TreeRowKind.OBJECT_GROUP, TreeRowKind.DB_OBJECT),
+            out.map { it.kind },
+        )
+        assertEquals("users", out.last().name)
+        assertTrue(out[0].expanded)
+        assertTrue(out[1].expanded)
+        assertEquals("表", out[2].name)
+        assertFalse(out[0].expandable)
+        assertFalse(out[1].expandable)
+        assertFalse(out[2].expandable)
+        // 未命中的 orders 与 sales_view 组不出现
+        assertFalse(out.any { it.name == "orders" })
+        assertFalse(out.any { it.groupKind == ObjectKind.VIEW })
+    }
+
+    @Test
+    fun `search matches connection name`() {
+        val out = search(query = "conn-c1")
+        assertEquals(1, out.size)
+        assertEquals(TreeRowKind.CONNECTION, out[0].kind)
+        assertFalse(out[0].expanded)
+    }
+
+    @Test
+    fun `search matches schema name without listing all its objects`() {
+        val out = search(query = "main")
+        assertEquals(listOf(TreeRowKind.CONNECTION, TreeRowKind.SCHEMA), out.map { it.kind })
+        assertEquals(0, out[1].childCount)
+    }
+
+    @Test
+    fun `search with no match yields empty`() {
+        assertTrue(search(query = "nonexistent").isEmpty())
+    }
+
+    @Test
+    fun `search is case-insensitive`() {
+        assertEquals("users", search(query = "USER").last().name)
+    }
+
+    @Test
+    fun `search keeps folder ancestor of matched connection`() {
+        val out = rows(
+            folders = listOf(FolderRow("f1", "Folder", null, 0)),
+            connections = listOf(conn("c1", folderId = "f1")),
+            runtime = searchRuntime(),
+            search = "users",
+        )
+        assertEquals(TreeRowKind.FOLDER, out.first().kind)
+        assertTrue(out.first().expanded)
+        assertFalse(out.first().expandable)
+    }
+
+    @Test
+    fun `self match helper excludes ancestor-only rows`() {
+        val out = search(query = "user")
+        val objectRow = out.last()
+        assertTrue(treeRowSelfMatches(objectRow, "user"))
+        val schemaRow = out[1]
+        assertFalse(treeRowSelfMatches(schemaRow, "user"))
+        assertTrue(treeRowSelfMatches(schemaRow, "main"))
+    }
+
+    @Test
+    fun `flat namespace search matches connection name only`() {
+        val db0 = SchemaMeta(null, "db0")
+        val runtime = FakeRuntime().apply {
+            statuses["r1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["r1"] = listOf(db0)
+            flat["r1"] = true
+            activeNs["r1"] = db0
+            groups["r1"] = listOf(ObjectKind.KEY)
+            objectsBySchema["r1" to db0.key] = SchemaObjects(
+                objects = mapOf(ObjectKind.KEY to listOf(DbObjectMeta("user:1", ObjectKind.KEY, detail = "hash"))),
+                counts = mapOf(ObjectKind.KEY to 1),
+            )
+        }
+        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS)
+        // 连接名命中 → 保留过滤条 + 键；按 key 名搜索不命中（Redis 键走过滤条服务端 pattern）
+        assertEquals("redis", rows(connections = listOf(redis), runtime = runtime, search = "redis").first().name)
+        assertTrue(rows(connections = listOf(redis), runtime = runtime, search = "user:1").isEmpty())
     }
 }

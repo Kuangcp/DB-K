@@ -52,12 +52,21 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -147,6 +156,9 @@ fun DbTreeSidebar(
     rows: List<TreeRowInfo>,
     selectedKey: String?,
     onSelectRow: (String?) -> Unit,
+    /** 左侧树搜索关键字（空 = 关闭搜索，按原展开态渲染）。 */
+    searchQuery: String = "",
+    onSearchQueryChange: (String) -> Unit = {},
     /** 展开/收起一行（FOLDER/CONNECTION/SCHEMA；连接未连接时上层据此发起连接）。 */
     onToggleExpand: (TreeRowInfo) -> Unit,
     onDisconnectConnection: (ConnectionProfile) -> Unit = {},
@@ -190,6 +202,27 @@ fun DbTreeSidebar(
     onLoadMoreObjects: (ConnectionProfile) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val trimmedQuery = searchQuery.trim()
+    val listState = rememberLazyListState()
+    // 搜索自身命中的行（按展示顺序）；用于计数 / Enter 跳转 / 当前项高亮。
+    val matchKeys = remember(rows, trimmedQuery) {
+        if (trimmedQuery.isEmpty()) {
+            emptyList()
+        } else {
+            rows.filter { treeRowSelfMatches(it, trimmedQuery) }.map { it.key }
+        }
+    }
+    var activeMatch by remember(trimmedQuery) { mutableStateOf(0) }
+    val activeIndex = if (matchKeys.isEmpty()) -1 else activeMatch.coerceIn(0, matchKeys.size - 1)
+    val activeKey = matchKeys.getOrNull(activeIndex)
+    // 只在「当前命中项」变化时滚动（不能以 rows/matchKeys 列表实例为 key：
+    // 上层每次重组都会产出新列表，否则会反复触发滚动动画、抢走用户手动滚动）。
+    LaunchedEffect(activeKey) {
+        val key = activeKey ?: return@LaunchedEffect
+        val index = rows.indexOfFirst { it.key == key }
+        if (index >= 0) listState.animateScrollToItem((index - 2).coerceAtLeast(0))
+    }
+
     Column(modifier = modifier) {
         SidebarToolbar(
             onAddFolder = onAddFolder,
@@ -199,10 +232,24 @@ fun DbTreeSidebar(
             onExportProfilesWithPasswords = onExportProfilesWithPasswords,
             onImportProfiles = onImportProfiles,
         )
+        if (rows.isNotEmpty() || trimmedQuery.isNotEmpty()) {
+            TreeSearchBar(
+                query = searchQuery,
+                onQueryChange = onSearchQueryChange,
+                matchCount = matchKeys.size,
+                activeIndex = activeIndex,
+                onNavigate = { delta ->
+                    if (matchKeys.isNotEmpty()) {
+                        val next = ((activeIndex + delta) % matchKeys.size + matchKeys.size) % matchKeys.size
+                        activeMatch = next
+                        onSelectRow(matchKeys[next])
+                    }
+                },
+            )
+        }
         if (rows.isEmpty()) {
-            EmptyTreeHint(onAddFolder, { onAddConnectionAt(null) })
+            if (trimmedQuery.isNotEmpty()) NoMatchHint(trimmedQuery) else EmptyTreeHint(onAddFolder, { onAddConnectionAt(null) })
         } else {
-            val listState = rememberLazyListState()
             // 右侧挂常驻滚动条（上千张表必需）；列表预留出滚动条宽度，避免行内容/选中底色压到条下
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 LazyColumn(
@@ -214,6 +261,8 @@ fun DbTreeSidebar(
                         TreeRowView(
                             row = row,
                             selected = row.key == selectedKey,
+                            activeMatch = activeKey != null && row.key == activeKey,
+                            highlight = trimmedQuery,
                             canExpand = row.expandable && when (row.kind) {
                                 TreeRowKind.FOLDER -> row.childCount > 0
                                 TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
@@ -587,6 +636,104 @@ private fun ToolPill(
     }
 }
 
+/** 左侧树搜索框：过滤 + 高亮 + Enter/↑↓ 在命中项间跳转。 */
+@Composable
+private fun TreeSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    matchCount: Int,
+    activeIndex: Int,
+    onNavigate: (Int) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 10.dp, end = 8.dp, top = 4.dp, bottom = 2.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
+            .padding(horizontal = 6.dp),
+    ) {
+        Icon(
+            Icons.Filled.Search, null,
+            tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.size(13.dp),
+        )
+        Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
+            if (query.isEmpty()) {
+                Text(
+                    "搜索表 / 视图 / 索引…",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                    maxLines = 1,
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colors.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colors.primary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 5.dp)
+                    // 单行 BasicTextField 会吞方向键/回车，必须 preview 拦截：回车/↓=下一项，Shift+回车/↑=上一项，Esc=清空
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (e.key) {
+                            Key.Enter, Key.NumPadEnter -> { onNavigate(if (e.isShiftPressed) -1 else 1); true }
+                            Key.DirectionDown -> { onNavigate(1); true }
+                            Key.DirectionUp -> { onNavigate(-1); true }
+                            Key.Escape -> { onQueryChange(""); true }
+                            else -> false
+                        }
+                    },
+            )
+        }
+        if (query.isNotEmpty()) {
+            Text(
+                if (matchCount == 0) "无匹配" else "${activeIndex + 1}/$matchCount",
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                maxLines = 1,
+                modifier = Modifier.padding(end = 2.dp),
+            )
+            Icon(
+                Icons.Filled.Close, "清空搜索",
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+                modifier = Modifier.size(13.dp).clickable { onQueryChange("") },
+            )
+        }
+    }
+}
+
+/** 搜索无命中时的空态（区别于“还没有连接档案”）。 */
+@Composable
+private fun NoMatchHint(query: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.Filled.Search, null,
+            tint = MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
+            modifier = Modifier.size(26.dp),
+        )
+        Text(
+            "未找到匹配「$query」的对象",
+            style = MaterialTheme.typography.body2,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(
+            "只搜索已加载的元数据（未连接 / 未加载的对象组不在范围内）",
+            style = MaterialTheme.typography.caption,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
 @Composable
 private fun EmptyTreeHint(onAddFolder: () -> Unit, onAddConnection: () -> Unit) {
     Column(
@@ -619,6 +766,8 @@ private fun EmptyTreeHint(onAddFolder: () -> Unit, onAddConnection: () -> Unit) 
 private fun TreeRowView(
     row: TreeRowInfo,
     selected: Boolean,
+    activeMatch: Boolean,
+    highlight: String,
     canExpand: Boolean,
     onSelect: () -> Unit,
     onToggle: () -> Unit,
@@ -634,7 +783,13 @@ private fun TreeRowView(
         .fillMaxWidth()
         .padding(horizontal = 4.dp, vertical = 1.dp)
         .clip(RoundedCornerShape(4.dp))
-        .background(if (selected) MaterialTheme.colors.primary.copy(alpha = 0.16f) else Color.Transparent)
+        .background(
+            when {
+                activeMatch -> MaterialTheme.colors.primary.copy(alpha = 0.30f)
+                selected -> MaterialTheme.colors.primary.copy(alpha = 0.16f)
+                else -> Color.Transparent
+            },
+        )
         .clickable(enabled = clickable) {
             val now = System.currentTimeMillis()
             val double = lastClickMs != 0L && now - lastClickMs < doubleTapMs
@@ -669,14 +824,14 @@ private fun TreeRowView(
                         tint = MaterialTheme.colors.primary.copy(alpha = 0.75f),
                         modifier = Modifier.size(15.dp),
                     )
-                    RowName(row.name, Modifier.weight(1f), 13.sp)
+                    RowName(row.name, Modifier.weight(1f), 13.sp, highlight = highlight)
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                 }
                 TreeRowKind.CONNECTION -> {
                     // 连接入口：未连接/失败时双击整行连接（箭头位仅占位保持对齐，无丑按钮）
                     if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
                     row.profile?.let { TypeBadge(it.dbType) }
-                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp)
+                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp, highlight = highlight)
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                     when (row.connStatus) {
                         ConnUiStatus.CONNECTING -> CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.5.dp)
@@ -692,7 +847,7 @@ private fun TreeRowView(
                         tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.size(14.dp),
                     )
-                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp)
+                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp, highlight = highlight)
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                 }
                 TreeRowKind.OBJECT_GROUP -> {
@@ -717,7 +872,7 @@ private fun TreeRowView(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f),
                     ) {
-                        RowName(row.name, Modifier.padding(start = 5.dp).weight(1f, fill = false), 12.5.sp)
+                        RowName(row.name, Modifier.padding(start = 5.dp).weight(1f, fill = false), 12.5.sp, highlight = highlight)
                         row.dbObject?.tableName?.let {
                             Text(
                                 "on $it",
@@ -808,15 +963,60 @@ private fun TreeRowView(
 }
 
 @Composable
-private fun RowName(name: String, modifier: Modifier, fontSize: androidx.compose.ui.unit.TextUnit) {
+private fun RowName(
+    name: String,
+    modifier: Modifier,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    highlight: String = "",
+) {
+    val baseColor = MaterialTheme.colors.onSurface.copy(alpha = 0.92f)
+    if (highlight.isBlank()) {
+        Text(
+            name,
+            fontSize = fontSize,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = baseColor,
+            modifier = modifier,
+        )
+        return
+    }
+    // 命中子串加底色（主题色低透明），深浅色下都可读；不改变其它字符色。
+    val highlightColor = MaterialTheme.colors.primary.copy(alpha = 0.35f)
+    val annotated = remember(name, highlight, highlightColor) {
+        buildAnnotatedString {
+            append(name)
+            highlightRanges(name, highlight).forEach { range ->
+                addStyle(
+                    SpanStyle(background = highlightColor, fontWeight = FontWeight.Medium),
+                    range.first,
+                    range.last + 1,
+                )
+            }
+        }
+    }
     Text(
-        name,
+        annotated,
         fontSize = fontSize,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        color = MaterialTheme.colors.onSurface.copy(alpha = 0.92f),
+        color = baseColor,
         modifier = modifier,
     )
+}
+
+/** 大小写不敏感地找出 [query] 在 [text] 中的所有区间（可重叠前向推进）。 */
+private fun highlightRanges(text: String, query: String): List<IntRange> {
+    if (query.isEmpty()) return emptyList()
+    val out = mutableListOf<IntRange>()
+    var from = 0
+    while (from <= text.length - query.length) {
+        val at = text.indexOf(query, from, ignoreCase = true)
+        if (at < 0) break
+        out += at until (at + query.length)
+        from = at + query.length
+    }
+    return out
 }
 
 @Composable
