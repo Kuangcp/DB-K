@@ -1210,7 +1210,15 @@ fun ObjectKindBadge(kind: ObjectKind?) {
             .clip(RoundedCornerShape(3.dp))
             .background(color),
     ) {
-        Text(text, color = Color.White, fontSize = 7.5.sp, maxLines = 1)
+        Text(
+            text,
+            color = Color.White,
+            fontSize = 7.5.sp,
+            // 固定尺寸徽章必须显式给 lineHeight：否则继承 MaterialTheme body1 的 24sp 行高，
+            // 行盒远高于 13dp 徽章，被 clip 后只剩字头（中下部被遮）。
+            lineHeight = 9.sp,
+            maxLines = 1,
+        )
     }
 }
 
@@ -1228,6 +1236,8 @@ fun TypeBadge(dbType: DbType) {
             dbType.badge,
             color = Color.White,
             fontSize = 8.sp,
+            // 同 ObjectKindBadge：固定 17dp 徽章显式压行高，避免继承 24sp 行高后垂直偏移。
+            lineHeight = 10.sp,
             maxLines = 1,
         )
     }
