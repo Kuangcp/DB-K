@@ -22,6 +22,13 @@ import java.awt.event.KeyEvent as AwtKeyEvent
 /** 当前快捷键表；由 `Main` 提供，深层组件（编辑器 / 结果网格）直接读取，避免层层传参。 */
 val LocalKeymap = staticCompositionLocalOf { Keymap.Default }
 
+/**
+ * 窗口级 Ctrl 是否按下（由 `Main` 的 AWT KeyEventDispatcher 维护，不依赖结果网格是否聚焦）。
+ * 结果表格的 Ctrl+双击=编辑 用它判定——只挂在网格焦点上会漏（焦点不在网格时第一次 Ctrl+双击
+ * 会误入“查看”）。
+ */
+val LocalCtrlHeld = staticCompositionLocalOf { false }
+
 // ───────────────────────── Compose 侧 ─────────────────────────
 
 fun ShortcutKey.toComposeKey(): Key = when (this) {

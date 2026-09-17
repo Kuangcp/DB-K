@@ -84,6 +84,7 @@ import app.state.ToastState
 import app.ui.CompletionTable
 import app.ui.CompletionDismissSignal
 import app.ui.LocalCompletionDismiss
+import app.ui.LocalCtrlHeld
 import app.ui.LocalKeymap
 import app.ui.ResultEdits
 import app.ui.SqlWorkspace
@@ -661,6 +662,8 @@ private fun WindowScope.AppBody(
     }
 
     val completionDismiss = remember { CompletionDismissSignal() }
+    // 窗口级 Ctrl 按下状态：供结果表格 Ctrl+双击=编辑（AWT dispatcher 维护，焦点无关）。
+    var ctrlHeld by remember { mutableStateOf(false) }
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
@@ -668,6 +671,7 @@ private fun WindowScope.AppBody(
             LocalContentColor provides MaterialTheme.colors.onSurface,
             LocalKeymap provides keymap,
             LocalCompletionDismiss provides completionDismiss,
+            LocalCtrlHeld provides ctrlHeld,
         ) {
             // 窗口级业务键（显示/隐藏结果区、查看定义 DDL）用 AWT 级 KeyEventDispatcher 拦截：
             // Linux/X11 实测，修饰键+字母除 KEY_PRESSED 外还会派发一次字符事件
@@ -677,6 +681,10 @@ private fun WindowScope.AppBody(
             // （KEY_PRESSED + KEY_TYPED）吃掉，两条通道都收不到；命中哪两条命令由用户可配置键表决定。
             DisposableEffect(Unit) {
                 val dispatcher = java.awt.KeyEventDispatcher { e ->
+                    // 只观察 Ctrl 状态（不吞事件）；结果表格用它判 Ctrl+双击=编辑。
+                    if (e.keyCode == java.awt.event.KeyEvent.VK_CONTROL) {
+                        ctrlHeld = e.id == java.awt.event.KeyEvent.KEY_PRESSED
+                    }
                     when (keymapState.value.matchAnyAwt(e)) {
                         ShortcutCommand.TOGGLE_RESULTS -> {
                             // 只在首次按下时切换，忽略自动重复（KEY_RELEASED/KEY_TYPED 只吞不切）

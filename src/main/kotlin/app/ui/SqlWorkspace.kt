@@ -2726,10 +2726,10 @@ private fun ResultTable(
 ) {
     // 当前快捷键表：结果网格的复制单元格走注册表（基础键，固定），方向键等仍为模态导航。
     val keymap = LocalKeymap.current
+    // 窗口级 Ctrl 状态（AWT dispatcher 维护）；结果表格 Ctrl+双击=编辑用
+    val ctrlHeld = LocalCtrlHeld.current
     // 单元格大段文本查看器（双击 / 右键「查看完整内容」）
     var viewer by remember { mutableStateOf<CellView?>(null) }
-    // Ctrl 按下状态（结果表内跟踪）：Ctrl+双击 = 进入编辑；普通双击 = 查看
-    var ctrlDown by remember { mutableStateOf(false) }
     // 正在行内编辑的目标 + 草稿
     var editing by remember(result.sql, result.rows.size, transposed) { mutableStateOf<EditTarget?>(null) }
     var editDraft by remember { mutableStateOf("") }
@@ -2890,10 +2890,7 @@ private fun ResultTable(
     }
 
     val onKey: (KeyEvent) -> Boolean = { e ->
-        if (e.key == Key.CtrlLeft || e.key == Key.CtrlRight) {
-            ctrlDown = e.type == KeyEventType.KeyDown
-            false
-        } else if (e.type != KeyEventType.KeyDown) {
+        if (e.type != KeyEventType.KeyDown) {
             false
         } else {
             when {
@@ -2928,7 +2925,6 @@ private fun ResultTable(
             .onSizeChanged { tableWidthPx = it.width }
             .focusRequester(focusRequester)
             .focusable()
-            .onFocusChanged { if (!it.isFocused) ctrlDown = false }
             .onPreviewKeyEvent(onKey),
     ) {
         ResultFilterBar(
@@ -3032,8 +3028,7 @@ private fun ResultTable(
                                     onDoubleClick = when {
                                         isEditable -> {
                                             {
-                                                if (ctrlDown) {
-                                                    ctrlDown = false
+                                                if (ctrlHeld) {
                                                     // 长值/多行/NULL → 对话框；短值 → 行内编辑
                                                     if (v == null || v.length > 60 || v.contains('\n')) {
                                                         origKey?.let {
