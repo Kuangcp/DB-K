@@ -160,13 +160,3 @@ internal fun jsonHighlightSpans(
     }
     return out
 }
-
-/** 高亮区间贴到 [androidx.compose.ui.text.input.TextFieldValue]（BasicTextField 消费带 span 的文本）。 */
-internal fun androidx.compose.ui.text.input.TextFieldValue.withHighlightSpans(
-    spans: List<AnnotatedString.Range<SpanStyle>>,
-): androidx.compose.ui.text.input.TextFieldValue =
-    androidx.compose.ui.text.input.TextFieldValue(
-        AnnotatedString(text, spanStyles = spans),
-        selection,
-        composition,
-    )

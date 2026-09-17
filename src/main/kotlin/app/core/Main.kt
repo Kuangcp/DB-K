@@ -127,6 +127,11 @@ import java.io.File
 fun main() = application {
     // 首条日志触发 tinylog 初始化 → SessionLogWriter 立即创建本次会话日志文件（logs/yyyy-MM/yyyy-MM-dd_N.log）
     Logger.info("db-k session start; dataDir={}", AppPaths.dataDirectory())
+    // 未捕获异常（AWT-EventQueue / 后台线程 / 协程）默认只打到 stderr、不进会话日志；统一挂到
+    // tinylog。JDK 的 EDT 在 processException 里调线程的 UncaughtExceptionHandler，最终落到这里。
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        Logger.error(throwable, "uncaught exception on thread {}", thread.name)
+    }
     // glibc 原生内存治理：压低 mmap/trim 阈值，避免大块分配的峰值变成常驻 RSS
     NativeMemory.configure()
     // 外部 JDBC 驱动（SQL Server / Oracle）：<dataDir>/drivers 下的 jar 以独立 classloader 加载。

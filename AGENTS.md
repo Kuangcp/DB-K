@@ -72,6 +72,9 @@
 - 依赖：`tinylog-impl` 是 **implementation**（writer 类编译需要 writers 抽象类）。
 - 坑：tinylog 懒初始化——只有首次 `Logger.*` 调用才建 writer。所以 `main()` 第一行必须有确定的首条日志
   （现为 `Logger.info("db-k session start; …")`）；新增启动流程不要删它。
+- 未捕获异常（AWT-EventQueue / 后台线程 / 协程崩溃）默认只打到 stderr、不进会话日志；`main()` 里
+  已挂 `Thread.setDefaultUncaughtExceptionHandler` 统一落 tinylog（JDK 的 EDT 会走线程 UncaughtExceptionHandler）。
+  新起常驻线程/协程时若自己覆盖了 uncaught handler，需自行兜底 Logger.error。
 - writer 构造：必须同时提供无参与 `(Map<String,String>)` 两个公开构造（tinylog 反射实例化用）。
 - 新增「运行日志写哪」自查：`find ~/.local/share/db-k/logs -name '*.log' | tail` 应与今天日期/启动次数对应。
 - 入口：设置窗口「通用设置 → 诊断」可显示并一键打开日志 / 数据目录（`AppPaths.logsDirectory()` /

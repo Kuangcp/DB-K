@@ -9,6 +9,7 @@ import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.rememberScrollbarAdapter
 import org.tinylog.Logger
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 import androidx.compose.foundation.background
@@ -42,6 +43,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.TextFieldDecorator
+import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.CircularProgressIndicator
@@ -105,12 +110,12 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -294,9 +299,12 @@ fun WindowScope.SqlWorkspace(
     // 转置视图：仅展示层翻转；新一次执行 / 切换控制台时复位为原布局
     var transposed by remember { mutableStateOf(false) }
     // N2：编辑器动作（格式化 / 查找替换）。findReplaceOpen 控制查找栏显隐；
-    // formatRef 由下方控制台区块赋值（那里才能访问编辑器权威状态 tfv）。
+    // formatRef 由下方控制台区块赋值（那里才能访问编辑器的权威状态）。
     var findReplaceOpen by remember { mutableStateOf(false) }
     val formatRef = remember { mutableStateOf<(() -> Unit)?>(null) }
+    // 每个控制台一个 TextFieldState（含原生撤销栈 UndoState），跨重组/切控制台存活。
+    // 删控制台后这里会留一个实例（文本量小，TODO 后续接到删除回调清理）。
+    val editorStates = remember { mutableMapOf<String, TextFieldState>() }
     LaunchedEffect(run.executing) {
         if (run.executing) transposed = false
     }
@@ -426,60 +434,65 @@ fun WindowScope.SqlWorkspace(
         // 切回（含重启）时恢复上次焦点所在行，而不是总跳到文末。
         val consoleId = activeConsole.id
         val savedCaret = caretOf(consoleId)
-        // 编辑器状态：文本由外部权威（切换控制台/预览/清空），选区本地瞬态。
-        // 用 remember(consoleId) 在「组合期同步」重建，这样切控制台时选区已是记忆值，
-        // 子层 LaunchedEffect(consoleId) 的“滚到光标行”不会读到切换前的旧值。
-        var tfv by remember(consoleId) {
-            mutableStateOf(
-                TextFieldValue(
-                    editorText,
-                    TextRange(
-                        savedCaret.first.coerceIn(0, editorText.length),
-                        savedCaret.second.coerceIn(0, editorText.length),
-                    ),
+        // 编辑器状态：每个控制台一个 TextFieldState，存在 SqlWorkspace 的 map 里（跨重组/切控制台存活）。
+        // TextFieldState 自带撤销栈（UndoState），因此切控制台后 undo/redo 仍按控制台各自保留。
+        val state = editorStates.getOrPut(consoleId) {
+            TextFieldState(
+                editorText,
+                TextRange(
+                    savedCaret.first.coerceIn(0, editorText.length),
+                    savedCaret.second.coerceIn(0, editorText.length),
                 ),
             )
         }
-        LaunchedEffect(editorText) {
-            if (tfv.text != editorText) {
-                val v = TextFieldValue(editorText, TextRange(editorText.length))
-                tfv = v
-                onCaretChange(consoleId, v.selection.start, v.selection.end)
-            }
+        // 文本/选区变化 → ConsoleState（脏标记 + 防抖落库 + 光标记忆）。drop(1) 跳过 collect 时的初值。
+        LaunchedEffect(consoleId) {
+            snapshotFlow { state.text.toString() }
+                .drop(1)
+                .collect { onTextChange(consoleId, it) }
+        }
+        LaunchedEffect(consoleId) {
+            snapshotFlow { state.selection }
+                .drop(1)
+                .collect { sel -> onCaretChange(consoleId, sel.start, sel.end) }
         }
         // 预览 / 历史 SQL 插入：在光标/选区处插入（有选区则替换之），不覆盖整段草稿；
-        // 光标落到插入内容之后。在此处做是因为 tfv 是编辑器的权威状态。
+        // 光标落到插入内容之后。文本/选区变化由上面的 snapshotFlow 统一转发。
         LaunchedEffect(insertRequest) {
             val snippet = insertRequest ?: return@LaunchedEffect
             onInsertRequestConsumed()
+            val cur = state.text.toString()
             val (newText, caret) = insertSnippetAtCaret(
-                cur = tfv.text,
-                selStart = tfv.selection.start,
-                selEnd = tfv.selection.end,
+                cur = cur,
+                selStart = state.selection.start,
+                selEnd = state.selection.end,
                 snippet = snippet,
             )
-            tfv = TextFieldValue(newText, TextRange(caret))
-            onCaretChange(consoleId, caret, caret)
-            onTextChange(consoleId, newText)
+            state.edit {
+                replace(0, length, newText)
+                selection = TextRange(caret)
+            }
         }
         // N2：格式化 = 有选区只格式化选区，否则整段；只调空白/关键字大小写，语义不变。
         val doFormat: () -> Unit = {
-            val fsel = tfv.selection
-            val newText: String
-            val caret: Int
-            if (!fsel.collapsed) {
-                val from = minOf(fsel.start, fsel.end).coerceIn(0, tfv.text.length)
-                val to = maxOf(fsel.start, fsel.end).coerceIn(0, tfv.text.length)
-                val formatted = formatSql(tfv.text.substring(from, to)).trimEnd('\n')
-                newText = tfv.text.substring(0, from) + formatted + tfv.text.substring(to)
-                caret = from
-            } else {
-                newText = formatSql(tfv.text).trimEnd('\n')
-                caret = tfv.selection.start.coerceIn(0, newText.length)
+            state.edit {
+                val cur = toString()
+                val fsel = selection
+                val newText: String
+                val caret: Int
+                if (!fsel.collapsed) {
+                    val from = minOf(fsel.start, fsel.end).coerceIn(0, cur.length)
+                    val to = maxOf(fsel.start, fsel.end).coerceIn(0, cur.length)
+                    val formatted = formatSql(cur.substring(from, to)).trimEnd('\n')
+                    newText = cur.substring(0, from) + formatted + cur.substring(to)
+                    caret = from
+                } else {
+                    newText = formatSql(cur).trimEnd('\n')
+                    caret = fsel.start.coerceIn(0, newText.length)
+                }
+                replace(0, length, newText)
+                selection = TextRange(caret)
             }
-            tfv = TextFieldValue(newText, TextRange(caret))
-            onCaretChange(consoleId, caret, caret)
-            onTextChange(consoleId, newText)
         }
         SideEffect { formatRef.value = doFormat }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -492,25 +505,15 @@ fun WindowScope.SqlWorkspace(
                 Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                     // 编辑器吃满剩余高，结果区按 resultFrac 分配；中间只隔一根 5dp 可拖细线，不留空隙。
                     // 执行动作/状态/多语句 tabs 全部收在结果区顶部一条 28dp 工具条里（无结果时不显示）。
-                    // 每个控制台一个独立的编辑器节点。Compose 的 BasicTextField 在 value 被外部替换
-                    // （切控制台/预览/清空）后可能再上报一次旧文本；若复用同一节点，这次“回弹”会被
-                    // 当成当前控制台的编辑内容写进去 —— 历史事故：A1 的正文整体覆盖 B4，只能靠 Ctrl+Z 回退。
-                    // key(consoleId) 让切控制台换一个文本域实例，旧节点的输入会话随之销毁，串台不可能发生。
+                    // 每个控制台一个独立的编辑器节点（key(consoleId)）：旧节点输入会话随切换销毁，
+                    // 避免 BasicTextField 在 value 被外部替换后“回弹”旧文本造成串台（历史事故：A1 覆盖 B4）。
+                    // 撤销历史不在节点里、而在上面 per-console 的 TextFieldState 里，所以 key 重建不丢 undo。
                     key(consoleId) {
                         EditorPane(
-                            value = tfv,
+                            state = state,
                             consoleId = consoleId,
                             dirty = editorDirty,
-                            onValueChange = { v ->
-                                val textChanged = v.text != tfv.text
-                                tfv = v
-                                // 记录本控制台最后的光标/选区（点击、输入、选择都更新；内存即时、防抖落库）
-                                onCaretChange(consoleId, v.selection.start, v.selection.end)
-                                // BasicTextField 在纯鼠标点击/光标移动时也会以新选区上报 onValueChange，
-                                // 内容没变就不置脏、不触发自动保存（否则点一下编辑器就变成“未保存”）。
-                                if (textChanged) onTextChange(consoleId, v.text)
-                            },
-                            onCtrlEnter = { selectedSqlOf(tfv)?.let(onRun) },
+                            onCtrlEnter = { selectedSqlOf(state.text.toString(), state.selection)?.let(onRun) },
                             completionIdentifiers = completionIdentifiers,
                             completionTables = completionTables,
                             completionFunctions = completionFunctions,
@@ -627,13 +630,12 @@ internal fun insertSnippetAtCaret(cur: String, selStart: Int, selEnd: Int, snipp
 }
 
 /** 编辑器当前选中片段（去首尾空白）；无选中或选中空白 → null。 */
-private fun selectedSqlOf(v: TextFieldValue): String? {
-    val s = v.selection
-    if (s.collapsed) return null
+private fun selectedSqlOf(text: String, sel: TextRange): String? {
+    if (sel.collapsed) return null
     // 反向选择（从下往上）时 start>end，必须取 min/max
-    val from = minOf(s.start, s.end)
-    val to = maxOf(s.start, s.end)
-    val sub = v.text.substring(from, to)
+    val from = minOf(sel.start, sel.end)
+    val to = maxOf(sel.start, sel.end)
+    val sub = text.substring(from, to)
     return sub.trim().takeIf { it.isNotEmpty() }
 }
 
@@ -1177,11 +1179,10 @@ private fun StarterPane(
  */
 @Composable
 private fun EditorPane(
-    value: TextFieldValue,
+    state: TextFieldState,
     /** 所属控制台 id：仅用作 LaunchedEffect 键——切换控制台时把视口滚到恢复的光标行。 */
     consoleId: String,
     dirty: Boolean,
-    onValueChange: (TextFieldValue) -> Unit,
     onCtrlEnter: () -> Unit,
     completionIdentifiers: List<String>,
     completionTables: List<CompletionTable>,
@@ -1203,26 +1204,73 @@ private fun EditorPane(
     val keymap = LocalKeymap.current
     val isDark = MaterialTheme.colors.isLight.not()
     val keywords = remember { sqlHighlightKeywordSet() }
-    // 语法高亮：手写扫描出 token 区间（无正则）——`(a|b)*` 型正则在长字符串字面量上会递归爆栈，
-    // 见 `SyntaxHighlight.kt`。isDark / editorLanguage 作 key：主题或后端变化时重算色板。
-    val highlightSpans = remember(value.text, isDark, editorLanguage, keywords) {
-        when (editorLanguage) {
-            EditorLanguage.JSON -> jsonHighlightSpans(value.text, jsonSyntaxPalette(isDark))
-            else -> sqlHighlightSpans(value.text, sqlSyntaxPalette(isDark), keywords)
-        }
-    }
-    val highlightedValue = remember(value.text, value.selection, value.composition, highlightSpans) {
-        value.withHighlightSpans(highlightSpans)
-    }
+    val content = state.text.toString()
+    val sel = state.selection
 
     val scroll = rememberScrollState()
 
-    // N2 查找替换的替换动作会写 editing（替换后不弹补全），故提前声明；补全活性判定见下。
+    // 补全活性：文本变化=用户敲字；纯选区变化=点一下/移光标 → 关闭。
+    // 旧 API 在 onValueChange 里一次性拿到 text+selection 来判 typed；新 API 没有回调，
+    // 用 snapshotFlow 观察 (text, selection) 复刻同一语义。suppressTextActivation 供程序化
+    // 插入（accept 上屏）抑制“本次文本变化”激活，避免刚上屏又弹下一批候选。
     var editing by remember { mutableStateOf(false) }
+    var forceComplete by remember { mutableStateOf(false) }
+    var suppressTextActivation by remember { mutableStateOf(false) }
+    LaunchedEffect(state) {
+        var lastText = state.text.toString()
+        snapshotFlow { state.text.toString() to state.selection }
+            .drop(1)
+            .collect { (text, _) ->
+                val typed = text != lastText
+                lastText = text
+                if (typed) {
+                    if (suppressTextActivation) suppressTextActivation = false
+                    else { editing = true; forceComplete = false }
+                } else {
+                    editing = false
+                }
+            }
+    }
+
+    // 语法高亮：手写扫描出 token 区间（无正则）——`(a|b)*` 型正则在长字符串字面量上会递归爆栈，
+    // 见 `SyntaxHighlight.kt`。新 API 在 outputTransformation 里把 span 贴进 TextFieldBuffer。
+    val highlightSpans = remember(content, isDark, editorLanguage, keywords) {
+        when (editorLanguage) {
+            EditorLanguage.JSON -> jsonHighlightSpans(content, jsonSyntaxPalette(isDark))
+            else -> sqlHighlightSpans(content, sqlSyntaxPalette(isDark), keywords)
+        }
+    }
+    val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
+    val currentLineRange: Pair<Int, Int>? =
+        if (editing && sel.collapsed && content.isNotEmpty()) {
+            val s = sel.start.coerceIn(0, content.length)
+            val ls = content.lastIndexOf('\n', s - 1) + 1
+            val leRaw = content.indexOf('\n', s)
+            val le = if (leRaw < 0) content.length else leRaw
+            if (le > ls) ls to le else null
+        } else null
+    val outputTransformation = remember(highlightSpans, currentLineRange, lineBgColor) {
+        OutputTransformation {
+            // 重要：buffer 可能是比 composition 期算好的 spans 更“短”的文本（undo/快速输入时，
+            // outputTransformation 会在重组前就被触发）。addStyle 的范围必须落在当前 buffer 长度内，
+            // 否则 TextFieldBuffer.requireValidStyleRange 抛 Expected TextRange(...) 直接崩。
+            // 逐条夹取，越界部分丢弃；下一帧重组会用新 spans 重新着色。
+            for (s in highlightSpans) {
+                val start = s.start.coerceIn(0, length)
+                val end = s.end.coerceIn(0, length)
+                if (start < end) addStyle(s.item, start, end)
+            }
+            currentLineRange?.let { (a, b) ->
+                val start = a.coerceIn(0, length)
+                val end = b.coerceIn(0, length)
+                if (start < end) addStyle(SpanStyle(background = lineBgColor), start, end)
+            }
+        }
+    }
 
     // 鼠标按在补全弹层外（左侧树 / 结果区 / 工具栏 / 其它控制台标签…）→ 收起弹层：语义就是
     // “不要这个提示了”。弹层是编辑器内 overlay，收不到别处的点击，由 Main 根布局的窗口级
-    // 指针监听转发（见 CompletionDismissSignal）；编辑区内的点击/移光标另有 commitEdit 通道。
+    // 指针监听转发（见 CompletionDismissSignal）；编辑区内的点击/移光标由上面的 snapshotFlow 关闭。
     val completionDismiss = LocalCompletionDismiss.current
     LaunchedEffect(completionDismiss.tick) {
         if (completionDismiss.tick > 0) editing = false
@@ -1234,8 +1282,8 @@ private fun EditorPane(
     var useRegex by remember(consoleId) { mutableStateOf(false) }
     var caseSensitive by remember(consoleId) { mutableStateOf(false) }
     val findOptions = FindOptions(regex = useRegex, caseSensitive = caseSensitive)
-    val findHits = remember(value.text, findText, useRegex, caseSensitive) {
-        findMatches(value.text, findText, findOptions)
+    val findHits = remember(content, findText, useRegex, caseSensitive) {
+        findMatches(content, findText, findOptions)
     }
     var activeMatch by remember { mutableStateOf(-1) }
     LaunchedEffect(findHits) {
@@ -1250,11 +1298,11 @@ private fun EditorPane(
     // 打开查找时若有选区，用选中文本预填（“选区查找”）；只取首行且限长
     LaunchedEffect(findOpen) {
         if (findOpen && findText.isEmpty()) {
-            val s = value.selection
+            val s = sel
             if (!s.collapsed) {
-                val from = minOf(s.start, s.end).coerceIn(0, value.text.length)
-                val to = maxOf(s.start, s.end).coerceIn(0, value.text.length)
-                findText = value.text.substring(from, to).lineSequence().firstOrNull().orEmpty().take(200)
+                val from = minOf(s.start, s.end).coerceIn(0, content.length)
+                val to = maxOf(s.start, s.end).coerceIn(0, content.length)
+                findText = content.substring(from, to).lineSequence().firstOrNull().orEmpty().take(200)
             }
         }
     }
@@ -1264,23 +1312,31 @@ private fun EditorPane(
         val idx = ((index % findHits.size) + findHits.size) % findHits.size
         activeMatch = idx
         val r = findHits[idx]
-        onValueChange(value.copy(selection = TextRange(r.first, r.last + 1)))
+        state.edit { selection = TextRange(r.first, r.last + 1) }
         navTick++
     }
 
     fun replaceCurrentHit() {
         val r = findHits.getOrNull(activeMatch) ?: return
         val caret = r.first + replaceText.length
+        suppressTextActivation = true
         editing = false
-        onValueChange(value.copy(text = replaceRange(value.text, r, replaceText), selection = TextRange(caret)))
+        state.edit {
+            replace(r.first, r.last + 1, replaceText)
+            selection = TextRange(caret)
+        }
     }
 
     fun replaceAllHits() {
-        val (newText, count) = replaceAll(value.text, findText, findOptions, replaceText)
+        val (newText, count) = replaceAll(content, findText, findOptions, replaceText)
         if (count == 0) return
-        val caret = value.selection.start.coerceIn(0, newText.length)
+        val caret = sel.start.coerceIn(0, newText.length)
+        suppressTextActivation = true
         editing = false
-        onValueChange(TextFieldValue(newText, TextRange(caret)))
+        state.edit {
+            replace(0, length, newText)
+            selection = TextRange(caret)
+        }
     }
     // 拖拽选区自动滚动：指针停在上/下边缘时持续滚动并同步延伸选区（多行大块选择必需）。
     // 编辑器是「BasicTextField + 外层 verticalScroll」结构，BasicTextField 不知道外层滚动，
@@ -1288,20 +1344,6 @@ private fun EditorPane(
     var dragActive by remember { mutableStateOf(false) }
     var dragPointer by remember { mutableStateOf<Offset?>(null) }
     var scrollAnchor by remember { mutableStateOf<Int?>(null) }
-    // 补全活性判定：本机 Compose Desktop 中 CoreTextField 的焦点在内部节点，外层 onFocusChanged
-    // 收不到事件（实测输入时 focused 恒为 false）。且 BasicTextField 在纯鼠标点击/移动光标时
-    // 也会以新选区上报 onValueChange——因此**只有文本真正变化**（敲字/删除/粘贴）才激活补全，
-    // 点击与光标移动立即关闭。
-    // 不设空闲自动关闭：弹层只在 光标移动/点击、Esc、上屏（Enter/Tab）、切控制台 时收起，
-    // 否则用方向键浏览候选时（计时器到点）会突然消失。
-    // 显式 Ctrl+Space 唤起：允许空前缀（列出上下文列/表）；任意编辑/移动光标后复位
-    var forceComplete by remember { mutableStateOf(false) }
-    fun commitEdit(v: TextFieldValue) {
-        val typed = v.text != value.text
-        editing = typed
-        forceComplete = false
-        onValueChange(v)
-    }
     var boxW by remember { mutableStateOf(0) }
     var boxH by remember { mutableStateOf(0) }
     val density = LocalDensity.current
@@ -1318,14 +1360,13 @@ private fun EditorPane(
     val textMeasurer = rememberTextMeasurer()
 
     // ---- 补全派生状态：caret 词/限定符/星号 → 语句上下文（含 CTE/子查询）→ 候选 → 弹层 ----
-    val sel = value.selection
     val caretActive = editing
     val canComplete = caretActive && sel.collapsed
     // JSON 模式（Elasticsearch DSL）：走 [esDslSuggestions]，不走 SQL 词法/补全
     val jsonMode = editorLanguage == EditorLanguage.JSON
-    val qualified = if (canComplete && !jsonMode) sqlQualifiedPrefix(value.text, sel.start) else null
+    val qualified = if (canComplete && !jsonMode) sqlQualifiedPrefix(content, sel.start) else null
     // 解析 caret 所在语句（只看括号深度 0；只取已写完的表名，避免边敲边查元数据）
-    val prepared = if (canComplete) buildPreparedScope(value.text, sel.start) else null
+    val prepared = if (canComplete) buildPreparedScope(content, sel.start) else null
     val cteColumns = prepared?.scope?.cteColumns.orEmpty()
     val allRefs: List<Pair<TableRef, SchemaMeta?>> = prepared?.let { p ->
         p.scope.tables
@@ -1337,15 +1378,15 @@ private fun EditorPane(
     }.orEmpty()
     // select-list 的 `*` 可展开为 FROM 表列（仅 Ctrl+Space 显式唤起：避免自动弹层劫持 Enter）
     val starPos = if (canComplete && qualified == null && forceComplete) {
-        selectStarBeforeCaret(value.text, sel.start)
+        selectStarBeforeCaret(content, sel.start)
     } else {
         null
     }
     val sqlWord: CompletionWord? = when {
         qualified != null -> CompletionWord(qualified.wordStart, qualified.wordEnd, qualified.wordText)
         starPos != null -> CompletionWord(starPos, sel.start, "*")
-        canComplete -> sqlCompletionWord(value.text, sel.start)
-            ?: if (forceComplete && sqlCompletionAllowed(value.text, sel.start)) {
+        canComplete -> sqlCompletionWord(content, sel.start)
+            ?: if (forceComplete && sqlCompletionAllowed(content, sel.start)) {
                 CompletionWord(sel.start, sel.start, "")
             } else null
         else -> null
@@ -1407,14 +1448,14 @@ private fun EditorPane(
 
     // ---- ES JSON DSL 补全：字段来自目标索引 `_mapping`（异步预取，未命中先出键/枚举）----
     val dslIndex = if (jsonMode) {
-        esDslIndexName(value.text) ?: profile?.database?.trim()?.takeIf { it.isNotEmpty() }
+        esDslIndexName(content) ?: profile?.database?.trim()?.takeIf { it.isNotEmpty() }
     } else null
     val dslSchema = defaultSchema ?: schemas.firstOrNull()
     val dslFields = if (jsonMode && dslIndex != null && profile != null) {
         columnCatalog?.peek(profile.id, dslSchema, dslIndex)?.map { it.name }.orEmpty()
     } else emptyList()
     val dslSuggestion = if (jsonMode && canComplete) {
-        esDslSuggestions(value.text, sel.start, dslFields, completionIdentifiers)
+        esDslSuggestions(content, sel.start, dslFields, completionIdentifiers)
     } else null
     // 空前缀只在显式 Ctrl+Space 时列上下文（与 SQL 一致，避免回车被弹层截走）
     val dslWord = dslSuggestion?.word?.takeIf { forceComplete || it.text.isNotEmpty() }
@@ -1428,10 +1469,13 @@ private fun EditorPane(
     fun accept(item: CompletionItem) {
         val w = word ?: return
         val insert = item.insertText ?: item.text
-        val newText = value.text.replaceRange(w.start, w.end, insert)
-        commitEdit(value.copy(text = newText, selection = TextRange(w.start + insert.length)))
-        // 接受后不自动重开（避免刚上屏又弹下一批候选），等下一次敲键或 Ctrl+Space
+        // 抑制“本次文本变化”重新激活补全，接受后不自动重开（等下一次敲键或 Ctrl+Space）
+        suppressTextActivation = true
         editing = false
+        state.edit {
+            replace(w.start, w.end, insert)
+            selection = TextRange(w.start + insert.length)
+        }
     }
 
     // 元数据未命中则异步拉取（回填快照 → 重组合出候选）；键变化即取消旧请求。
@@ -1466,7 +1510,6 @@ private fun EditorPane(
     }
 
     // ---- 行号槽 / 当前行高亮：文本布局（与编辑区同 style 同内宽，含自动换行）为唯一坐标来源 ----
-    val content = value.text
     val gutterWpx = with(density) { GUTTER_W.toPx() }
     val textPadLPx = with(density) { 4.dp.toPx() }
     val textPadRPx = with(density) { 10.dp.toPx() }
@@ -1515,7 +1558,7 @@ private fun EditorPane(
     LaunchedEffect(navTick) {
         if (navTick == 0) return@LaunchedEffect
         val lay = textLayout ?: return@LaunchedEffect
-        val off = value.selection.start.coerceIn(0, content.length)
+        val off = sel.start.coerceIn(0, content.length)
         val top = textTopPx + lay.getLineTop(lay.getLineForOffset(off))
         val viewport = (boxH - 2f * textTopPx).coerceAtLeast(lineHpx)
         val target = (top + lineHpx / 2f - viewport / 2f).coerceAtLeast(0f)
@@ -1524,7 +1567,6 @@ private fun EditorPane(
 
     // 拖拽选区自动滚动循环：指针在边缘区时持续滚动，并把选区焦点移到边缘所在文本位置
     // （固定端 = 开始拖拽时远离指针的那一端，锁在 scrollAnchor 里）。
-    val currentValue = rememberUpdatedState(value)
     // 指针坐标 → 文本 offset（含滚动偏移；夹在排版范围内，避免指针拖到窗口外时坐标失控）。
     // 做成随组合更新的 lambda，供「边缘自动滚动循环」与「指针旁路」共用同一套换算。
     val offsetAtPointer = rememberUpdatedState<(Offset) -> Int?>(
@@ -1559,40 +1601,15 @@ private fun EditorPane(
             }
             scroll.dispatchRawDelta(scrollDir * (8f + overshoot * 0.6f).coerceAtMost(48f))
             val focusOff = offsetAtPointer.value(p) ?: break
-            val curSel = currentValue.value.selection
+            val curSel = state.selection
             val anchor = scrollAnchor ?: (if (scrollDir < 0) curSel.max else curSel.min)
             scrollAnchor = anchor
             val ns = TextRange(minOf(anchor, focusOff), maxOf(anchor, focusOff))
-            if (ns != curSel) onValueChange(currentValue.value.copy(selection = ns))
+            if (ns != curSel) state.edit { selection = ns }
             kotlinx.coroutines.delay(16)
         }
     }
 
-    // 当前行背景（随 caret 行的文本一并滚动/换行）——仅叠加 background，不动语法色 span
-    val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
-    val displayValue: TextFieldValue =
-        if (caretActive && sel.collapsed && content.isNotEmpty()) {
-            val s = sel.start.coerceIn(0, content.length)
-            val ls = content.lastIndexOf('\n', s - 1) + 1
-            val leRaw = content.indexOf('\n', s)
-            val le = if (leRaw < 0) content.length else leRaw
-            val baseAnn = highlightedValue.annotatedString
-            if (le > ls) {
-                TextFieldValue(
-                    annotatedString = AnnotatedString(
-                        text = baseAnn.text,
-                        spanStyles = baseAnn.spanStyles + listOf(
-                            androidx.compose.ui.text.AnnotatedString.Range(SpanStyle(background = lineBgColor), ls, le),
-                        ),
-                        paragraphStyles = baseAnn.paragraphStyles,
-                    ),
-                    selection = value.selection,
-                    composition = value.composition,
-                )
-            } else highlightedValue.copy(composition = value.composition)
-        } else {
-            highlightedValue.copy(composition = value.composition)
-        }
     // 行号配色（主题派生）
     val gutterColor = MaterialTheme.colors.onSurface.copy(alpha = 0.35f)
     val gutterCurColor = MaterialTheme.colors.onSurface.copy(alpha = 0.95f)
@@ -1632,13 +1649,13 @@ private fun EditorPane(
                                         val anchor = scrollAnchor
                                         if (pos != null && anchor != null) {
                                             offsetAtPointer.value(pos)?.let { focusOff ->
-                                                val curSel = currentValue.value.selection
+                                                val curSel = state.selection
                                                 val ns = TextRange(
                                                     minOf(anchor, focusOff),
                                                     maxOf(anchor, focusOff),
                                                 )
                                                 if (ns != curSel) {
-                                                    onValueChange(currentValue.value.copy(selection = ns))
+                                                    state.edit { selection = ns }
                                                 }
                                             }
                                         }
@@ -1701,66 +1718,69 @@ private fun EditorPane(
                         },
                 )
                 BasicTextField(
-                    value = displayValue,
-                    onValueChange = ::commitEdit,
+                    state = state,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .padding(start = 4.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
                         .verticalScroll(scroll)
-                    .onPreviewKeyEvent { e ->
-                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        if (keymap.matches(ShortcutCommand.EXECUTE, e)) {
-                            // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
-                            onCtrlEnter()
-                            return@onPreviewKeyEvent true
-                        }
-                        // 基础编辑键（固定）：Ctrl+Space 显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
-                        if (keymap.matches(ShortcutCommand.COMPLETE, e)) {
-                            // 显式唤起：允许空前缀（列/表）；未敲字也行
-                            editing = true
-                            forceComplete = true
-                            dismissed = false
-                            return@onPreviewKeyEvent true
-                        }
-                        if (popupOpen) {
-                            when (e.key) {
-                                Key.Tab, Key.Enter -> {
-                                    val i = selIdx.coerceIn(0, shown.size - 1)
-                                    accept(shown[i])
-                                    true
-                                }
-                                Key.Escape -> { dismissed = true; true }
-                                Key.DirectionDown -> { selIdx = (selIdx + 1) % shown.size; true }
-                                Key.DirectionUp -> { selIdx = (selIdx - 1 + shown.size) % shown.size; true }
-                                else -> false
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            if (keymap.matches(ShortcutCommand.EXECUTE, e)) {
+                                // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
+                                onCtrlEnter()
+                                return@onPreviewKeyEvent true
                             }
-                        } else {
-                            false
+                            // 基础编辑键（固定）：Ctrl+Space 显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
+                            if (keymap.matches(ShortcutCommand.COMPLETE, e)) {
+                                // 显式唤起：允许空前缀（列/表）；未敲字也行
+                                editing = true
+                                forceComplete = true
+                                dismissed = false
+                                return@onPreviewKeyEvent true
+                            }
+                            if (popupOpen) {
+                                when (e.key) {
+                                    Key.Tab, Key.Enter -> {
+                                        val i = selIdx.coerceIn(0, shown.size - 1)
+                                        accept(shown[i])
+                                        true
+                                    }
+                                    Key.Escape -> { dismissed = true; true }
+                                    Key.DirectionDown -> { selIdx = (selIdx + 1) % shown.size; true }
+                                    Key.DirectionUp -> { selIdx = (selIdx - 1 + shown.size) % shown.size; true }
+                                    else -> false
+                                }
+                            } else {
+                                false
+                            }
+                        },
+                    textStyle = editorStyle,
+                    keyboardOptions = KeyboardOptions.Default,
+                    lineLimits = TextFieldLineLimits.MultiLine(1, Int.MAX_VALUE),
+                    cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                    outputTransformation = outputTransformation,
+                    decorator = object : TextFieldDecorator {
+                        @Composable
+                        override fun Decoration(innerTextField: @Composable () -> Unit) {
+                            Box {
+                                if (content.isEmpty()) {
+                                    Text(
+                                        if (jsonMode) {
+                                            "输入 ES JSON DSL，如 {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space 补全键/查询类型/字段名"
+                                        } else {
+                                            "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）"
+                                        },
+                                        fontSize = editorStyle.fontSize,
+                                        lineHeight = editorStyle.lineHeight,
+                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
+                                    )
+                                }
+                                innerTextField()
+                            }
                         }
                     },
-                singleLine = false,
-                cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
-                textStyle = editorStyle,
-                keyboardOptions = KeyboardOptions.Default,
-                decorationBox = { innerTextField ->
-                    Box {
-                        if (value.text.isEmpty()) {
-                            Text(
-                                if (jsonMode) {
-                                    "输入 ES JSON DSL，如 {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space 补全键/查询类型/字段名"
-                                } else {
-                                    "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）"
-                                },
-                                fontSize = editorStyle.fontSize,
-                                lineHeight = editorStyle.lineHeight,
-                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
-                            )
-                        }
-                        innerTextField()
-                    }
-                },
-            )
+                )
             }
             // 右侧纵向滚动条（文本区 end padding 已留 10dp，不会遮字）
             VerticalScrollbar(
@@ -1784,7 +1804,7 @@ private fun EditorPane(
         if (popupOpen) {
             val w = word ?: return@Box
             val gapPx = with(density) { 6.dp.toPx() }
-            val caretRect = textLayout?.getCursorRect(sel.start.coerceIn(0, value.text.length))
+            val caretRect = textLayout?.getCursorRect(sel.start.coerceIn(0, content.length))
             val textLeftPx = gutterWpx + textPadLPx
             // 宽度自适应：最长候选名 + 最长详情（+ 色点 6dp / 间距 8dp / 左右内边距 20dp），
             // 夹在 [COMPLETION_W, COMPLETION_MAX_W] 且不超过编辑区内宽 - 4dp，长表名不再被省略成 table_…
@@ -1824,7 +1844,7 @@ private fun EditorPane(
                         val x = if (caretRect != null) {
                             (textLeftPx + caretRect.left).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
                         } else {
-                            val before = value.text.substring(0, w.start)
+                            val before = content.substring(0, w.start)
                             val colNo = w.start - (before.lastIndexOf('\n') + 1)
                             (textLeftPx + colNo * 7.8f).toInt().coerceIn(0, (boxW - popW.toInt()).coerceAtLeast(0))
                         }
