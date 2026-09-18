@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "dev.dbk"
-version = "1.0.1"
+version = "1.0.2"
 val appVersion = project.version.toString()
 
 repositories {
