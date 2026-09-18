@@ -526,6 +526,11 @@ private fun WindowScope.AppBody(
                 // Redis：双击键直接按类型执行查看命令并渲染到结果区；编辑器草稿不动
                 // （Redis DB 目标由 flatNamespaceOf → sessionContextSqlFor 在执行时自动带上 SELECT n）。
                 consoleState.run(target, p, sql)
+                // run 会先清掉上次预览元数据，这里在执行完成后重新写入本次键的 type/TTL
+                consoleState.setRedisKeyMeta(
+                    target.id,
+                    app.state.RedisKeyMeta(key = obj.name, type = obj.detail, ttlSeconds = obj.ttlSeconds),
+                )
                 return@launch
             }
             // 会话型目标（多 schema）：预览对象的命名空间随之切换；
@@ -934,6 +939,7 @@ private fun WindowScope.AppBody(
                         onSaveNow = { consoleState.activeConsole()?.let { consoleState.saveNow(it.id) } },
                         run = activeRun,
                         onRun = ::runActiveConsole,
+                        redisKeyMeta = activeConsole?.let { consoleState.redisKeyMetaOf(it.id) },
                         onSelectOutcome = { i ->
                             val c = activeConsole
                             if (c != null) {

@@ -72,6 +72,13 @@ data class ConsoleRunUi(
     val hasOutcomes: Boolean get() = outcomes.isNotEmpty()
 }
 
+/** Redis 结果视图的键元数据（双击预览时记录；瞬态，随新执行清除）。 */
+data class RedisKeyMeta(
+    val key: String,
+    val type: String?,
+    val ttlSeconds: Long?,
+)
+
 class ConsoleState(
     private val repository: ConnectionsRepository,
     private val connectionsState: ConnectionsState,
@@ -95,6 +102,9 @@ class ConsoleState(
 
     /** consoleId -> 最近一次执行快照。 */
     val runSlots = mutableStateMapOf<String, ConsoleRunUi>()
+
+    /** consoleId -> 最近一次双击预览的 Redis 键元数据（结果视图 header 用）。 */
+    val redisKeyMetas = mutableStateMapOf<String, RedisKeyMeta>()
 
     /**
      * 结果网格未提交写操作（本地 overlay）：consoleId → 单元格改值 / 待插入行 / 待删除行。
@@ -166,6 +176,12 @@ class ConsoleState(
     fun textOf(consoleId: String): String = buffers[consoleId] ?: ""
 
     fun runStateOf(consoleId: String): ConsoleRunUi = runSlots[consoleId] ?: ConsoleRunUi()
+
+    fun redisKeyMetaOf(consoleId: String): RedisKeyMeta? = redisKeyMetas[consoleId]
+
+    fun setRedisKeyMeta(consoleId: String, meta: RedisKeyMeta) {
+        redisKeyMetas[consoleId] = meta
+    }
 
     // ---------- 结果单元格编辑（本地 overlay → 提交写回） ----------
 
@@ -642,6 +658,7 @@ class ConsoleState(
         editBuffers.remove(consoleId)
         editPlans.remove(consoleId)
         resultBusy.remove(consoleId)
+        redisKeyMetas.remove(consoleId)
         runGens.remove(consoleId)
         runStartedAt.remove(consoleId)
         runTarget.remove(consoleId)
@@ -669,6 +686,7 @@ class ConsoleState(
             editBuffers.remove(rec.id)
             editPlans.remove(rec.id)
             resultBusy.remove(rec.id)
+            redisKeyMetas.remove(rec.id)
             runGens.remove(rec.id)
             runStartedAt.remove(rec.id)
             runTarget.remove(rec.id)
@@ -801,6 +819,8 @@ class ConsoleState(
         // 新执行 → 丢弃旧的未提交修改/编辑计划（UI 已在有修改时先确认）
         clearEdits(console.id)
         editPlans.remove(console.id)
+        // 任何新执行都使上次「双击预览」的 Redis 键元数据失效（预览路径会在执行后重新写入）
+        redisKeyMetas.remove(console.id)
         withContext(ioDispatcher) { flushNow(console.id) }
         val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
         if (target.isEmpty()) {

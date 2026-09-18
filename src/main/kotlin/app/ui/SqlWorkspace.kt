@@ -130,6 +130,7 @@ import androidx.compose.ui.window.WindowScope
 import androidx.compose.ui.window.WindowState
 import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
+import app.state.RedisKeyMeta
 import app.state.StatementOutcome
 import app.settings.EditorSettings
 import app.settings.ShortcutCommand
@@ -140,6 +141,7 @@ import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
 import engine.EditorLanguage
+import engine.Protocol
 import engine.model.QueryResult
 import engine.model.SchemaMeta
 import jdbc.CellValue
@@ -221,6 +223,8 @@ fun WindowScope.SqlWorkspace(
     onRun: (String?) -> Unit,
     /** 结果区多语句 Tab 切换（选中第 index 条语句结果）。 */
     onSelectOutcome: (Int) -> Unit,
+    /** Redis 结果视图的键元数据（非 Redis 后端忽略）。 */
+    redisKeyMeta: RedisKeyMeta? = null,
     /** 提交结果单元格的未提交修改（参数化 UPDATE + 单事务）。 */
     onCommitEdits: () -> Unit = {},
     /** 丢弃当前结果的全部未提交修改。 */
@@ -539,36 +543,49 @@ fun WindowScope.SqlWorkspace(
                                 resultFrac = (resultFrac + delta).coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)
                             },
                         )
-                        ResultTabs(
-                            run = run,
-                            transposed = transposed,
-                            exportEnabled = exportEnabledFor(run),
-                            enabled = status != ConnUiStatus.CONNECTING,
-                            onSelectOutcome = onSelectOutcome,
-                            onToggleTranspose = { transposed = !transposed },
-                            onCommitEdits = onCommitEdits,
-                            onClearAllEdits = onClearAllEdits,
-                            onRefreshResult = onRefreshResult,
-                            canFetchMore = canFetchMore,
-                            onFetchMore = onFetchMore,
-                            editCount = resultEdits.count,
-                            canCommit = editPlan != null,
-                            resultBusy = resultBusy,
-                            resultEdits = resultEdits,
-                            editPlan = editPlan,
-                            canModifyRows = editPlan != null && !transposed,
-                            onCellEdit = onCellEdit,
-                            onClearCellEdit = onClearCellEdit,
-                            onInsertRow = onInsertRow,
-                            onRemoveInsertRow = onRemoveInsertRow,
-                            onInsertCellEdit = onInsertCellEdit,
-                            onClearInsertCell = onClearInsertCell,
-                            onToggleRowDelete = onToggleRowDelete,
-                            onExport = onExport,
-                            onCancelRun = onCancelRun,
-                            onCopyText = onCopyText,
-                            modifier = Modifier.weight(resultFrac).fillMaxWidth(),
-                        )
+                        if (profile?.dbType?.protocol == Protocol.REDIS) {
+                            RedisResultView(
+                                run = run,
+                                redisMeta = redisKeyMeta,
+                                onSelectOutcome = onSelectOutcome,
+                                onRefreshResult = onRefreshResult,
+                                onCancelRun = onCancelRun,
+                                onExport = onExport,
+                                onCopyText = onCopyText,
+                                modifier = Modifier.weight(resultFrac).fillMaxWidth(),
+                            )
+                        } else {
+                            ResultTabs(
+                                run = run,
+                                transposed = transposed,
+                                exportEnabled = exportEnabledFor(run),
+                                enabled = status != ConnUiStatus.CONNECTING,
+                                onSelectOutcome = onSelectOutcome,
+                                onToggleTranspose = { transposed = !transposed },
+                                onCommitEdits = onCommitEdits,
+                                onClearAllEdits = onClearAllEdits,
+                                onRefreshResult = onRefreshResult,
+                                canFetchMore = canFetchMore,
+                                onFetchMore = onFetchMore,
+                                editCount = resultEdits.count,
+                                canCommit = editPlan != null,
+                                resultBusy = resultBusy,
+                                resultEdits = resultEdits,
+                                editPlan = editPlan,
+                                canModifyRows = editPlan != null && !transposed,
+                                onCellEdit = onCellEdit,
+                                onClearCellEdit = onClearCellEdit,
+                                onInsertRow = onInsertRow,
+                                onRemoveInsertRow = onRemoveInsertRow,
+                                onInsertCellEdit = onInsertCellEdit,
+                                onClearInsertCell = onClearInsertCell,
+                                onToggleRowDelete = onToggleRowDelete,
+                                onExport = onExport,
+                                onCancelRun = onCancelRun,
+                                onCopyText = onCopyText,
+                                modifier = Modifier.weight(resultFrac).fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }
