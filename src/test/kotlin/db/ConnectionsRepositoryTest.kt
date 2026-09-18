@@ -61,6 +61,16 @@ class ConnectionsRepositoryTest {
     }
 
     @Test
+    fun `connection keySeparator round-trips`() {
+        open().use { repo ->
+            val pid = repo.createConnection(newProfile().copy(keySeparator = "::"))
+            assertEquals("::", repo.getConnection(pid)!!.keySeparator)
+            repo.updateConnection(repo.getConnection(pid)!!.copy(keySeparator = "/"))
+            assertEquals("/", repo.getConnection(pid)!!.keySeparator)
+        }
+    }
+
+    @Test
     fun `connection password encrypted on disk and round-trips`() {
         open().use { repo ->
             val pid = repo.createConnection(newProfile(password = "s3cret"))

@@ -360,6 +360,7 @@ private fun WindowScope.AppBody(
         connectionsState,
         search = treeSearchQuery,
         searchScopeProfileId = treeSearchScope,
+        expandedKeyNamespaceKeys = treeState.expandedKeyNamespaceKeys,
     )
 
     fun toggleRow(row: TreeRowInfo) {
@@ -398,6 +399,11 @@ private fun WindowScope.AppBody(
                         scope.launch { connectionsState.ensureGroupObjects(p, s, g) }
                     }
                 }
+            }
+            // Redis key 层级命名空间：纯本地展开/收起（键正文已在内存，无需再拉取）。
+            TreeRowKind.KEY_NAMESPACE -> {
+                if (row.expanded) treeState.collapseKeyNamespace(row.key)
+                else treeState.expandKeyNamespace(row.key)
             }
             else -> {}
         }

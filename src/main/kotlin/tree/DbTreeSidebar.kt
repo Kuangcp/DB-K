@@ -290,6 +290,7 @@ fun DbTreeSidebar(
                                 TreeRowKind.CONNECTION -> row.connStatus == ConnUiStatus.CONNECTED
                                 TreeRowKind.SCHEMA -> true
                                 TreeRowKind.OBJECT_GROUP -> row.childCount > 0
+                                TreeRowKind.KEY_NAMESPACE -> row.childCount > 0
                                 else -> false
                             },
                             onSelect = { onSelectRow(row.key) },
@@ -957,6 +958,16 @@ private fun TreeRowView(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f).padding(start = 2.dp),
                     )
+                }
+                TreeRowKind.KEY_NAMESPACE -> {
+                    if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
+                    Icon(
+                        DbIcons.Folder, null,
+                        tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.size(15.dp),
+                    )
+                    RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp, highlight = highlight)
+                    if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                 }
                 TreeRowKind.DB_OBJECT -> {
                     ObjectKindBadge(row.dbObject?.kind)

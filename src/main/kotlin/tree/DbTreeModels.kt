@@ -13,6 +13,8 @@ import engine.model.displayNoun
 /** 左侧树行类别。M2：连接行之下支持 schema / 对象组 / 对象。 */
 enum class TreeRowKind {
     FOLDER, CONNECTION, SCHEMA, OBJECT_GROUP, DB_OBJECT, PLACEHOLDER,
+    /** Redis key 层级命名空间（前缀节点，如 `a:b` 中的 `a`）。 */
+    KEY_NAMESPACE,
     /** Redis 等「命名空间即过滤器」后端的过滤条（DB / 类型 / pattern）。 */
     FILTER,
     /** 分页「继续扫描」行（Redis `SCAN` 游标续页）。 */
@@ -137,14 +139,16 @@ fun buildTreeRows(
     search: String = "",
     /** 搜索范围：null = 全部数据源；否则只搜该 profile（方案 A 的数据源级范围）。 */
     searchScopeProfileId: String? = null,
+    /** Redis key 层级命名空间展开态（会话级，不持久化）。 */
+    expandedKeyNamespaceKeys: Set<String> = emptySet(),
 ): List<TreeRowInfo> {
     val query = search.trim()
     if (query.isNotEmpty()) {
-        return buildTreeRowsSearch(folders, connections, runtime, query, searchScopeProfileId)
+        return buildTreeRowsSearch(folders, connections, runtime, query, searchScopeProfileId, expandedKeyNamespaceKeys)
     }
     return buildTreeRowsNormal(
         folders, connections, expandedFolderIds, expandedConnectionIds,
-        expandedSchemaKeys, expandedGroupKeys, runtime,
+        expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime,
     )
 }
 
@@ -155,6 +159,7 @@ private fun buildTreeRowsNormal(
     expandedConnectionIds: Set<String>,
     expandedSchemaKeys: Set<String>,
     expandedGroupKeys: Set<String>,
+    expandedKeyNamespaceKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
@@ -173,11 +178,11 @@ private fun buildTreeRowsNormal(
             childCount = children.size,
         )
         if (expanded) {
-            children.forEach { conn -> appendConnection(out, conn, 1, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, runtime) }
+            children.forEach { conn -> appendConnection(out, conn, 1, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime) }
         }
     }
     byFolder[null].orEmpty().sortedBy { it.sortOrder }.forEach { conn ->
-        appendConnection(out, conn, 0, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, runtime)
+        appendConnection(out, conn, 0, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime)
     }
     return out
 }
@@ -189,6 +194,7 @@ private fun appendConnection(
     expandedConnectionIds: Set<String>,
     expandedSchemaKeys: Set<String>,
     expandedGroupKeys: Set<String>,
+    expandedKeyNamespaceKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ) {
     val expanded = conn.id in expandedConnectionIds
@@ -233,9 +239,9 @@ private fun appendConnection(
                 schemas.isEmpty() ->
                     out += infoPlaceholder(depth + 1, "p:${conn.id}:empty", "该连接下没有可见的库")
                 // 命名空间即过滤器（Redis）：不铺 DB 行，只渲染当前 DB 的过滤条 + 键列表
-                flat -> appendFlatNamespace(out, conn, schemas, depth + 1, expandedGroupKeys, runtime)
+                flat -> appendFlatNamespace(out, conn, schemas, depth + 1, expandedGroupKeys, expandedKeyNamespaceKeys, runtime)
                 else -> schemas.forEach { schema ->
-                    appendSchema(out, conn, schema, depth + 1, expandedSchemaKeys, expandedGroupKeys, runtime)
+                    appendSchema(out, conn, schema, depth + 1, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime)
                 }
             }
         }
@@ -249,6 +255,7 @@ private fun appendFlatNamespace(
     schemas: List<SchemaMeta>,
     depth: Int,
     expandedGroupKeys: Set<String>,
+    expandedKeyNamespaceKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ) {
     val active = runtime.activeNamespaceOf(conn.id)
@@ -278,7 +285,7 @@ private fun appendFlatNamespace(
             runtime.statusMessageOf(conn.id) ?: "尚未加载键",
         )
     } else {
-        appendGroups(out, conn, active, depth, expandedGroupKeys, runtime, lockedExpanded = true)
+        appendGroups(out, conn, active, depth, expandedGroupKeys, expandedKeyNamespaceKeys, runtime, lockedExpanded = true)
     }
 }
 
@@ -289,6 +296,7 @@ private fun appendSchema(
     depth: Int,
     expandedSchemaKeys: Set<String>,
     expandedGroupKeys: Set<String>,
+    expandedKeyNamespaceKeys: Set<String>,
     runtime: ConnectionRuntimeView,
 ) {
     val rowKey = schemaRowKey(conn.id, schema)
@@ -314,7 +322,7 @@ private fun appendSchema(
             out += infoPlaceholder(depth + 1, "$rowKey:load", "尚未加载")
         objects.isEmpty ->
             out += infoPlaceholder(depth + 1, "$rowKey:empty", "（空 schema）")
-        else -> appendGroups(out, conn, schema, depth + 1, expandedGroupKeys, runtime, lockedExpanded = false)
+        else -> appendGroups(out, conn, schema, depth + 1, expandedGroupKeys, expandedKeyNamespaceKeys, runtime, lockedExpanded = false)
     }
 }
 
@@ -328,6 +336,7 @@ private fun appendGroups(
     schema: SchemaMeta,
     depth: Int,
     expandedGroupKeys: Set<String>,
+    expandedKeyNamespaceKeys: Set<String>,
     runtime: ConnectionRuntimeView,
     lockedExpanded: Boolean,
 ) {
@@ -371,16 +380,21 @@ private fun appendGroups(
             !objects.isLoaded(kind) ->
                 out += infoPlaceholder(depth + 1, "$groupKey:load", "尚未加载")
             else -> {
-                objects.forKind(kind).forEach { obj ->
-                    out += TreeRowInfo(
-                        key = "$groupKey:o:${obj.name}",
-                        kind = TreeRowKind.DB_OBJECT,
-                        depth = depth + 1,
-                        name = obj.name,
-                        profile = conn,
-                        schema = schema,
-                        dbObject = obj,
-                    )
+                val items = objects.forKind(kind)
+                if (kind == ObjectKind.KEY && conn.keySeparator.isNotBlank()) {
+                    appendKeyTree(out, conn, schema, items, conn.keySeparator, depth, groupKey, expandedKeyNamespaceKeys)
+                } else {
+                    items.forEach { obj ->
+                        out += TreeRowInfo(
+                            key = "$groupKey:o:${obj.name}",
+                            kind = TreeRowKind.DB_OBJECT,
+                            depth = depth + 1,
+                            name = obj.name,
+                            profile = conn,
+                            schema = schema,
+                            dbObject = obj,
+                        )
+                    }
                 }
                 if (lockedExpanded && runtime.objectsHasMoreOf(conn.id, schema.key, kind)) {
                     out += TreeRowInfo(
@@ -396,6 +410,66 @@ private fun appendGroups(
             }
         }
     }
+}
+
+/**
+ * Redis key 层级：按 [separator] 前缀树渲染 KEY 组。
+ * 叶子行显示最后一段（如 `a:b:c` 展开到 `c`），但 `dbObject.name` 仍是完整 key（预览/复制不变）；
+ * 既是前缀又是真实 key 的节点，展开后把真实 key 作为首个叶子列在 children 之前。
+ */
+private fun appendKeyTree(
+    out: MutableList<TreeRowInfo>,
+    conn: ConnectionProfile,
+    schema: SchemaMeta,
+    items: List<DbObjectMeta>,
+    separator: String,
+    depth: Int,
+    groupKey: String,
+    expandedKeyNamespaceKeys: Set<String>,
+) {
+    fun emit(node: KeyTreeNode, rowDepth: Int) {
+        val hasChildren = node.children.isNotEmpty()
+        if (!hasChildren) {
+            val obj = node.key ?: DbObjectMeta(node.path, ObjectKind.KEY)
+            out += TreeRowInfo(
+                key = "$groupKey:o:${obj.name}",
+                kind = TreeRowKind.DB_OBJECT,
+                depth = rowDepth,
+                name = node.segment,
+                profile = conn,
+                schema = schema,
+                dbObject = obj,
+            )
+            return
+        }
+        val nsKey = "$groupKey:n:${node.path}"
+        val expanded = nsKey in expandedKeyNamespaceKeys
+        out += TreeRowInfo(
+            key = nsKey,
+            kind = TreeRowKind.KEY_NAMESPACE,
+            depth = rowDepth,
+            name = node.segment,
+            profile = conn,
+            schema = schema,
+            expanded = expanded,
+            childCount = node.descendantKeyCount(),
+        )
+        if (!expanded) return
+        // 该前缀本身也是真实 key：作为叶子排在 children 之前
+        node.key?.let { meta ->
+            out += TreeRowInfo(
+                key = "$groupKey:o:${meta.name}",
+                kind = TreeRowKind.DB_OBJECT,
+                depth = rowDepth + 1,
+                name = node.segment,
+                profile = conn,
+                schema = schema,
+                dbObject = meta,
+            )
+        }
+        node.children.forEach { emit(it, rowDepth + 1) }
+    }
+    buildKeyTree(items, separator).forEach { emit(it, depth + 1) }
 }
 
 private fun loadingPlaceholder(depth: Int, key: String, text: String) = TreeRowInfo(
@@ -469,6 +543,7 @@ private fun buildTreeRowsSearch(
     runtime: ConnectionRuntimeView,
     query: String,
     scopeProfileId: String?,
+    expandedKeyNamespaceKeys: Set<String>,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
     val byFolder = connections.groupBy { it.folderId }
@@ -480,7 +555,7 @@ private fun buildTreeRowsSearch(
         if (runtime.flatNamespaceOf(conn.id)) {
             if (!self) return
             out += searchConnectionRow(conn, depth, expanded = false, childCount = 0, runtime = runtime)
-            appendFlatNamespace(out, conn, schemas, depth + 1, emptySet(), runtime)
+            appendFlatNamespace(out, conn, schemas, depth + 1, emptySet(), expandedKeyNamespaceKeys, runtime)
             return
         }
         val schemaHits = schemas.mapNotNull { s ->

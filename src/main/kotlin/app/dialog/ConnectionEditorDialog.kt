@@ -105,6 +105,7 @@ fun ConnectionEditorDialog(
     var user by remember(request) { mutableStateOf(initial?.user ?: "") }
     var password by remember(request) { mutableStateOf(initial?.password ?: "") }
     var extra by remember(request) { mutableStateOf(initial?.extraParams ?: "") }
+    var keySeparator by remember(request) { mutableStateOf(initial?.keySeparator ?: ":") }
 
     val isEmbedded = dbType == DbType.SQLITE
     val port = portText.toIntOrNull()
@@ -120,6 +121,7 @@ fun ConnectionEditorDialog(
         user = if (isEmbedded) null else user.trim().ifEmpty { null },
         password = if (isEmbedded) null else password.takeIf { it.isNotEmpty() },
         extraParams = if (isEmbedded) "" else extra.trim(),
+        keySeparator = if (dbType == DbType.REDIS) keySeparator else ":",
     )
 
     val isRedis = dbType == DbType.REDIS
@@ -245,6 +247,21 @@ fun ConnectionEditorDialog(
                             isEs -> "my-index（可空）"
                             else -> dbType.label.lowercase()
                         },
+                    )
+                }
+                if (isRedis) {
+                    FormRow("Key 分隔符") {
+                        CompactField(
+                            value = keySeparator,
+                            onValueChange = { keySeparator = it },
+                            placeholder = ":",
+                        )
+                    }
+                    Text(
+                        "按分隔符把键渲染成层级目录（如 a:b:c → a / b / c）；留空 = 平铺显示全部键",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
                     )
                 }
                 if (!isEmbedded) {

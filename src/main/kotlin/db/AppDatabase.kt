@@ -9,7 +9,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 8
+    private const val CURRENT_VERSION = 9
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -60,6 +60,10 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV8(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (8)").use { it.executeUpdate() }
         }
+        if (!applied.contains(9)) {
+            conn.createStatement().use { st -> migrateToV9(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (9)").use { it.executeUpdate() }
+        }
     }
 
     /**
@@ -79,6 +83,13 @@ object AppDatabase {
             )
             """.trimIndent(),
         )
+    }
+
+    /**
+     * v9：Redis 键层级分隔符（数据源属性，删连接随行消失）。默认 `:`。
+     */
+    private fun migrateToV9(st: Statement) {
+        st.executeUpdate("ALTER TABLE connections ADD COLUMN key_separator TEXT NOT NULL DEFAULT ':'")
     }
 
     /**

@@ -85,6 +85,7 @@ object ProfileTransfer {
                     extraParams = p.extraParams,
                     color = p.color,
                     sortOrder = p.sortOrder,
+                    keySeparator = p.keySeparator,
                 )
             },
         )
@@ -123,6 +124,7 @@ object ProfileTransfer {
                 extraParams = c.extraParams,
                 color = c.color,
                 sortOrder = c.sortOrder,
+                keySeparator = c.keySeparator,
             )
         }
         return ProfileBundle(dto.formatVersion, dto.exportedAt, folders, connections, skipped)
@@ -243,5 +245,7 @@ object ProfileTransfer {
         val extraParams: String = "",
         val color: String? = null,
         val sortOrder: Int = 0,
+        /** 旧版导出文件无此字段 → 默认 `:`。 */
+        val keySeparator: String = ":",
     )
 }

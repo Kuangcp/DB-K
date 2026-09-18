@@ -22,7 +22,7 @@ class AppDatabaseMigrationTest {
             c.createStatement().use { st ->
                 st.executeQuery("SELECT version FROM schema_migrations ORDER BY version").use { rs ->
                     val versions = buildList { while (rs.next()) add(rs.getInt(1)) }
-                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8), versions)
+                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9), versions)
                 }
             }
         }
@@ -99,6 +99,11 @@ class AppDatabaseMigrationTest {
                 st.executeQuery("SELECT closed FROM consoles WHERE id='cc1'").use { rs ->
                     rs.next()
                     assertEquals(0, rs.getInt("closed"))
+                }
+                // v9 旧连接默认 key_separator=':'
+                st.executeQuery("SELECT key_separator FROM connections WHERE id='c1'").use { rs ->
+                    rs.next()
+                    assertEquals(":", rs.getString("key_separator"))
                 }
             }
         }

@@ -29,6 +29,8 @@ class TreeState(
     var expandedSchemaKeys by mutableStateOf<Set<String>>(emptySet())
     /** 对象组展开态（key 形如 s:<profileId>:…:g:<GROUP>；随 session，不持久化）。 */
     var expandedGroupKeys by mutableStateOf<Set<String>>(emptySet())
+    /** Redis key 层级命名空间展开态（key 形如 s:<profileId>:…:g:KEY:n:<path>；随 session）。 */
+    var expandedKeyNamespaceKeys by mutableStateOf<Set<String>>(emptySet())
     var selectedRowKey by mutableStateOf<String?>(null)
 
     fun refresh() {
@@ -82,11 +84,20 @@ class TreeState(
         expandedGroupKeys = expandedGroupKeys - groupKey
     }
 
+    fun expandKeyNamespace(nsKey: String) {
+        expandedKeyNamespaceKeys = expandedKeyNamespaceKeys + nsKey
+    }
+
+    fun collapseKeyNamespace(nsKey: String) {
+        expandedKeyNamespaceKeys = expandedKeyNamespaceKeys - nsKey
+    }
+
     /** 连接档案增删后清掉对应展开痕迹。 */
     fun forgetConnectionExpands(id: String) {
         expandedConnectionIds = expandedConnectionIds - id
         expandedSchemaKeys = expandedSchemaKeys.filterNot { it.startsWith("s:$id:") }.toSet()
         expandedGroupKeys = expandedGroupKeys.filterNot { it.startsWith("s:$id:") }.toSet()
+        expandedKeyNamespaceKeys = expandedKeyNamespaceKeys.filterNot { it.startsWith("s:$id:") }.toSet()
     }
 
     // ---------- folder actions ----------

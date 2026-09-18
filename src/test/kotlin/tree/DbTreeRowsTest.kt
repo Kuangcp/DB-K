@@ -65,12 +65,14 @@ class DbTreeRowsTest {
         expandedConnectionIds: Set<String> = emptySet(),
         expandedSchemaKeys: Set<String> = emptySet(),
         expandedGroupKeys: Set<String> = emptySet(),
+        expandedKeyNamespaceKeys: Set<String> = emptySet(),
         runtime: ConnectionRuntimeView = NoRuntime,
         search: String = "",
         searchScopeProfileId: String? = null,
     ) = buildTreeRows(
         folders, connections, expandedFolderIds, expandedConnectionIds,
         expandedSchemaKeys, expandedGroupKeys, runtime, search, searchScopeProfileId,
+        expandedKeyNamespaceKeys,
     )
 
     @Test
@@ -337,7 +339,7 @@ class DbTreeRowsTest {
             )
             hasMore["r1" to ObjectKind.KEY] = true
         }
-        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS, database = "0")
+        val redis = ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS, database = "0", keySeparator = "")
         val out = rows(
             connections = listOf(redis),
             expandedConnectionIds = setOf("r1"),
@@ -566,5 +568,89 @@ class DbTreeRowsTest {
         assertEquals(2, out.size)
         assertEquals("未连接", out[1].name)
         assertFalse(out.any { it.kind == TreeRowKind.DB_OBJECT })
+    }
+
+    // ---------------- Redis key 层级 ----------------
+
+    private fun hierarchyRuntime() = FakeRuntime().apply {
+        val db0 = SchemaMeta(null, "db0")
+        statuses["r1"] = ConnUiStatus.CONNECTED
+        schemasByProfile["r1"] = listOf(db0)
+        flat["r1"] = true
+        activeNs["r1"] = db0
+        groups["r1"] = listOf(ObjectKind.KEY)
+        objectsBySchema["r1" to db0.key] = SchemaObjects(
+            objects = mapOf(
+                ObjectKind.KEY to listOf(
+                    DbObjectMeta("user:1:name", ObjectKind.KEY, detail = "string"),
+                    DbObjectMeta("user:1:age", ObjectKind.KEY, detail = "string"),
+                    DbObjectMeta("user:2:name", ObjectKind.KEY, detail = "hash"),
+                ),
+            ),
+            counts = mapOf(ObjectKind.KEY to 3),
+        )
+    }
+
+    private fun redisConn(separator: String = ":") =
+        ConnectionProfile(id = "r1", name = "redis", dbType = DbType.REDIS, keySeparator = separator)
+
+    /** Redis 命名空间行 key：schema.key 内含 `\u0000`（catalog 与 schema 分隔），不可手写简写。 */
+    private fun keyNs(path: String) = "s:r1:${SchemaMeta(null, "db0").key}:g:KEY:n:$path"
+
+    @Test
+    fun `redis keys nest into namespaces by separator`() {
+        val out = rows(connections = listOf(redisConn()), expandedConnectionIds = setOf("r1"), runtime = hierarchyRuntime())
+        val ns = out.single { it.kind == TreeRowKind.KEY_NAMESPACE }
+        assertEquals("user", ns.name)
+        assertEquals(3, ns.childCount)
+        assertFalse(ns.expanded)
+        assertEquals(0, out.count { it.kind == TreeRowKind.DB_OBJECT })
+    }
+
+    @Test
+    fun `redis key namespace expands level by level`() {
+        val out = rows(
+            connections = listOf(redisConn()),
+            expandedConnectionIds = setOf("r1"),
+            expandedKeyNamespaceKeys = setOf(keyNs("user")),
+            runtime = hierarchyRuntime(),
+        )
+        val namespaces = out.filter { it.kind == TreeRowKind.KEY_NAMESPACE }
+        assertEquals(listOf("user", "1", "2"), namespaces.map { it.name })
+        assertTrue(namespaces[0].expanded)
+        assertEquals(listOf(2, 1), namespaces.drop(1).map { it.childCount })
+        assertEquals(0, out.count { it.kind == TreeRowKind.DB_OBJECT })
+    }
+
+    @Test
+    fun `redis leaves show last segment but keep full key for preview`() {
+        val out = rows(
+            connections = listOf(redisConn()),
+            expandedConnectionIds = setOf("r1"),
+            expandedKeyNamespaceKeys = setOf(keyNs("user"), keyNs("user:1")),
+            runtime = hierarchyRuntime(),
+        )
+        val leaves = out.filter { it.kind == TreeRowKind.DB_OBJECT }
+        assertEquals(listOf("age", "name"), leaves.map { it.name })
+        assertEquals(listOf("user:1:age", "user:1:name"), leaves.map { it.dbObject!!.name })
+    }
+
+    @Test
+    fun `redis blank separator falls back to flat keys`() {
+        val runtime = FakeRuntime().apply {
+            val db0 = SchemaMeta(null, "db0")
+            statuses["r1"] = ConnUiStatus.CONNECTED
+            schemasByProfile["r1"] = listOf(db0)
+            flat["r1"] = true
+            activeNs["r1"] = db0
+            groups["r1"] = listOf(ObjectKind.KEY)
+            objectsBySchema["r1" to db0.key] = SchemaObjects(
+                objects = mapOf(ObjectKind.KEY to listOf(DbObjectMeta("a:b", ObjectKind.KEY, detail = "string"))),
+                counts = mapOf(ObjectKind.KEY to 1),
+            )
+        }
+        val out = rows(connections = listOf(redisConn("")), expandedConnectionIds = setOf("r1"), runtime = runtime)
+        assertEquals(0, out.count { it.kind == TreeRowKind.KEY_NAMESPACE })
+        assertEquals("a:b", out.single { it.kind == TreeRowKind.DB_OBJECT }.name)
     }
 }

@@ -114,7 +114,7 @@ class ConnectionsRepository(
         return conn.prepareStatement(
             """
             SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password,
-                   extra_params, color, sort_order
+                   extra_params, color, sort_order, key_separator
             FROM connections ORDER BY sort_order, created_at
             """.trimIndent(),
         ).use { ps ->
@@ -130,7 +130,7 @@ class ConnectionsRepository(
 
     fun getConnection(id: String): ConnectionProfile? {
         return conn.prepareStatement(
-            "SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password, extra_params, color, sort_order FROM connections WHERE id = ?",
+            "SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password, extra_params, color, sort_order, key_separator FROM connections WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs ->
@@ -145,8 +145,8 @@ class ConnectionsRepository(
         conn.prepareStatement(
             """
             INSERT INTO connections(id, folder_id, name, db_type, host, port, database_name, user_name,
-                password, extra_params, color, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                password, extra_params, color, sort_order, key_separator, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { ps ->
             val now = System.currentTimeMillis()
@@ -162,8 +162,9 @@ class ConnectionsRepository(
             ps.setString(10, p.extraParams)
             ps.setString(11, p.color)
             ps.setInt(12, nextSortOrder("connections"))
-            ps.setLong(13, now)
+            ps.setString(13, p.keySeparator)
             ps.setLong(14, now)
+            ps.setLong(15, now)
             ps.executeUpdate()
         }
         return id
@@ -174,7 +175,7 @@ class ConnectionsRepository(
             """
             UPDATE connections SET folder_id = ?, name = ?, db_type = ?, host = ?, port = ?,
                 database_name = ?, user_name = ?, password = ?, extra_params = ?, color = ?,
-                updated_at = ?
+                key_separator = ?, updated_at = ?
             WHERE id = ?
             """.trimIndent(),
         ).use { ps ->
@@ -188,8 +189,9 @@ class ConnectionsRepository(
             ps.setString(8, PasswordVault.encrypt(keyFile, p.password))
             ps.setString(9, p.extraParams)
             ps.setString(10, p.color)
-            ps.setLong(11, System.currentTimeMillis())
-            ps.setString(12, p.id)
+            ps.setString(11, p.keySeparator)
+            ps.setLong(12, System.currentTimeMillis())
+            ps.setString(13, p.id)
             ps.executeUpdate()
         }
     }
@@ -274,8 +276,8 @@ class ConnectionsRepository(
                 conn.prepareStatement(
                     """
                     INSERT INTO connections(id, folder_id, name, db_type, host, port, database_name, user_name,
-                        password, extra_params, color, sort_order, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        password, extra_params, color, sort_order, key_separator, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                 ).use { ps ->
                     val now = System.currentTimeMillis()
@@ -291,8 +293,9 @@ class ConnectionsRepository(
                     ps.setString(10, c.extraParams)
                     ps.setString(11, c.color)
                     ps.setInt(12, nextSortOrder("connections"))
-                    ps.setLong(13, now)
+                    ps.setString(13, c.keySeparator)
                     ps.setLong(14, now)
+                    ps.setLong(15, now)
                     ps.executeUpdate()
                 }
                 connectionIds += id
@@ -556,6 +559,7 @@ class ConnectionsRepository(
         extraParams = rs.getString("extra_params"),
         color = rs.getString("color"),
         sortOrder = rs.getInt("sort_order"),
+        keySeparator = rs.getString("key_separator") ?: ":",
     )
 
     private fun nextSortOrder(table: String): Int {

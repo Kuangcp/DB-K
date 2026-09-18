@@ -60,6 +60,8 @@ data class ConnectionProfile(
     val extraParams: String = "",
     val color: String? = null,
     val sortOrder: Int = 0,
+    /** Redis 键层级分隔符（如 `:`）；空白 = 不按层级渲染。非 Redis 后端不使用。 */
+    val keySeparator: String = ":",
 ) {
     /** 生成 JDBC URL（编辑弹窗实时预览用；M2 连接时以方言实现为准）。 */
     fun urlPreview(): String {
