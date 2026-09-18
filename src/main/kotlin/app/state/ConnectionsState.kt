@@ -92,6 +92,14 @@ class ConnectionsState(
 
     private val runtimes = mutableMapOf<String, ConnRuntime>()
 
+    /** 未连接数据源的搜索用元数据缓存（从磁盘 meta_cache 解码；只在搜索时按需装入）。 */
+    private class CachedMeta(val schemas: List<SchemaMeta>, val objects: Map<String, SchemaObjects>)
+
+    private val searchCache = mutableStateMapOf<String, CachedMeta>()
+
+    /** 已尝试读取但确认无缓存/指纹失配的 profileId（避免每次搜索重复打盘）。 */
+    private val searchCacheMiss = mutableSetOf<String>()
+
     /** 「命名空间即过滤器」后端（Redis）：profileId → 当前查看的 DB。 */
     private val activeNamespaces = mutableStateMapOf<String, SchemaMeta>()
 
@@ -129,6 +137,23 @@ class ConnectionsState(
 
     override fun objectsLoadingOf(profileId: String, schemaKey: String): Boolean =
         runtimes[profileId]?.objectsLoading?.get(schemaKey) == true
+
+    /**
+     * 搜索用库列表：已连接取实时；连接中/失败/未连接回落本地缓存（可能没有）。
+     * 实时元数据一旦就绪就优先，避免展示陈旧缓存。
+     */
+    override fun searchSchemasOf(profileId: String): List<SchemaMeta>? {
+        val rt = runtimes[profileId]
+        if (rt != null && rt.status == ConnUiStatus.CONNECTED) return rt.schemas
+        return searchCache[profileId]?.schemas
+    }
+
+    /** 搜索用对象清单：同 [searchSchemasOf]。 */
+    override fun searchObjectsOf(profileId: String, schemaKey: String): SchemaObjects? {
+        val rt = runtimes[profileId]
+        if (rt != null && rt.status == ConnUiStatus.CONNECTED) return rt.objects[schemaKey]
+        return searchCache[profileId]?.objects?.get(schemaKey)
+    }
 
     override fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind): Boolean =
         runtimes[profileId]?.groupLoading?.get(groupLoadingKey(schemaKey, kind)) == true
@@ -327,13 +352,39 @@ class ConnectionsState(
         }
     }
 
+    /** 搜索用：该档案是否已有本地元数据缓存（供范围下拉提示“缓存”）。 */
+    fun hasSearchCache(profileId: String): Boolean = searchCache.containsKey(profileId)
+
+    /**
+     * 确保未连接数据源的搜索缓存已装入（只读 `meta_cache`，**不建连**）。
+     * 已连接档案走实时元数据；已装入/已确认无缓存的跳过（幂等）。
+     * [scopeProfileId] 非空时只处理该数据源（范围搜索下省去无谓读取）。
+     */
+    suspend fun ensureSearchCachesLoaded(
+        profiles: List<ConnectionProfile>,
+        scopeProfileId: String? = null,
+    ) {
+        profiles.forEach { p ->
+            if (scopeProfileId != null && p.id != scopeProfileId) return@forEach
+            if (runtimes[p.id]?.status == ConnUiStatus.CONNECTED) return@forEach
+            if (searchCache.containsKey(p.id) || p.id in searchCacheMiss) return@forEach
+            val hit = withContext(Dispatchers.IO) { metaCache.load(p) }
+            if (hit != null) searchCache[p.id] = CachedMeta(hit.schemas, hit.objects) else searchCacheMiss += p.id
+        }
+    }
+
     /**
      * 补齐懒加载方言尚未加载正文的对象组（左侧树搜索用）：对**已连接且已持库列表**的连接，
      * 逐 schema 拉未加载组；已加载/计数为 0 的组跳过，本身幂等（[ensureGroupObjects] 内有防重）。
      * 「命名空间即过滤器」后端跳过（Redis 键由过滤条服务端 pattern 搜索，不在此铺全量）。
+     * [scopeProfileId] 非空时只处理该数据源。
      */
-    suspend fun ensureAllGroupsLoaded(profiles: List<ConnectionProfile>) {
+    suspend fun ensureAllGroupsLoaded(
+        profiles: List<ConnectionProfile>,
+        scopeProfileId: String? = null,
+    ) {
         profiles.forEach { p ->
+            if (scopeProfileId != null && p.id != scopeProfileId) return@forEach
             val rt = runtimes[p.id] ?: return@forEach
             if (rt.status != ConnUiStatus.CONNECTED) return@forEach
             if (rt.live.capabilities.namespaceAsFilter) return@forEach
@@ -350,6 +401,9 @@ class ConnectionsState(
     /** 主动断开：只放连接与会话内存，磁盘缓存保留（下次连接/离线仍可用）。 */
     fun disconnect(profile: ConnectionProfile) {
         columns.evict(profile.id)
+        // 连接期间可能刷新过元数据 → 丢弃解码副本，下次搜索从最新磁盘缓存重载
+        searchCache.remove(profile.id)
+        searchCacheMiss.remove(profile.id)
         clearFlatState(profile.id)
         runtime(profile).reset()
     }
@@ -357,6 +411,8 @@ class ConnectionsState(
     /** 档案被编辑（URL 可能变）：断开并丢弃运行缓存；指纹失配的旧缓存行自动作废。 */
     fun invalidate(profileId: String) {
         columns.invalidate(profileId)
+        searchCache.remove(profileId)
+        searchCacheMiss.remove(profileId)
         clearFlatState(profileId)
         runtimes.remove(profileId)?.let { rt ->
             rt.live.close()

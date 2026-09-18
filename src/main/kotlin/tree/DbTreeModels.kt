@@ -76,6 +76,15 @@ interface ConnectionRuntimeView {
     fun objectsOf(profileId: String, schemaKey: String): SchemaObjects?
     fun objectsLoadingOf(profileId: String, schemaKey: String): Boolean
 
+    /**
+     * 搜索用库列表：[schemasOf] 的离线扩展——已连接取实时元数据；未连接/连接中/失败时
+     * 回落本地 `meta_cache`（可能没有 → null）。默认退回实时，普通树不受影响。
+     */
+    fun searchSchemasOf(profileId: String): List<SchemaMeta>? = schemasOf(profileId)
+
+    /** 搜索用对象清单：同 [searchSchemasOf]，未连接时取本地缓存。 */
+    fun searchObjectsOf(profileId: String, schemaKey: String): SchemaObjects? = objectsOf(profileId, schemaKey)
+
     /** 该连接支持的对象组顺序（非 SQL 后端可覆写，如 Redis 仅「键」）。 */
     fun objectGroupsOf(profileId: String): List<ObjectKind> = SQL_OBJECT_KINDS
 
@@ -126,9 +135,13 @@ fun buildTreeRows(
     runtime: ConnectionRuntimeView,
     /** 非空时进入搜索模式：只保留命中节点及其祖先，全部强制展开（见 [buildTreeRowsSearch]）。 */
     search: String = "",
+    /** 搜索范围：null = 全部数据源；否则只搜该 profile（方案 A 的数据源级范围）。 */
+    searchScopeProfileId: String? = null,
 ): List<TreeRowInfo> {
     val query = search.trim()
-    if (query.isNotEmpty()) return buildTreeRowsSearch(folders, connections, runtime, query)
+    if (query.isNotEmpty()) {
+        return buildTreeRowsSearch(folders, connections, runtime, query, searchScopeProfileId)
+    }
     return buildTreeRowsNormal(
         folders, connections, expandedFolderIds, expandedConnectionIds,
         expandedSchemaKeys, expandedGroupKeys, runtime,
@@ -414,14 +427,14 @@ internal fun treeRowSelfMatches(row: TreeRowInfo, query: String): Boolean = when
     else -> false
 }
 
-/** 某 schema 下命中的**已加载**对象（按组；未加载组无正文，不参与搜索）。 */
+/** 某 schema 下命中的对象（按组）；已连接取实时、未连接取本地缓存。未加载组无正文，不参与搜索。 */
 private fun matchingObjects(
     runtime: ConnectionRuntimeView,
     profileId: String,
     schema: SchemaMeta,
     query: String,
 ): Map<ObjectKind, List<DbObjectMeta>> {
-    val objects = runtime.objectsOf(profileId, schema.key) ?: return emptyMap()
+    val objects = runtime.searchObjectsOf(profileId, schema.key) ?: return emptyMap()
     val out = linkedMapOf<ObjectKind, List<DbObjectMeta>>()
     objects.objects.forEach { (kind, list) ->
         val hit = list.filter { objectHas(it, query) }
@@ -430,7 +443,7 @@ private fun matchingObjects(
     return out
 }
 
-/** 该连接是否有任何命中（自身名 / 库名 / 已加载对象名）——文件夹可见性判定用。 */
+/** 该连接是否有任何命中（自身名 / 库名 / 对象名）——文件夹可见性判定用。离线走缓存。 */
 private fun connectionHasMatch(
     runtime: ConnectionRuntimeView,
     conn: ConnectionProfile,
@@ -438,7 +451,7 @@ private fun connectionHasMatch(
 ): Boolean {
     if (nameHas(conn.name, query)) return true
     if (runtime.flatNamespaceOf(conn.id)) return false
-    return runtime.schemasOf(conn.id).orEmpty().any { s ->
+    return runtime.searchSchemasOf(conn.id).orEmpty().any { s ->
         nameHas(s.displayName, query) || matchingObjects(runtime, conn.id, s, query).isNotEmpty()
     }
 }
@@ -455,12 +468,14 @@ private fun buildTreeRowsSearch(
     connections: List<ConnectionProfile>,
     runtime: ConnectionRuntimeView,
     query: String,
+    scopeProfileId: String?,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
     val byFolder = connections.groupBy { it.folderId }
+    fun inScope(id: String): Boolean = scopeProfileId == null || scopeProfileId == id
 
     fun appendConnection(conn: ConnectionProfile, depth: Int) {
-        val schemas = runtime.schemasOf(conn.id).orEmpty()
+        val schemas = runtime.searchSchemasOf(conn.id).orEmpty()
         val self = nameHas(conn.name, query)
         if (runtime.flatNamespaceOf(conn.id)) {
             if (!self) return
@@ -477,9 +492,12 @@ private fun buildTreeRowsSearch(
             conn, depth,
             expanded = schemaHits.isNotEmpty(), childCount = schemaHits.size, runtime = runtime,
         )
+        val live = runtime.statusOf(conn.id) == ConnUiStatus.CONNECTED
         schemaHits.forEach { (schema, hit) ->
             val rowKey = schemaRowKey(conn.id, schema)
-            val groups = runtime.objectGroupsOf(conn.id).filter { hit[it]?.isNotEmpty() == true }
+            val known = runtime.objectGroupsOf(conn.id)
+            // 组顺序：先按后端标准顺序，再补缓存里存在但当前会话不认识的后端专属组（如离线 ES 的 INDEX/ALIAS）
+            val groups = known.filter { hit.containsKey(it) } + hit.keys.filterNot { it in known }
             out += TreeRowInfo(
                 key = rowKey,
                 kind = TreeRowKind.SCHEMA,
@@ -518,12 +536,24 @@ private fun buildTreeRowsSearch(
                     )
                 }
             }
+            // 离线数据源：缓存里的懒加载组只有计数没正文，提示还有多少对象需要连接后才能搜
+            if (!live) {
+                val cached = runtime.searchObjectsOf(conn.id, schema.key)
+                if (cached != null) {
+                    val pending = (cached.objects.keys + cached.counts.keys).distinct()
+                        .filter { !cached.isLoaded(it) && cached.countOf(it) > 0 }
+                    if (pending.isNotEmpty()) {
+                        val n = pending.sumOf { cached.countOf(it) }
+                        out += infoPlaceholder(depth + 2, "$rowKey:pending", "另有 $n 个对象未缓存（连接后可搜索）")
+                    }
+                }
+            }
         }
     }
 
     folders.sortedBy { it.sortOrder }.forEach { folder ->
         val children = byFolder[folder.id].orEmpty().sortedBy { it.sortOrder }
-            .filter { connectionHasMatch(runtime, it, query) }
+            .filter { inScope(it.id) && connectionHasMatch(runtime, it, query) }
         if (!nameHas(folder.name, query) && children.isEmpty()) return@forEach
         out += TreeRowInfo(
             key = "f:${folder.id}",
@@ -538,7 +568,7 @@ private fun buildTreeRowsSearch(
         children.forEach { appendConnection(it, 1) }
     }
     byFolder[null].orEmpty().sortedBy { it.sortOrder }
-        .filter { connectionHasMatch(runtime, it, query) }
+        .filter { inScope(it.id) && connectionHasMatch(runtime, it, query) }
         .forEach { appendConnection(it, 0) }
     return out
 }

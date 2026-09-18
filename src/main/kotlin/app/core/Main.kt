@@ -323,14 +323,24 @@ private fun WindowScope.AppBody(
     }
 
     // 运行时状态在 composition 中读取（snapshot 依赖 → 状态变化自动重排）
-    // 左侧树搜索关键字（瞬态，不落盘）；空 = 普通树。
+    // 左侧树搜索关键字（瞬态，不落盘）；空 = 普通树。searchScope 为数据源级范围（null = 全部）。
     var treeSearchQuery by remember { mutableStateOf("") }
-    // 搜索时补齐懒加载方言尚未加载的对象组（PG 例程/触发器/类型…），让搜索覆盖全部对象：
-    // 防抖 400ms，且只在查询至少 2 个字符时触发（避免单字符误触把大库所有对象组拉一遍）。
-    LaunchedEffect(treeSearchQuery) {
-        if (treeSearchQuery.trim().length < 2) return@LaunchedEffect
-        delay(400)
-        connectionsState.ensureAllGroupsLoaded(treeState.connections)
+    var treeSearchScope by remember { mutableStateOf<String?>(null) }
+    // 范围指向的数据源被删除后自动回落「全部」。
+    LaunchedEffect(treeState.connections) {
+        if (treeSearchScope != null && treeState.connections.none { it.id == treeSearchScope }) {
+            treeSearchScope = null
+        }
+    }
+    // 搜索时：① 装入未连接数据源的本地元数据缓存（未连接也能搜到有缓存的对象）；
+    // ② 补齐懒加载方言尚未加载的对象组（已连接），让搜索覆盖全部对象。
+    // 防抖 250ms；懒加载组只在查询至少 2 个字符时触发（避免单字符误触把大库对象组拉一遍）。
+    LaunchedEffect(treeSearchQuery, treeSearchScope) {
+        val q = treeSearchQuery.trim()
+        if (q.isEmpty()) return@LaunchedEffect
+        delay(250)
+        connectionsState.ensureSearchCachesLoaded(treeState.connections, treeSearchScope)
+        if (q.length >= 2) connectionsState.ensureAllGroupsLoaded(treeState.connections, treeSearchScope)
     }
     // Redis key pattern 防抖搜索：输入停 300ms 后才重扫（类型切换立即生效）
     var keySearchRequest by remember { mutableStateOf<Pair<ConnectionProfile, String>?>(null) }
@@ -349,6 +359,7 @@ private fun WindowScope.AppBody(
         treeState.expandedGroupKeys,
         connectionsState,
         search = treeSearchQuery,
+        searchScopeProfileId = treeSearchScope,
     )
 
     fun toggleRow(row: TreeRowInfo) {
@@ -479,32 +490,42 @@ private fun WindowScope.AppBody(
     /**
      * 双击对象 → 预览（SQL 后端 = SELECT 前 100 行；Redis = 按 key 类型的查看命令）：
      * 追加到该数据源最后打开控制台的光标/选区处，不新建、不覆盖草稿、不自动执行。
+     * 若结果来自**离线缓存**（未连接数据源），先建连再预览——双击是明确动作，连接符合预期。
      */
     fun previewObject(row: TreeRowInfo) {
         val p = row.profile ?: return
         val obj = row.dbObject ?: return
-        val session = connectionsState.sessionOf(p.id)
-        if (session == null || !session.capabilities.objectPreview) {
-            toastState.show("当前连接不支持对象预览")
-            return
-        }
         if (!obj.kind.isPreviewable()) {
             toastState.show("该对象类型不支持预览")
             return
         }
-        val sql = session.previewQuery(row.schema, obj)
-        // 复用该数据源已有控制台（优先最近激活；全关闭则重开最近改动；都没有则新建 控制台 1）——
-        // 不因双击而重复新建控制台。
-        val target = consoleState.activateForProfile(p.id) ?: return
-        // 会话型目标（多 schema）：预览对象的命名空间随之切换；
-        // Redis DB 是连接级过滤器（flatNamespaceOf），执行目标与 console.target 解耦，不在此写
-        if (!connectionsState.flatNamespaceOf(p.id) &&
-            session.capabilities.sessionContext && row.schema != null
-        ) {
-            consoleState.setTarget(target.id, row.schema.displayName)
+        scope.launch {
+            if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) {
+                connectionsState.ensureConnectionReady(p)
+                if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) {
+                    toastState.show("连接「${p.name}」失败：${connectionsState.statusMessageOf(p.id)?.take(80) ?: "未知错误"}")
+                    return@launch
+                }
+            }
+            val session = connectionsState.sessionOf(p.id)
+            if (session == null || !session.capabilities.objectPreview) {
+                toastState.show("当前连接不支持对象预览")
+                return@launch
+            }
+            val sql = session.previewQuery(row.schema, obj)
+            // 复用该数据源已有控制台（优先最近激活；全关闭则重开最近改动；都没有则新建 控制台 1）——
+            // 不因双击而重复新建控制台。
+            val target = consoleState.activateForProfile(p.id) ?: return@launch
+            // 会话型目标（多 schema）：预览对象的命名空间随之切换；
+            // Redis DB 是连接级过滤器（flatNamespaceOf），执行目标与 console.target 解耦，不在此写
+            if (!connectionsState.flatNamespaceOf(p.id) &&
+                session.capabilities.sessionContext && row.schema != null
+            ) {
+                consoleState.setTarget(target.id, row.schema.displayName)
+            }
+            // 交给编辑器在目标控制台光标/选区处插入，不自动执行
+            pendingInsert = sql
         }
-        // 交给编辑器在目标控制台光标/选区处插入，不自动执行
-        pendingInsert = sql
     }
 
     // 编辑器补全元数据已由 ConnectionsState 在连接建立时统一预取（缓存命中/查库回写），
@@ -517,7 +538,8 @@ private fun WindowScope.AppBody(
 
     fun ddlNoun(profileId: String, schema: SchemaMeta?, name: String): String {
         val s = schema ?: return "对象"
-        val objs = connectionsState.objectsOf(profileId, s.key) ?: return "对象"
+        // searchObjectsOf：已连接实时、未连接本地缓存——离线也能给出正确名词
+        val objs = connectionsState.searchObjectsOf(profileId, s.key) ?: return "对象"
         for (kind in listOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW, ObjectKind.INDEX, ObjectKind.ALIAS)) {
             if (objs.forKind(kind).any { it.name.equals(name, ignoreCase = true) }) return kind.displayNoun
         }
@@ -748,6 +770,20 @@ private fun WindowScope.AppBody(
                         onSelectRow = ::selectRow,
                         searchQuery = treeSearchQuery,
                         onSearchQueryChange = { treeSearchQuery = it },
+                        searchScopeId = treeSearchScope,
+                        scopeOptions = buildList {
+                            add(null to "全部数据源")
+                            profiles.forEach { p ->
+                                val suffix = when {
+                                    connectionsState.statusOf(p.id) == ConnUiStatus.CONNECTED -> ""
+                                    connectionsState.hasSearchCache(p.id) -> "（缓存）"
+                                    else -> "（未连接）"
+                                }
+                                add(p.id to (p.name + suffix))
+                            }
+                        },
+                        onSearchScopeChange = { treeSearchScope = it },
+                        onSearchInProfile = { p -> treeSearchScope = p.id },
                         onToggleExpand = ::toggleRow,
                         onDisconnectConnection = ::disconnectProfile,
                         onRefreshMetadata = { p ->

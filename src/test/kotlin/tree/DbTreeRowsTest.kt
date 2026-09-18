@@ -28,6 +28,9 @@ private class FakeRuntime : ConnectionRuntimeView {
     val searches = mutableMapOf<String, ObjectSearch>()
     val hasMore = mutableMapOf<Pair<String, ObjectKind>, Boolean>()
     val groups = mutableMapOf<String, List<ObjectKind>>()
+    /** 离线搜索缓存（未连接时 [searchSchemasOf]/[searchObjectsOf] 的回退）。 */
+    val searchSchemasByProfile = mutableMapOf<String, List<SchemaMeta>>()
+    val searchObjectsBySchema = mutableMapOf<Pair<String, String>, SchemaObjects>()
 
     override fun statusOf(profileId: String) = statuses[profileId] ?: ConnUiStatus.DISCONNECTED
     override fun statusMessageOf(profileId: String) = messages[profileId]
@@ -35,6 +38,10 @@ private class FakeRuntime : ConnectionRuntimeView {
     override fun schemasLoadingOf(profileId: String) = schemasLoading[profileId] ?: false
     override fun objectsOf(profileId: String, schemaKey: String) = objectsBySchema[profileId to schemaKey]
     override fun objectsLoadingOf(profileId: String, schemaKey: String) = objectsLoading[profileId] ?: false
+    override fun searchSchemasOf(profileId: String): List<SchemaMeta>? =
+        searchSchemasByProfile[profileId] ?: schemasOf(profileId)
+    override fun searchObjectsOf(profileId: String, schemaKey: String): SchemaObjects? =
+        searchObjectsBySchema[profileId to schemaKey] ?: objectsOf(profileId, schemaKey)
     override fun groupObjectsLoadingOf(profileId: String, schemaKey: String, kind: ObjectKind) =
         groupLoading[Triple(profileId, schemaKey, kind)] ?: false
     override fun flatNamespaceOf(profileId: String) = flat[profileId] ?: false
@@ -60,9 +67,10 @@ class DbTreeRowsTest {
         expandedGroupKeys: Set<String> = emptySet(),
         runtime: ConnectionRuntimeView = NoRuntime,
         search: String = "",
+        searchScopeProfileId: String? = null,
     ) = buildTreeRows(
         folders, connections, expandedFolderIds, expandedConnectionIds,
-        expandedSchemaKeys, expandedGroupKeys, runtime, search,
+        expandedSchemaKeys, expandedGroupKeys, runtime, search, searchScopeProfileId,
     )
 
     @Test
@@ -507,5 +515,56 @@ class DbTreeRowsTest {
         // 连接名命中 → 保留过滤条 + 键；按 key 名搜索不命中（Redis 键走过滤条服务端 pattern）
         assertEquals("redis", rows(connections = listOf(redis), runtime = runtime, search = "redis").first().name)
         assertTrue(rows(connections = listOf(redis), runtime = runtime, search = "user:1").isEmpty())
+    }
+
+    @Test
+    fun `search falls back to cached metadata for disconnected source`() {
+        val schema = SchemaMeta(null, "main")
+        val runtime = FakeRuntime().apply {
+            // 未连接：实时 schemas/objects 为空，只有搜索缓存
+            searchSchemasByProfile["c1"] = listOf(schema)
+            searchObjectsBySchema["c1" to schema.key] = SchemaObjects(
+                objects = mapOf(ObjectKind.TABLE to listOf(DbObjectMeta("users", ObjectKind.TABLE))),
+                counts = mapOf(ObjectKind.TABLE to 1, ObjectKind.ROUTINE to 12),
+            )
+        }
+        val out = rows(connections = listOf(conn("c1")), runtime = runtime, search = "user")
+        assertEquals(ConnUiStatus.DISCONNECTED, out.first().connStatus)
+        assertEquals("users", out.single { it.kind == TreeRowKind.DB_OBJECT }.name)
+        // 缓存里的懒加载组只有计数没正文 → 提示还有多少对象需要连接后才能搜
+        assertTrue(out.any { it.kind == TreeRowKind.PLACEHOLDER && it.name.contains("另有 12 个对象未缓存") })
+    }
+
+    @Test
+    fun `search scope limits to one profile`() {
+        val schema = SchemaMeta(null, "main")
+        fun runtime() = FakeRuntime().apply {
+            statuses["c1"] = ConnUiStatus.CONNECTED
+            statuses["c2"] = ConnUiStatus.CONNECTED
+            schemasByProfile["c1"] = listOf(schema)
+            schemasByProfile["c2"] = listOf(schema)
+            objectsBySchema["c1" to schema.key] = SchemaObjects.simple(listOf("users"), emptyList())
+            objectsBySchema["c2" to schema.key] = SchemaObjects.simple(listOf("users_archive"), emptyList())
+        }
+        val conns = listOf(conn("c1"), conn("c2"))
+        assertEquals(2, rows(connections = conns, runtime = runtime(), search = "users").count { it.kind == TreeRowKind.CONNECTION })
+        val scoped = rows(
+            connections = conns, runtime = runtime(), search = "users", searchScopeProfileId = "c2",
+        )
+        assertEquals(1, scoped.count { it.kind == TreeRowKind.CONNECTION })
+        assertEquals("conn-c2", scoped.first { it.kind == TreeRowKind.CONNECTION }.name)
+    }
+
+    @Test
+    fun `cached metadata does not leak into normal tree`() {
+        val schema = SchemaMeta(null, "main")
+        val runtime = FakeRuntime().apply {
+            searchSchemasByProfile["c1"] = listOf(schema)
+            searchObjectsBySchema["c1" to schema.key] = SchemaObjects.simple(listOf("users"), emptyList())
+        }
+        val out = rows(connections = listOf(conn("c1")), expandedConnectionIds = setOf("c1"), runtime = runtime)
+        assertEquals(2, out.size)
+        assertEquals("未连接", out[1].name)
+        assertFalse(out.any { it.kind == TreeRowKind.DB_OBJECT })
     }
 }

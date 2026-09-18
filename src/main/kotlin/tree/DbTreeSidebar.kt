@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -49,6 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -104,6 +107,8 @@ class RowActions(
     val onCopyQuery: () -> Unit = {},
     /** CONNECTION 行：打开/激活该数据源的控制台（无控制台时直接建首个并打开）。 */
     val onOpenConsole: () -> Unit = {},
+    /** CONNECTION 行：把搜索范围限定为该数据源（右键「在此数据源中搜索」）。 */
+    val onSearchInProfile: () -> Unit = {},
     /** CONNECTION 行：该数据源的已有控制台（右键「打开控制台」级联子菜单用）。 */
     val consoles: List<ConsoleRecord> = emptyList(),
     /** 当前激活控制台 id（级联子菜单里标「✓」）。 */
@@ -159,6 +164,13 @@ fun DbTreeSidebar(
     /** 左侧树搜索关键字（空 = 关闭搜索，按原展开态渲染）。 */
     searchQuery: String = "",
     onSearchQueryChange: (String) -> Unit = {},
+    /** 搜索范围：null = 全部数据源；否则只看该 profile（数据源级）。 */
+    searchScopeId: String? = null,
+    /** 范围下拉项：null → 全部，其余为 (profileId, 显示名)。 */
+    scopeOptions: List<Pair<String?, String>> = emptyList(),
+    onSearchScopeChange: (String?) -> Unit = {},
+    /** CONNECTION 行右键「在此数据源中搜索」：上层据此设定范围。 */
+    onSearchInProfile: (ConnectionProfile) -> Unit = {},
     /** 展开/收起一行（FOLDER/CONNECTION/SCHEMA；连接未连接时上层据此发起连接）。 */
     onToggleExpand: (TreeRowInfo) -> Unit,
     onDisconnectConnection: (ConnectionProfile) -> Unit = {},
@@ -204,6 +216,12 @@ fun DbTreeSidebar(
 ) {
     val trimmedQuery = searchQuery.trim()
     val listState = rememberLazyListState()
+    // 「在此数据源中搜索」后聚焦输入框（由右键动作递增触发）
+    val searchFocus = remember { FocusRequester() }
+    var focusSearchRequest by remember { mutableStateOf(0) }
+    LaunchedEffect(focusSearchRequest) {
+        if (focusSearchRequest > 0) runCatching { searchFocus.requestFocus() }
+    }
     // 搜索自身命中的行（按展示顺序）；用于计数 / Enter 跳转 / 当前项高亮。
     val matchKeys = remember(rows, trimmedQuery) {
         if (trimmedQuery.isEmpty()) {
@@ -238,6 +256,10 @@ fun DbTreeSidebar(
                 onQueryChange = onSearchQueryChange,
                 matchCount = matchKeys.size,
                 activeIndex = activeIndex,
+                scopeId = searchScopeId,
+                scopeOptions = scopeOptions,
+                onScopeChange = onSearchScopeChange,
+                focusRequester = searchFocus,
                 onNavigate = { delta ->
                     if (matchKeys.isNotEmpty()) {
                         val next = ((activeIndex + delta) % matchKeys.size + matchKeys.size) % matchKeys.size
@@ -284,6 +306,13 @@ fun DbTreeSidebar(
                                 onCopyName = { onCopyName(row) },
                                 onCopyQuery = { onCopyQuery(row) },
                                 onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
+                                onSearchInProfile = {
+                                    val p = row.profile
+                                    if (p != null) {
+                                        focusSearchRequest++
+                                        onSearchInProfile(p)
+                                    }
+                                },
                                 consoles = if (row.kind == TreeRowKind.CONNECTION) {
                                     row.profile?.let { consolesForProfile(it.id) }.orEmpty()
                                 } else {
@@ -352,6 +381,7 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
             }
             items + listOf(
                 consoleMenuItem(actions),
+                TreeMenuItem.Action("在此数据源中搜索") { actions.onSearchInProfile() },
                 TreeMenuItem.Action("编辑连接") { actions.onEditConnection() },
                 TreeMenuItem.Action("删除连接档案") { actions.onDeleteConnection() },
             )
@@ -636,15 +666,21 @@ private fun ToolPill(
     }
 }
 
-/** 左侧树搜索框：过滤 + 高亮 + Enter/↑↓ 在命中项间跳转。 */
+/** 左侧树搜索框：范围（全部/某数据源）+ 过滤 + 高亮 + Enter/↑↓ 在命中项间跳转。 */
 @Composable
 private fun TreeSearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
     matchCount: Int,
     activeIndex: Int,
+    scopeId: String?,
+    scopeOptions: List<Pair<String?, String>>,
+    onScopeChange: (String?) -> Unit,
+    focusRequester: FocusRequester,
     onNavigate: (Int) -> Unit,
 ) {
+    var scopeOpen by remember { mutableStateOf(false) }
+    val scopeLabel = scopeOptions.firstOrNull { it.first == scopeId }?.second ?: "全部"
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -654,6 +690,54 @@ private fun TreeSearchBar(
             .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
             .padding(horizontal = 6.dp),
     ) {
+        // 搜索范围：数据源级（右键连接行「在此数据源中搜索」也会设它）
+        Box {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .widthIn(max = 96.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .clickable { scopeOpen = true }
+                    .padding(horizontal = 2.dp, vertical = 4.dp),
+            ) {
+                Icon(
+                    DbIcons.Database, null,
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.size(12.dp),
+                )
+                Text(
+                    scopeLabel,
+                    fontSize = 11.sp,
+                    color = if (scopeId == null) {
+                        MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                    } else {
+                        MaterialTheme.colors.primary
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 3.dp).weight(1f, fill = false),
+                )
+                Icon(
+                    Icons.Filled.KeyboardArrowDown, null,
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+            DropdownMenu(expanded = scopeOpen, onDismissRequest = { scopeOpen = false }) {
+                scopeOptions.forEach { (id, name) ->
+                    DropdownMenuItem(onClick = { scopeOpen = false; onScopeChange(id) }) {
+                        Text(
+                            name,
+                            fontSize = 12.sp,
+                            color = if (id == scopeId) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+        Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(15.dp).background(MaterialTheme.colors.onSurface.copy(alpha = 0.12f)))
         Icon(
             Icons.Filled.Search, null,
             tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
@@ -677,6 +761,7 @@ private fun TreeSearchBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 5.dp)
+                    .focusRequester(focusRequester)
                     // 单行 BasicTextField 会吞方向键/回车，必须 preview 拦截：回车/↓=下一项，Shift+回车/↑=上一项，Esc=清空
                     .onPreviewKeyEvent { e ->
                         if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -726,7 +811,7 @@ private fun NoMatchHint(query: String) {
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            "只搜索已加载的元数据（未连接 / 未加载的对象组不在范围内）",
+            "只搜索已加载的元数据：已连接数据源实时搜；未连接数据源仅在本地有缓存时参与，可能不是最新",
             style = MaterialTheme.typography.caption,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
             modifier = Modifier.padding(top = 2.dp),
@@ -833,10 +918,21 @@ private fun TreeRowView(
                     row.profile?.let { TypeBadge(it.dbType) }
                     RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp, highlight = highlight)
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
+                    // 搜索命中且未连接：结果来自本地缓存，标「缓存」+ 灰点，避免与实时结果混淆
+                    val cachedHit = highlight.isNotEmpty() && row.connStatus != ConnUiStatus.CONNECTED
+                    if (cachedHit) {
+                        Text(
+                            "缓存",
+                            fontSize = 9.5.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                     when (row.connStatus) {
                         ConnUiStatus.CONNECTING -> CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.5.dp)
                         ConnUiStatus.CONNECTED -> StatusDot(Color(0xFF43A047))
                         ConnUiStatus.ERROR -> StatusDot(Color(0xFFE53935))
+                        ConnUiStatus.DISCONNECTED -> if (cachedHit) StatusDot(Color(0xFF9E9E9E))
                         else -> {}
                     }
                 }
