@@ -522,6 +522,12 @@ private fun WindowScope.AppBody(
             // 复用该数据源已有控制台（优先最近激活；全关闭则重开最近改动；都没有则新建 控制台 1）——
             // 不因双击而重复新建控制台。
             val target = consoleState.activateForProfile(p.id) ?: return@launch
+            if (p.dbType.protocol == Protocol.REDIS) {
+                // Redis：双击键直接按类型执行查看命令并渲染到结果区；编辑器草稿不动
+                // （Redis DB 目标由 flatNamespaceOf → sessionContextSqlFor 在执行时自动带上 SELECT n）。
+                consoleState.run(target, p, sql)
+                return@launch
+            }
             // 会话型目标（多 schema）：预览对象的命名空间随之切换；
             // Redis DB 是连接级过滤器（flatNamespaceOf），执行目标与 console.target 解耦，不在此写
             if (!connectionsState.flatNamespaceOf(p.id) &&
