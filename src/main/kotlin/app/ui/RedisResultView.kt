@@ -5,6 +5,8 @@ import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -35,33 +36,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.dialog.JsonTreeState
-import app.dialog.JsonTreeView
+import app.dialog.CellViewerDialog
 import app.dialog.viewerScrollbarStyle
 import app.state.ConsoleRunUi
 import app.state.RedisKeyMeta
 import app.state.StatementOutcome
 import engine.model.QueryColumn
 import engine.model.QueryResult
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
 import redis.RedisProtocol
 
 /**
  * Redis 结果视图：与关系型 [ResultTabs]（网格 + 编辑）分开的一套渲染组件。
  * 执行/状态模型仍复用 [ConsoleRunUi]/[QueryResult]（一套模型），这里只按 Redis 语义渲染：
- * 标量 / 键值对 / 成员列表 / 有序集合 / JSON 树 / 任意原生命令的文本回退。
+ * 标量 / 键值对 / 成员列表 / 有序集合 / 任意原生命令的文本回退。
+ * 大段文本/JSON 高亮复用 SQL 结果区的 [CellViewerDialog]（双击单元格同款弹窗）。
  */
 @Composable
 fun RedisResultView(
@@ -75,27 +79,41 @@ fun RedisResultView(
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val result = run.result
-    Column(modifier = modifier) {
-        if (run.outcomes.isNotEmpty() || run.executing) {
-            RedisResultToolbar(
+    var cellView by remember { mutableStateOf<RedisCellView?>(null) }
+    Box(modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (run.outcomes.isNotEmpty() || run.executing) {
+                RedisResultToolbar(
+                    run = run,
+                    result = run.result,
+                    onSelectOutcome = onSelectOutcome,
+                    onRefreshResult = onRefreshResult,
+                    onCancelRun = onCancelRun,
+                    onExport = onExport,
+                )
+                Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
+            }
+            RedisResultPane(
                 run = run,
-                result = result,
-                onSelectOutcome = onSelectOutcome,
-                onRefreshResult = onRefreshResult,
-                onCancelRun = onCancelRun,
-                onExport = onExport,
+                redisMeta = redisMeta,
+                onOpenCell = { title, content -> cellView = RedisCellView(title, content) },
+                onCopyText = onCopyText,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
             )
-            Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         }
-        RedisResultPane(
-            run = run,
-            redisMeta = redisMeta,
-            onCopyText = onCopyText,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
+        cellView?.let { v ->
+            CellViewerDialog(
+                title = v.title,
+                content = v.content,
+                onDismiss = { cellView = null },
+                onCopy = onCopyText,
+            )
+        }
     }
 }
+
+/** 双击弹出的单元格详情请求（与 SQL 结果区的 CellView 同构）。 */
+private data class RedisCellView(val title: String, val content: String)
 
 /** Redis 结果工具条：多语句 chip + 状态 + 刷新/导出/取消（刻意不收关系型编辑/转置/取更多）。 */
 @Composable
@@ -229,6 +247,7 @@ private fun RedisIconButton(
 private fun RedisResultPane(
     run: ConsoleRunUi,
     redisMeta: RedisKeyMeta?,
+    onOpenCell: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -253,12 +272,12 @@ private fun RedisResultPane(
                 val cmd = RedisProtocol.tokenize(result.sql).firstOrNull()?.uppercase()
                 val singleValue = result.rowCount == 1 && result.columns.size == 1
                 when {
-                    cmd == "GET" -> RedisScalarView(result, redisMeta, onCopyText, allowJson = true)
-                    cmd == "HGETALL" -> RedisKvView(result, redisMeta, onCopyText)
-                    cmd == "LRANGE" || cmd == "SMEMBERS" -> RedisMembersView(result, redisMeta, onCopyText)
-                    cmd == "ZRANGE" -> RedisZSetView(result, redisMeta, onCopyText)
-                    singleValue -> RedisScalarView(result, redisMeta, onCopyText, allowJson = false)
-                    else -> RedisTextFallback(result, onCopyText)
+                    cmd == "GET" -> RedisScalarView(result, redisMeta, onOpenCell, onCopyText)
+                    cmd == "HGETALL" -> RedisKvView(result, redisMeta, onOpenCell, onCopyText)
+                    cmd == "LRANGE" || cmd == "SMEMBERS" -> RedisMembersView(result, redisMeta, onOpenCell, onCopyText)
+                    cmd == "ZRANGE" -> RedisZSetView(result, redisMeta, onOpenCell, onCopyText)
+                    singleValue -> RedisScalarView(result, redisMeta, onOpenCell, onCopyText)
+                    else -> RedisTextFallback(result, onOpenCell, onCopyText)
                 }
             }
         }
@@ -333,102 +352,97 @@ private fun CopyTextButton(text: String, label: String, onCopyText: (String, Str
     )
 }
 
-/** 标量值（GET / TYPE / TTL / STRLEN…）：整块等宽文本 + 复制；GET 的 JSON 值可切 JSON 树。 */
+/** 双击修饰符：打开大段文本详情弹窗（CellViewerDialog，与 SQL 结果区同款）。 */
+@Composable
+private fun Modifier.onDoubleClick(onDoubleClick: () -> Unit): Modifier {
+    val current = rememberUpdatedState(onDoubleClick)
+    return pointerInput(Unit) {
+        detectTapGestures(onDoubleTap = { current.value() })
+    }
+}
+
+/** 标量值（GET / TYPE / TTL / STRLEN…）：整块等宽文本 + 复制；双击查看大段文本/JSON。 */
 @Composable
 private fun RedisScalarView(
     result: QueryResult,
     meta: RedisKeyMeta?,
+    onOpenCell: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
-    allowJson: Boolean,
 ) {
     val value = result.rows.firstOrNull()?.firstOrNull() ?: ""
-    val json = if (allowJson) remember(value) { parseJson(value) } else null
-    var jsonMode by remember(result.sql) { mutableStateOf(false) }
+    val title = meta?.let { "值 · ${it.key}" } ?: "Redis 值"
     Column(modifier = Modifier.fillMaxSize()) {
         RedisKeyHeader(meta, result.sql)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
         ) {
-            if (json != null) {
-                Text(
-                    "文本",
-                    fontSize = 11.sp,
-                    color = if (!jsonMode) MaterialTheme.colors.primary
-                    else MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { jsonMode = false }
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                )
-                Text(
-                    "JSON 树",
-                    fontSize = 11.sp,
-                    color = if (jsonMode) MaterialTheme.colors.primary
-                    else MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { jsonMode = true }
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                )
-            }
-            Spacer(Modifier.weight(1f))
+            Text(
+                "双击查看大段内容 / JSON",
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
+                modifier = Modifier.weight(1f),
+            )
             CopyTextButton(value, "已复制值", onCopyText)
         }
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (json != null && jsonMode) {
-                JsonTreeView(json, remember(value) { JsonTreeState() }, Modifier.fillMaxSize())
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(MaterialTheme.colors.onSurface.copy(alpha = 0.04f))
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState())
-                        .padding(8.dp),
-                ) {
-                    Text(
-                        value,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
-                    )
-                }
-            }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colors.onSurface.copy(alpha = 0.04f))
+                .onDoubleClick { onOpenCell(title, value) }
+                .verticalScroll(rememberScrollState())
+                .horizontalScroll(rememberScrollState())
+                .padding(8.dp),
+        ) {
+            Text(
+                value,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+            )
         }
     }
 }
 
-/** 键值对（HGETALL）：字段 + 值，逐行可复制值。 */
+/** 键值对（HGETALL）：字段 + 值，列宽可拖拽，字段/值双击查看详情。 */
 @Composable
 private fun RedisKvView(
     result: QueryResult,
     meta: RedisKeyMeta?,
+    onOpenCell: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
 ) {
     RedisTwoColumnRows(
         result = result,
         meta = meta,
+        onOpenCell = onOpenCell,
         onCopyText = onCopyText,
+        labelHeader = "字段",
+        valueHeader = "值",
         labelOf = { _, row -> row.getOrNull(0) ?: "" },
         valueOf = { _, row -> row.getOrNull(1) },
     )
 }
 
-/** 成员列表（LRANGE / SMEMBERS）：序号 + 成员，逐行可复制。 */
+/** 成员列表（LRANGE / SMEMBERS）：序号 + 成员，成员双击查看详情。 */
 @Composable
 private fun RedisMembersView(
     result: QueryResult,
     meta: RedisKeyMeta?,
+    onOpenCell: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
 ) {
     RedisTwoColumnRows(
         result = result,
         meta = meta,
+        onOpenCell = onOpenCell,
         onCopyText = onCopyText,
+        labelHeader = "#",
+        valueHeader = "成员",
         labelOf = { i, _ -> (i + 1).toString() },
         valueOf = { _, row -> row.firstOrNull() },
     )
@@ -439,11 +453,12 @@ private fun RedisMembersView(
 private fun RedisZSetView(
     result: QueryResult,
     meta: RedisKeyMeta?,
+    onOpenCell: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
 ) {
     val withScores = result.sql.contains("WITHSCORES", ignoreCase = true)
     if (!withScores) {
-        RedisMembersView(result, meta, onCopyText)
+        RedisMembersView(result, meta, onOpenCell, onCopyText)
         return
     }
     val pairs = result.rows.map { it.firstOrNull() ?: "" }.chunked(2)
@@ -456,20 +471,59 @@ private fun RedisZSetView(
         ),
         rows = pairs,
     )
-    RedisTwoColumnRows(zsetResult, meta, onCopyText, labelOf = { _, row -> row.getOrNull(0) ?: "" }, valueOf = { _, row -> row.getOrNull(1) })
+    RedisTwoColumnRows(
+        zsetResult,
+        meta,
+        onOpenCell,
+        onCopyText,
+        labelHeader = "member",
+        valueHeader = "score",
+        labelOf = { _, row -> row.getOrNull(0) ?: "" },
+        valueOf = { _, row -> row.getOrNull(1) },
+    )
 }
 
-/** 通用两列行渲染（键值对 / 成员列表 / zset 复用）。 */
+/** 通用两列行渲染（键值对 / 成员列表 / zset 复用）：左列宽可拖拽，两列均双击查看详情。 */
 @Composable
 private fun RedisTwoColumnRows(
     result: QueryResult,
     meta: RedisKeyMeta?,
+    onOpenCell: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
+    labelHeader: String,
+    valueHeader: String,
     labelOf: (Int, List<String?>) -> String,
     valueOf: (Int, List<String?>) -> String?,
 ) {
+    var labelWidth by remember(result.sql) { mutableStateOf(180.dp) }
     Column(modifier = Modifier.fillMaxSize()) {
         RedisKeyHeader(meta, result.sql)
+        // 表头 + 拖拽把手（把手只出现在表头，数据行按同一 labelWidth 对齐）
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+        ) {
+            Text(
+                labelHeader,
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.width(labelWidth),
+            )
+            RedisColumnResizeHandle(
+                onDrag = { delta ->
+                    labelWidth = (labelWidth + delta.dp).coerceIn(80.dp, 480.dp)
+                },
+            )
+            Text(
+                valueHeader,
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+        }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val listState = rememberLazyListState()
             LazyColumn(
@@ -479,26 +533,41 @@ private fun RedisTwoColumnRows(
                 itemsIndexed(result.rows, key = { i, _ -> i }) { i, row ->
                     val label = labelOf(i, row)
                     val value = valueOf(i, row) ?: ""
+                    val labelTitle = "$labelHeader · $label"
+                    val valueTitle = "$valueHeader · $label"
                     Row(
                         verticalAlignment = Alignment.Top,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                     ) {
-                        Text(
-                            label,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.5.sp,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 200.dp).padding(end = 8.dp),
-                        )
-                        Text(
-                            value,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.92f),
-                            modifier = Modifier.weight(1f).padding(end = 8.dp),
-                        )
+                        Box(
+                            modifier = Modifier
+                                .width(labelWidth)
+                                .onDoubleClick { onOpenCell(labelTitle, label) },
+                        ) {
+                            Text(
+                                label,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(9.dp))
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .onDoubleClick { onOpenCell(valueTitle, value) },
+                        ) {
+                            Text(
+                                value,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.92f),
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        }
                         CopyTextButton(value, "已复制值", onCopyText)
                     }
                 }
@@ -512,9 +581,64 @@ private fun RedisTwoColumnRows(
     }
 }
 
-/** 任意原生命令的文本回退：等宽文本 + 复制全部（避免为 Redis 重做一套关系型网格）。 */
+/** 左列宽拖拽把手：只出现在表头，水平拖动改左列宽。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RedisTextFallback(result: QueryResult, onCopyText: (String, String) -> Unit) {
+private fun RedisColumnResizeHandle(
+    onDrag: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val resizeCursor = remember {
+        PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.E_RESIZE_CURSOR))
+    }
+    val density = LocalDensity.current
+    val currentOnDrag = rememberUpdatedState(onDrag)
+    var active by remember { mutableStateOf(false) }
+    var acc by remember { mutableStateOf(0f) }
+    Box(
+        modifier = modifier
+            .width(9.dp)
+            .height(18.dp)
+            .pointerHoverIcon(resizeCursor)
+            .pointerInput(density) {
+                detectDragGestures(
+                    onDragStart = {
+                        active = true
+                        acc = 0f
+                    },
+                    onDragEnd = { active = false },
+                    onDragCancel = { active = false },
+                ) { change, dragAmount ->
+                    change.consume()
+                    acc += dragAmount.x / density.density
+                    val whole = acc.toInt()
+                    if (whole != 0) {
+                        currentOnDrag.value(whole.toFloat())
+                        acc -= whole
+                    }
+                }
+            },
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (active) 2.dp else 1.dp)
+                .background(
+                    if (active) MaterialTheme.colors.primary
+                    else MaterialTheme.colors.onSurface.copy(alpha = 0.18f),
+                ),
+        )
+    }
+}
+
+/** 任意原生命令的文本回退：等宽文本 + 复制全部；双击查看完整内容。 */
+@Composable
+private fun RedisTextFallback(
+    result: QueryResult,
+    onOpenCell: (String, String) -> Unit,
+    onCopyText: (String, String) -> Unit,
+) {
     val text = remember(result) { resultToText(result) }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -538,6 +662,7 @@ private fun RedisTextFallback(result: QueryResult, onCopyText: (String, String) 
                 .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(MaterialTheme.colors.onSurface.copy(alpha = 0.04f))
+                .onDoubleClick { onOpenCell("结果 · ${result.sql}", text) }
                 .verticalScroll(rememberScrollState())
                 .horizontalScroll(rememberScrollState())
                 .padding(8.dp),
@@ -581,12 +706,6 @@ private fun redisTtlLabel(seconds: Long?): String = when {
     seconds < 3600 -> "${seconds / 60}m"
     seconds < 86400 -> "${seconds / 3600}h"
     else -> "${seconds / 86400}d"
-}
-
-private fun parseJson(value: String): JsonElement? {
-    val t = value.trim()
-    if (!(t.startsWith("{") || t.startsWith("["))) return null
-    return runCatching { Json.parseToJsonElement(t) }.getOrNull()
 }
 
 private fun resultToText(result: QueryResult): String = buildString {
