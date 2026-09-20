@@ -164,9 +164,10 @@ enum class Str {
     TreeMenuMoveToRoot,
 
     // ── 左侧树：工具栏 / 搜索 ──
-    TreeTitleConnectionManagement,
     TreePillFolder,
     TreePillNewConnection,
+    TreeToolbarRefresh,
+    TreeMenuMore,
     TreeMenuExportNoPassword,
     TreeMenuExportWithPassword,
     TreeMenuImport,
@@ -501,7 +502,6 @@ enum class Str {
     MainDecryptFailed,
     MainPassphraseWrong,
     MainDdlCaretHint,
-    MainAllSources,
     MainSearchCached,
     MainSearchDisconnected,
     MainCacheRefreshed,

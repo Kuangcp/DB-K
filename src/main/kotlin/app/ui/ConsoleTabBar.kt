@@ -70,7 +70,7 @@ internal fun ConsoleTabBar(
     val multiSource = consoles.map { it.connectionId }.distinct().size > 1
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(38.dp).padding(start = 12.dp, end = 6.dp),
+        modifier = Modifier.fillMaxWidth().height(38.dp).padding(start = 8.dp, end = 6.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

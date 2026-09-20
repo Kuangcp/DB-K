@@ -158,9 +158,10 @@ internal fun en(key: Str): String = when (key) {
     Str.TreeMenuMoveToRoot -> "Move to root (ungrouped)"
 
     // ── Tree: toolbar / search ──
-    Str.TreeTitleConnectionManagement -> "Connections"
     Str.TreePillFolder -> "Folder"
     Str.TreePillNewConnection -> "New connection"
+    Str.TreeToolbarRefresh -> "Refresh"
+    Str.TreeMenuMore -> "More"
     Str.TreeMenuExportNoPassword -> "Export data sources (without passwords)…"
     Str.TreeMenuExportWithPassword -> "Export data sources (with passwords)…"
     Str.TreeMenuImport -> "Import data sources…"
@@ -495,7 +496,6 @@ internal fun en(key: Str): String = when (key) {
     Str.MainDecryptFailed -> "Decryption failed: {0}"
     Str.MainPassphraseWrong -> "Wrong passphrase or corrupted file"
     Str.MainDdlCaretHint -> "Put the caret on a table name, or select a table/view on the left, then press {0}"
-    Str.MainAllSources -> "All data sources"
     Str.MainSearchCached -> "(cached)"
     Str.MainSearchDisconnected -> "(disconnected)"
     Str.MainCacheRefreshed -> "Refreshed metadata cache for \"{0}\""

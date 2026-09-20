@@ -157,9 +157,10 @@ internal fun zh(key: Str): String = when (key) {
     Str.TreeMenuMoveToRoot -> "移到根级（未分组）"
 
     // ── 左侧树：工具栏 / 搜索 ──
-    Str.TreeTitleConnectionManagement -> "连接管理"
     Str.TreePillFolder -> "文件夹"
     Str.TreePillNewConnection -> "新建连接"
+    Str.TreeToolbarRefresh -> "刷新"
+    Str.TreeMenuMore -> "更多"
     Str.TreeMenuExportNoPassword -> "导出数据源（不含密码）…"
     Str.TreeMenuExportWithPassword -> "导出数据源（含密码）…"
     Str.TreeMenuImport -> "导入数据源…"
@@ -494,7 +495,6 @@ internal fun zh(key: Str): String = when (key) {
     Str.MainDecryptFailed -> "解密失败：{0}"
     Str.MainPassphraseWrong -> "口令错误或文件已损坏"
     Str.MainDdlCaretHint -> "请把编辑器光标放到表名上，或在左侧选中表/视图，再按 {0}"
-    Str.MainAllSources -> "全部数据源"
     Str.MainSearchCached -> "（缓存）"
     Str.MainSearchDisconnected -> "（未连接）"
     Str.MainCacheRefreshed -> "已刷新「{0}」元数据缓存"

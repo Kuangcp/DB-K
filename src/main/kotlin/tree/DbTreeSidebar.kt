@@ -2,6 +2,7 @@ package tree
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -142,9 +143,9 @@ class RowActions(
 )
 
 /** 每层缩进宽度（dp）与行首/行尾内边距。
- *  层级最深 4（文件夹→连接→库→组→对象），旧值 16dp 把对象名挤到右侧；12dp 更紧凑。 */
-private const val INDENT_PER_DEPTH_DP = 12
-private const val ROW_START_PAD_DP = 6
+ *  层级最深 4（文件夹→连接→库→组→对象）；向 api-x 看齐，压到极窄：8dp/层。 */
+private const val INDENT_PER_DEPTH_DP = 8
+private const val ROW_START_PAD_DP = 4
 
 /** 树右侧滚动条样式：主题色半透明，深/浅色下都可见（与结果表格/查看器一致）。 */
 @Composable
@@ -315,8 +316,8 @@ fun DbTreeSidebar(
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize().padding(end = 8.dp),
-                    contentPadding = PaddingValues(vertical = 4.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 2.dp),
                     userScrollEnabled = !dragActive,
                 ) {
                     items(rows, key = { it.key }) { row ->
@@ -666,16 +667,14 @@ private fun SidebarToolbar(
     onImportProfiles: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(t(Str.TreeTitleConnectionManagement), style = MaterialTheme.typography.subtitle2, color = MaterialTheme.colors.onBackground)
-        Spacer(Modifier.weight(1f))
-        ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = t(Str.TreePillFolder), onClick = onAddFolder)
+        ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = null, tooltip = t(Str.FolderCreateTitle), onClick = onAddFolder)
         Spacer(Modifier.width(2.dp))
-        ToolPill(icon = { Icon(DbIcons.Database, null, Modifier.size(13.dp)) }, label = t(Str.TreeMenuConnect), onClick = onAddConnection)
+        ToolPill(icon = { Icon(DbIcons.Database, null, Modifier.size(13.dp)) }, label = null, tooltip = t(Str.TreePillNewConnection), onClick = onAddConnection)
         Spacer(Modifier.width(2.dp))
-        ToolPill(icon = { Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp)) }, label = null, onClick = onRefresh)
+        ToolPill(icon = { Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp)) }, label = null, tooltip = t(Str.TreeToolbarRefresh), onClick = onRefresh)
         Spacer(Modifier.width(2.dp))
         ArchiveMenu(
             onExportProfiles = onExportProfiles,
@@ -697,6 +696,7 @@ private fun ArchiveMenu(
         ToolPill(
             icon = { Icon(Icons.Filled.MoreVert, null, Modifier.size(14.dp)) },
             label = null,
+            tooltip = t(Str.TreeMenuMore),
             onClick = { expanded = true },
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -713,28 +713,52 @@ private fun ArchiveMenu(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ToolPill(
     icon: @Composable () -> Unit,
     label: String?,
     onClick: () -> Unit,
+    tooltip: String? = null,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(RoundedCornerShape(5.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-    ) {
-        icon()
-        if (label != null) {
-            Text(
-                label,
-                fontSize = 11.sp,
-                color = MaterialTheme.colors.onBackground.copy(alpha = 0.65f),
-                modifier = Modifier.padding(start = 3.dp),
-            )
+    val pill: @Composable () -> Unit = {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(5.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+        ) {
+            icon()
+            if (label != null) {
+                Text(
+                    label,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colors.onBackground.copy(alpha = 0.65f),
+                    modifier = Modifier.padding(start = 3.dp),
+                )
+            }
         }
+    }
+    if (tooltip == null) {
+        pill()
+    } else {
+        TooltipArea(
+            tooltip = {
+                Box(
+                    modifier = Modifier
+                        .shadow(4.dp, RoundedCornerShape(5.dp))
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(MaterialTheme.colors.surface)
+                        .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.15f), RoundedCornerShape(5.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(tooltip, fontSize = 11.sp, color = MaterialTheme.colors.onSurface)
+                }
+            },
+            delayMillis = 500,
+            content = pill,
+        )
     }
 }
 
@@ -757,7 +781,7 @@ private fun TreeSearchBar(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 10.dp, end = 8.dp, top = 4.dp, bottom = 2.dp)
+            .padding(start = 6.dp, end = 6.dp, top = 2.dp, bottom = 2.dp)
             .clip(RoundedCornerShape(5.dp))
             .background(MaterialTheme.colors.onSurface.copy(alpha = 0.06f))
             .padding(horizontal = 6.dp),
@@ -1005,8 +1029,8 @@ private fun TreeRowView(
                 else -> onSelect()
             }
         }
-        .padding(start = (ROW_START_PAD_DP + row.depth * INDENT_PER_DEPTH_DP).dp, end = 6.dp)
-        .padding(vertical = if (row.kind == TreeRowKind.OBJECT_GROUP) 1.dp else 3.dp)
+        .padding(start = (ROW_START_PAD_DP + row.depth * INDENT_PER_DEPTH_DP).dp, end = 4.dp)
+        .padding(vertical = if (row.kind == TreeRowKind.OBJECT_GROUP) 1.dp else 2.dp)
 
     val content: @Composable () -> Unit = content@{
         if (row.kind == TreeRowKind.FILTER) {

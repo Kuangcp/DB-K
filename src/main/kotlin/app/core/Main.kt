@@ -800,7 +800,7 @@ private fun WindowScope.AppBody(
                         onSearchQueryChange = { treeSearchQuery = it },
                         searchScopeId = treeSearchScope,
                         scopeOptions = buildList {
-                            add(null to I18n.t(Str.MainAllSources))
+                            add(null to I18n.t(Str.TreeSearchScopeAll))
                             profiles.forEach { p ->
                                 val suffix = when {
                                     connectionsState.statusOf(p.id) == ConnUiStatus.CONNECTED -> ""
@@ -1317,7 +1317,7 @@ private fun ToastHost(toastState: ToastState) {
 private fun TreeSplitter(onResize: (Float) -> Unit) {
     Box(
         modifier = Modifier
-            .width(5.dp)
+            .width(4.dp)
             .fillMaxHeight()
             .background(Color.Transparent)
             .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))

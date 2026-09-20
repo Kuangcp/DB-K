@@ -394,7 +394,7 @@ fun WindowScope.SqlWorkspace(
                     .fillMaxHeight()
                     .onSizeChanged { paneH = it.height },
             ) {
-                Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                Column(modifier = Modifier.fillMaxSize().padding(top = 4.dp, bottom = 4.dp)) {
                     // 编辑器吃满剩余高，结果区按 resultFrac 分配；中间只隔一根 5dp 可拖细线，不留空隙。
                     // 执行动作/状态/多语句 tabs 全部收在结果区顶部一条 28dp 工具条里（无结果时不显示）。
                     // 每个控制台一个独立的编辑器节点（key(consoleId)）：旧节点输入会话随切换销毁，

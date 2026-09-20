@@ -80,7 +80,7 @@ internal fun WindowScope.HeaderBar(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
             ) {
                 if (showEditorActions) {
                     IconButton(onClick = onFormatSql, modifier = Modifier.size(28.dp)) {
@@ -197,7 +197,7 @@ internal fun ConnectionNavBar(
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(38.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(38.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

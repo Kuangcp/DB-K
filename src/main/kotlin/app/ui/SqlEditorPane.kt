@@ -428,9 +428,9 @@ internal fun EditorPane(
 
     // ---- 行号槽 / 当前行高亮：文本布局（与编辑区同 style 同内宽，含自动换行）为唯一坐标来源 ----
     val gutterWpx = with(density) { GUTTER_W.toPx() }
-    val textPadLPx = with(density) { 4.dp.toPx() }
-    val textPadRPx = with(density) { 10.dp.toPx() }
-    val textTopPx = with(density) { 8.dp.toPx() }
+    val textPadLPx = with(density) { 2.dp.toPx() }
+    val textPadRPx = with(density) { 6.dp.toPx() }
+    val textTopPx = with(density) { 6.dp.toPx() }
     val lineHpx = with(density) { gutterLineHeight.toDp().toPx() }
     val textWpxInt = if (boxW > 0) (boxW - gutterWpx - textPadLPx - textPadRPx).toInt().coerceAtLeast(40) else 0
     val textLayout = if (textWpxInt > 40) {
@@ -639,7 +639,7 @@ internal fun EditorPane(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .padding(start = 4.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
+                        .padding(start = 2.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
                         .verticalScroll(scroll)
                         .onPreviewKeyEvent { e ->
                             if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -699,13 +699,13 @@ internal fun EditorPane(
                     },
                 )
             }
-            // 右侧纵向滚动条（文本区 end padding 已留 10dp，不会遮字）
+            // 右侧纵向滚动条（文本区 end padding 已留 6dp，不会遮字）
             VerticalScrollbar(
                 adapter = rememberScrollbarAdapter(scroll),
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .padding(vertical = 8.dp, horizontal = 3.dp),
+                    .padding(vertical = 6.dp, horizontal = 3.dp),
                 style = dbScrollbarStyle(),
             )
             // 编辑状态提示（● = 有未落盘改动；Ctrl+S 立即保存）
@@ -714,7 +714,7 @@ internal fun EditorPane(
                 fontSize = 10.sp,
                 color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 6.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 6.dp),
             )
         }
         // 补全弹层：位置 = caret 的真实排版位置（TextMeasurer 按内宽换行测出，避免覆盖正在输入的行）
