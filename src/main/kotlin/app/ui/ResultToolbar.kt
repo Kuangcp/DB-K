@@ -187,11 +187,8 @@ internal fun ResultToolbar(
 /** 多语句结果切换芯片：状态点 + 结果序号 + 行数/失败标记。 */
 @Composable
 private fun ResultChip(index: Int, outcome: StatementOutcome, active: Boolean, onClick: (Int) -> Unit) {
-    val dot = when {
-        outcome.error != null -> Color(0xFFE53935)
-        outcome.isQuery -> MaterialTheme.colors.primary
-        else -> Color(0xFF9E9E9E)
-    }
+    // 语义色：成功绿 / 失败红（仅作状态点，不承载文字）
+    val dot = if (outcome.ok) Color(0xFF43A047) else Color(0xFFE53935)
     val suffix = when {
         !outcome.ok -> " ✕"
         outcome.isQuery -> t(Str.ResultRowSuffix, outcome.result?.rowCount ?: 0)

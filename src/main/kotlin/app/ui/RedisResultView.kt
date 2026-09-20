@@ -182,11 +182,8 @@ private fun RedisResultToolbar(
 
 @Composable
 private fun RedisOutcomeChip(index: Int, outcome: StatementOutcome, active: Boolean, onClick: (Int) -> Unit) {
-    val dot = when {
-        outcome.error != null -> Color(0xFFE53935)
-        outcome.isQuery -> MaterialTheme.colors.primary
-        else -> Color(0xFF9E9E9E)
-    }
+    // 语义色：成功绿 / 失败红（与关系型结果 chip 一致）
+    val dot = if (outcome.ok) Color(0xFF43A047) else Color(0xFFE53935)
     val suffix = when {
         !outcome.ok -> " ✕"
         outcome.isQuery -> t(Str.ResultRowSuffix, outcome.result?.rowCount ?: 0)
