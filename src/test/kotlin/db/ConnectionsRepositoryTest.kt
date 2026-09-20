@@ -228,4 +228,95 @@ class ConnectionsRepositoryTest {
             assertNotNull(repo.getConnection("c2"))
         }
     }
+
+    // ---------- 拖拽移动 / 排序 ----------
+
+    @Test
+    fun `moveConnection reorders within same folder`() {
+        open().use { repo ->
+            val fid = repo.createFolder("f")
+            val a = repo.createConnection(newProfile(id = "a", folderId = fid))
+            val b = repo.createConnection(newProfile(id = "b", folderId = fid))
+            val c = repo.createConnection(newProfile(id = "c", folderId = fid))
+            // 初始顺序 a,b,c；把 a 插到第 1 位（移除后 [b,c] 的下标 1）→ b,a,c
+            assertTrue(repo.moveConnection(a, fid, 1))
+            assertEquals(listOf(b, a, c), repo.loadOrderedConnectionIds(fid))
+        }
+    }
+
+    @Test
+    fun `moveConnection moves across folders and to root`() {
+        open().use { repo ->
+            val f1 = repo.createFolder("f1")
+            val f2 = repo.createFolder("f2")
+            val a = repo.createConnection(newProfile(id = "a", folderId = f1))
+            val b = repo.createConnection(newProfile(id = "b", folderId = f2))
+            // 移入 f2 的第 0 位 → f2 顺序 a,b
+            assertTrue(repo.moveConnection(a, f2, 0))
+            assertEquals(listOf(a, b), repo.loadOrderedConnectionIds(f2))
+            assertEquals(emptyList(), repo.loadOrderedConnectionIds(f1))
+            // 移回根级（越界 index 夹到末尾）
+            assertTrue(repo.moveConnection(a, null, Int.MAX_VALUE))
+            assertEquals(listOf(a), repo.loadOrderedConnectionIds(null))
+            assertEquals(null, repo.getConnection(a)!!.folderId)
+        }
+    }
+
+    @Test
+    fun `moveFolder reorders root folders`() {
+        open().use { repo ->
+            val f1 = repo.createFolder("f1")
+            val f2 = repo.createFolder("f2")
+            val f3 = repo.createFolder("f3")
+            assertTrue(repo.moveFolder(f1, null, 3))
+            assertEquals(listOf(f2, f3, f1), repo.loadOrderedFolderIds(null))
+        }
+    }
+
+    @Test
+    fun `moveFolder nests and forbids moving into own descendant`() {
+        open().use { repo ->
+            val f1 = repo.createFolder("f1")
+            val f2 = repo.createFolder("f2")
+            // f1 移入 f2
+            assertTrue(repo.moveFolder(f1, f2, 0))
+            assertEquals(listOf(f1), repo.loadOrderedFolderIds(f2))
+            assertEquals(f2, repo.getFolderParentId(f1))
+            // 不能把 f2 移入其子孙 f1
+            assertFalse(repo.moveFolder(f2, f1, 0))
+            assertEquals(f2, repo.getFolderParentId(f1))
+        }
+    }
+
+    @Test
+    fun `delete nested folder re-parents children and moves direct connections to root`() {
+        open().use { repo ->
+            val f1 = repo.createFolder("f1")
+            val f2 = repo.createFolder("f2", parentId = f1)
+            val c = repo.createConnection(newProfile(id = "c", folderId = f1))
+            assertEquals(1, repo.deleteFolder(f1))
+            // 直连连接移到根；子文件夹上移到根级
+            assertEquals(null, repo.getConnection(c)!!.folderId)
+            assertEquals(null, repo.getFolderParentId(f2))
+            assertTrue(repo.listFolders().any { it.id == f2 })
+        }
+    }
+
+    @Test
+    fun `importProfiles preserves nested folder hierarchy`() {
+        open().use { repo ->
+            val folders = listOf(
+                FolderRow("f1", "root", parentId = null, sortOrder = 0),
+                FolderRow("f2", "child", parentId = "f1", sortOrder = 0),
+            )
+            val conns = listOf(
+                ConnectionProfile(id = "c1", name = "pg", folderId = "f2", dbType = DbType.POSTGRES),
+            )
+            repo.importProfiles(folders, conns)
+            val child = repo.listFolders().first { it.name == "child" }
+            val root = repo.listFolders().first { it.name == "root" }
+            assertEquals(root.id, child.parentId)
+            assertEquals(child.id, repo.getConnection("c1")!!.folderId)
+        }
+    }
 }

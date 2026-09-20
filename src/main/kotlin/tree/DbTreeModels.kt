@@ -35,8 +35,14 @@ data class TreeRowInfo(
     val kind: TreeRowKind,
     val depth: Int,
     val name: String,
-    /** FOLDER/CONNECTION 行：所属 folderId（根级连接为 null）。 */
+    /** FOLDER 行 = 自身 id；CONNECTION 行 = 所属 folderId（根级连接为 null）。 */
     val folderId: String? = null,
+    /** FOLDER 行：父文件夹 id（根级为 null）。 */
+    val parentFolderId: String? = null,
+    /** FOLDER 行：在其父文件夹下的序号（拖拽排序用）。 */
+    val folderIndex: Int? = null,
+    /** CONNECTION 行：在其父级（folderId，null=根）下的序号（拖拽排序用）。 */
+    val connectionIndex: Int? = null,
     /** CONNECTION 行。 */
     val profile: ConnectionProfile? = null,
     /** FOLDER/CONNECTION/SCHEMA 行：是否展开（折叠时显示计数徽章）。 */
@@ -122,6 +128,23 @@ fun schemaRowKey(profileId: String, schema: SchemaMeta): String = "s:$profileId:
 fun connectionRowKey(profileId: String): String = "c:$profileId"
 
 /**
+ * 把含 parentId 的文件夹列表按树顺序展平，返回 (文件夹, 深度)。
+ * 供连接编辑弹窗等需要层级展示的地方复用（同一层内按 sortOrder）。
+ */
+fun flattenFolderTree(folders: List<FolderRow>): List<Pair<FolderRow, Int>> {
+    val byParent = folders.groupBy { it.parentId }
+    val out = mutableListOf<Pair<FolderRow, Int>>()
+    fun emit(parentId: String?, depth: Int) {
+        byParent[parentId].orEmpty().sortedBy { it.sortOrder }.forEach { f ->
+            out += f to depth
+            emit(f.id, depth + 1)
+        }
+    }
+    emit(null, 0)
+    return out
+}
+
+/**
  * 依据 folders + connections + 运行时状态生成扁平行。
  * 顺序：文件夹（展开后带其下连接）→ 根级（未分组）连接；
  * 连接展开 → schema 行（按加载状态/内容继续展开）；
@@ -163,26 +186,35 @@ private fun buildTreeRowsNormal(
     runtime: ConnectionRuntimeView,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
-    val byFolder = connections.groupBy { it.folderId }
+    val foldersByParent = folders.groupBy { it.parentId }
+    val connsByFolder = connections.groupBy { it.folderId }
 
-    folders.sortedBy { it.sortOrder }.forEach { folder ->
-        val children = byFolder[folder.id].orEmpty().sortedBy { it.sortOrder }
+    fun emitFolder(folder: FolderRow, depth: Int, folderIndex: Int) {
+        val childFolders = foldersByParent[folder.id].orEmpty().sortedBy { it.sortOrder }
+        val childConns = connsByFolder[folder.id].orEmpty().sortedBy { it.sortOrder }
         val expanded = folder.id in expandedFolderIds
         out += TreeRowInfo(
             key = "f:${folder.id}",
             kind = TreeRowKind.FOLDER,
-            depth = 0,
+            depth = depth,
             name = folder.name,
             folderId = folder.id,
+            parentFolderId = folder.parentId,
             expanded = expanded,
-            childCount = children.size,
+            childCount = childFolders.size + childConns.size,
+            folderIndex = folderIndex,
         )
         if (expanded) {
-            children.forEach { conn -> appendConnection(out, conn, 1, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime) }
+            childFolders.forEachIndexed { i, child -> emitFolder(child, depth + 1, i) }
+            childConns.forEachIndexed { i, conn ->
+                appendConnection(out, conn, depth + 1, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime, i)
+            }
         }
     }
-    byFolder[null].orEmpty().sortedBy { it.sortOrder }.forEach { conn ->
-        appendConnection(out, conn, 0, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime)
+
+    foldersByParent[null].orEmpty().sortedBy { it.sortOrder }.forEachIndexed { i, folder -> emitFolder(folder, 0, i) }
+    connsByFolder[null].orEmpty().sortedBy { it.sortOrder }.forEachIndexed { i, conn ->
+        appendConnection(out, conn, 0, expandedConnectionIds, expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime, i)
     }
     return out
 }
@@ -196,6 +228,7 @@ private fun appendConnection(
     expandedGroupKeys: Set<String>,
     expandedKeyNamespaceKeys: Set<String>,
     runtime: ConnectionRuntimeView,
+    connectionIndex: Int,
 ) {
     val expanded = conn.id in expandedConnectionIds
     val status = runtime.statusOf(conn.id)
@@ -217,6 +250,7 @@ private fun appendConnection(
         },
         connStatus = status,
         message = runtime.statusMessageOf(conn.id),
+        connectionIndex = connectionIndex,
     )
     if (!expanded) return
 
@@ -546,7 +580,7 @@ private fun buildTreeRowsSearch(
     expandedKeyNamespaceKeys: Set<String>,
 ): List<TreeRowInfo> {
     val out = mutableListOf<TreeRowInfo>()
-    val byFolder = connections.groupBy { it.folderId }
+    val connsByFolder = connections.groupBy { it.folderId }
     fun inScope(id: String): Boolean = scopeProfileId == null || scopeProfileId == id
 
     fun appendConnection(conn: ConnectionProfile, depth: Int) {
@@ -626,23 +660,41 @@ private fun buildTreeRowsSearch(
         }
     }
 
-    folders.sortedBy { it.sortOrder }.forEach { folder ->
-        val children = byFolder[folder.id].orEmpty().sortedBy { it.sortOrder }
+    val foldersByParent = folders.groupBy { it.parentId }
+    fun matchingChildren(folder: FolderRow): List<ConnectionProfile> =
+        connsByFolder[folder.id].orEmpty().sortedBy { it.sortOrder }
             .filter { inScope(it.id) && connectionHasMatch(runtime, it, query) }
-        if (!nameHas(folder.name, query) && children.isEmpty()) return@forEach
+
+    // 文件夹自身或其后代（子文件夹/连接）是否命中
+    fun folderHasMatch(folder: FolderRow): Boolean {
+        if (nameHas(folder.name, query)) return true
+        if (matchingChildren(folder).isNotEmpty()) return true
+        return foldersByParent[folder.id].orEmpty().any { folderHasMatch(it) }
+    }
+
+    fun emitFolder(folder: FolderRow, depth: Int) {
+        val children = matchingChildren(folder)
+        val childFolders = foldersByParent[folder.id].orEmpty().sortedBy { it.sortOrder }
+            .filter { folderHasMatch(it) }
+        if (!nameHas(folder.name, query) && children.isEmpty() && childFolders.isEmpty()) return
+        val total = children.size + childFolders.size
         out += TreeRowInfo(
             key = "f:${folder.id}",
             kind = TreeRowKind.FOLDER,
-            depth = 0,
+            depth = depth,
             name = folder.name,
             folderId = folder.id,
-            expanded = children.isNotEmpty(),
-            childCount = children.size,
+            parentFolderId = folder.parentId,
+            expanded = total > 0,
+            childCount = total,
             expandable = false,
         )
-        children.forEach { appendConnection(it, 1) }
+        childFolders.forEach { emitFolder(it, depth + 1) }
+        children.forEach { appendConnection(it, depth + 1) }
     }
-    byFolder[null].orEmpty().sortedBy { it.sortOrder }
+
+    foldersByParent[null].orEmpty().sortedBy { it.sortOrder }.forEach { emitFolder(it, 0) }
+    connsByFolder[null].orEmpty().sortedBy { it.sortOrder }
         .filter { inScope(it.id) && connectionHasMatch(runtime, it, query) }
         .forEach { appendConnection(it, 0) }
     return out

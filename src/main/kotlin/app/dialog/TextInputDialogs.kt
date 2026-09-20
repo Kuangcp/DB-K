@@ -131,9 +131,13 @@ fun ConfirmDialog(
 ) {
     val (title, message) = when (request) {
         is ConfirmRequest.DeleteFolder -> {
-            val note = if (request.movingConnections > 0) {
-                "\n\n其中 ${request.movingConnections} 个连接将移至「未分组」（不会删除连接档案）。"
-            } else "\n\n该文件夹下没有连接。"
+            val parts = mutableListOf<String>()
+            if (request.movingConnections > 0) parts.add("${request.movingConnections} 个连接将移至「未分组」")
+            if (request.childFolders > 0) parts.add("${request.childFolders} 个子文件夹将上移到上一级")
+            val note = when {
+                parts.isNotEmpty() -> "\n\n" + parts.joinToString("，") + "（不会删除这些内容）。"
+                else -> "\n\n该文件夹为空。"
+            }
             "删除文件夹" to "确定删除文件夹「${request.name}」吗？$note"
         }
         is ConfirmRequest.DeleteConnection -> {

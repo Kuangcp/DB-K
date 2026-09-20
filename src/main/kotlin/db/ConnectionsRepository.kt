@@ -35,10 +35,10 @@ class ConnectionsRepository(
 
     // ---------- folders ----------
 
-    /** 全部根级文件夹（M1 仅一层）。 */
+    /** 全部文件夹（含嵌套层级；parentId 为父文件夹，null = 根级）。 */
     fun listFolders(): List<FolderRow> {
         return conn.prepareStatement(
-            "SELECT id, name, parent_id, sort_order FROM folders WHERE parent_id IS NULL ORDER BY sort_order, created_at",
+            "SELECT id, name, parent_id, sort_order FROM folders ORDER BY sort_order, created_at",
         ).use { ps ->
             ps.executeQuery().use { rs ->
                 buildList {
@@ -55,13 +55,14 @@ class ConnectionsRepository(
         }
     }
 
-    fun createFolder(name: String): String {
+    fun createFolder(name: String, parentId: String? = null): String {
         val id = newId()
-        conn.prepareStatement("INSERT INTO folders(id, name, sort_order, created_at) VALUES (?, ?, ?, ?)").use { ps ->
+        conn.prepareStatement("INSERT INTO folders(id, name, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?)").use { ps ->
             ps.setString(1, id)
             ps.setString(2, name)
-            ps.setInt(3, nextSortOrder("folders"))
-            ps.setLong(4, System.currentTimeMillis())
+            if (parentId == null) ps.setNull(3, java.sql.Types.VARCHAR) else ps.setString(3, parentId)
+            ps.setInt(4, nextSortOrder("folders"))
+            ps.setLong(5, System.currentTimeMillis())
             ps.executeUpdate()
         }
         return id
@@ -75,11 +76,18 @@ class ConnectionsRepository(
         }
     }
 
-    /** 删除文件夹，其下连接保留并移到根（folder_id 置 NULL）。返回受影响连接数。 */
+    /** 删除文件夹：其下连接保留并移到根（folder_id 置 NULL）；子文件夹上移到被删文件夹的父级。返回受影响（移根）连接数。 */
     fun deleteFolder(id: String): Int {
         val moved = countConnectionsInFolder(id)
         conn.autoCommit = false
         try {
+            val parentId = getFolderParentId(id)
+            // 子文件夹先上移，否则 FK ON DELETE CASCADE 会连坐删除整棵子树
+            conn.prepareStatement("UPDATE folders SET parent_id = ? WHERE parent_id = ?").use { ps ->
+                if (parentId == null) ps.setNull(1, java.sql.Types.VARCHAR) else ps.setString(1, parentId)
+                ps.setString(2, id)
+                ps.executeUpdate()
+            }
             conn.prepareStatement("UPDATE connections SET folder_id = NULL WHERE folder_id = ?").use { ps ->
                 ps.setString(1, id)
                 ps.executeUpdate()
@@ -98,6 +106,25 @@ class ConnectionsRepository(
         return moved
     }
 
+    fun getFolderParentId(folderId: String): String? {
+        return conn.prepareStatement("SELECT parent_id FROM folders WHERE id = ?").use { ps ->
+            ps.setString(1, folderId)
+            ps.executeQuery().use { rs ->
+                if (rs.next()) rs.getString("parent_id") else null
+            }
+        }
+    }
+
+    fun countChildFolders(folderId: String): Int {
+        return conn.prepareStatement("SELECT COUNT(*) FROM folders WHERE parent_id = ?").use { ps ->
+            ps.setString(1, folderId)
+            ps.executeQuery().use { rs ->
+                rs.next()
+                rs.getInt(1)
+            }
+        }
+    }
+
     fun countConnectionsInFolder(folderId: String): Int {
         return conn.prepareStatement("SELECT COUNT(*) FROM connections WHERE folder_id = ?").use { ps ->
             ps.setString(1, folderId)
@@ -105,6 +132,161 @@ class ConnectionsRepository(
                 rs.next()
                 rs.getInt(1)
             }
+        }
+    }
+
+    // ---------- 拖拽排序 / 移动 ----------
+
+    /** 某父文件夹（null=根级）下连接 id 的有序列表。 */
+    fun loadOrderedConnectionIds(folderId: String?): List<String> {
+        val sql = if (folderId == null) {
+            "SELECT id FROM connections WHERE folder_id IS NULL ORDER BY sort_order, created_at"
+        } else {
+            "SELECT id FROM connections WHERE folder_id = ? ORDER BY sort_order, created_at"
+        }
+        val out = mutableListOf<String>()
+        conn.prepareStatement(sql).use { ps ->
+            if (folderId != null) ps.setString(1, folderId)
+            ps.executeQuery().use { rs -> while (rs.next()) out += rs.getString("id") }
+        }
+        return out
+    }
+
+    /** 某父文件夹（null=根级）下子文件夹 id 的有序列表。 */
+    fun loadOrderedFolderIds(parentId: String?): List<String> {
+        val sql = if (parentId == null) {
+            "SELECT id FROM folders WHERE parent_id IS NULL ORDER BY sort_order, created_at"
+        } else {
+            "SELECT id FROM folders WHERE parent_id = ? ORDER BY sort_order, created_at"
+        }
+        val out = mutableListOf<String>()
+        conn.prepareStatement(sql).use { ps ->
+            if (parentId != null) ps.setString(1, parentId)
+            ps.executeQuery().use { rs -> while (rs.next()) out += rs.getString("id") }
+        }
+        return out
+    }
+
+    private fun reorderConnections(folderId: String?, orderedIds: List<String>) {
+        val now = System.currentTimeMillis()
+        for ((i, id) in orderedIds.withIndex()) {
+            conn.prepareStatement("UPDATE connections SET folder_id = ?, sort_order = ?, updated_at = ? WHERE id = ?").use { ps ->
+                if (folderId == null) ps.setNull(1, java.sql.Types.VARCHAR) else ps.setString(1, folderId)
+                ps.setInt(2, i)
+                ps.setLong(3, now)
+                ps.setString(4, id)
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    private fun reorderFolders(parentId: String?, orderedIds: List<String>) {
+        for ((i, id) in orderedIds.withIndex()) {
+            conn.prepareStatement("UPDATE folders SET parent_id = ?, sort_order = ? WHERE id = ?").use { ps ->
+                if (parentId == null) ps.setNull(1, java.sql.Types.VARCHAR) else ps.setString(1, parentId)
+                ps.setInt(2, i)
+                ps.setString(3, id)
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    private fun getConnectionFolderId(id: String): String? {
+        return conn.prepareStatement("SELECT folder_id FROM connections WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getString("folder_id") else null }
+        }
+    }
+
+    private fun connectionExists(id: String): Boolean {
+        return conn.prepareStatement("SELECT 1 FROM connections WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> rs.next() }
+        }
+    }
+
+    private fun folderExists(id: String): Boolean {
+        return conn.prepareStatement("SELECT 1 FROM folders WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> rs.next() }
+        }
+    }
+
+    /** 把连接移到 newFolderId（null=根级）下第 insertIndex 位（越界夹取到末尾）。同组重排 / 跨组移动。 */
+    fun moveConnection(id: String, newFolderId: String?, insertIndex: Int): Boolean {
+        if (!connectionExists(id)) return false
+        val oldFolderId = getConnectionFolderId(id)
+        conn.autoCommit = false
+        return try {
+            if (oldFolderId == newFolderId) {
+                val ids = loadOrderedConnectionIds(oldFolderId).toMutableList()
+                if (!ids.remove(id)) {
+                    conn.rollback()
+                    return false
+                }
+                ids.add(insertIndex.coerceIn(0, ids.size), id)
+                reorderConnections(oldFolderId, ids)
+            } else {
+                val target = loadOrderedConnectionIds(newFolderId).toMutableList()
+                target.remove(id)
+                target.add(insertIndex.coerceIn(0, target.size), id)
+                reorderConnections(newFolderId, target)
+                val source = loadOrderedConnectionIds(oldFolderId).toMutableList()
+                source.remove(id)
+                reorderConnections(oldFolderId, source)
+            }
+            conn.commit()
+            true
+        } catch (e: Exception) {
+            conn.rollback()
+            throw e
+        } finally {
+            conn.autoCommit = true
+        }
+    }
+
+    /** descendantCandidateId 是否在 ancestorFolderId 的子树内（含自身）。 */
+    fun isFolderStrictDescendantOf(descendantCandidateId: String, ancestorFolderId: String): Boolean {
+        var cur: String? = descendantCandidateId
+        while (cur != null) {
+            if (cur == ancestorFolderId) return true
+            cur = getFolderParentId(cur)
+        }
+        return false
+    }
+
+    /** 把文件夹移到 newParentId（null=根级）下第 insertIndex 位（禁止移入自身或其子树）。 */
+    fun moveFolder(id: String, newParentId: String?, insertIndex: Int): Boolean {
+        if (newParentId == id) return false
+        if (newParentId != null && isFolderStrictDescendantOf(newParentId, id)) return false
+        if (!folderExists(id)) return false
+        val oldParentId = getFolderParentId(id)
+        conn.autoCommit = false
+        return try {
+            if (oldParentId == newParentId) {
+                val ids = loadOrderedFolderIds(oldParentId).toMutableList()
+                if (!ids.remove(id)) {
+                    conn.rollback()
+                    return false
+                }
+                ids.add(insertIndex.coerceIn(0, ids.size), id)
+                reorderFolders(oldParentId, ids)
+            } else {
+                val target = loadOrderedFolderIds(newParentId).toMutableList()
+                target.remove(id)
+                target.add(insertIndex.coerceIn(0, target.size), id)
+                reorderFolders(newParentId, target)
+                val source = loadOrderedFolderIds(oldParentId).toMutableList()
+                source.remove(id)
+                reorderFolders(oldParentId, source)
+            }
+            conn.commit()
+            true
+        } catch (e: Exception) {
+            conn.rollback()
+            throw e
+        } finally {
+            conn.autoCommit = true
         }
     }
 
@@ -248,6 +430,7 @@ class ConnectionsRepository(
             val folderIds = existingIds("folders")
             val folderRemap = mutableMapOf<String, String>()
             var foldersAdded = 0
+            // 第一遍：先插文件夹本体（parent_id 暂空），避免子文件夹先于父文件夹违反 FK
             folders.forEach { f ->
                 val id = if (f.id in folderIds) newId() else f.id
                 if (id != f.id) folderRemap[f.id] = id
@@ -262,6 +445,18 @@ class ConnectionsRepository(
                 }
                 folderIds += id
                 foldersAdded++
+            }
+            // 第二遍：回填父文件夹引用（按 remap 重映射，保持导入前的嵌套层级）
+            folders.forEach { f ->
+                val id = folderRemap[f.id] ?: f.id
+                val parentId = f.parentId?.let { folderRemap[it] ?: it }
+                if (parentId != null) {
+                    conn.prepareStatement("UPDATE folders SET parent_id = ? WHERE id = ?").use { ps ->
+                        ps.setString(1, parentId)
+                        ps.setString(2, id)
+                        ps.executeUpdate()
+                    }
+                }
             }
             val connectionIds = existingIds("connections")
             var connectionsAdded = 0

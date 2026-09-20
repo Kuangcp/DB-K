@@ -117,6 +117,48 @@ class DbTreeRowsTest {
     }
 
     @Test
+    fun `nested folders render with depth and indices`() {
+        val out = rows(
+            folders = listOf(
+                FolderRow("f1", "root", null, 0),
+                FolderRow("f2", "child", "f1", 0),
+                FolderRow("f3", "root2", null, 1),
+            ),
+            connections = listOf(conn("c1", folderId = "f2")),
+            expandedFolderIds = setOf("f1", "f2"),
+        )
+        // f1(根) → f2(子) → c1 → f3(根)
+        assertEquals(listOf("root", "child", "conn-c1", "root2"), out.map { it.name })
+        assertEquals(0, out[0].depth)
+        assertEquals(1, out[1].depth)
+        assertEquals(2, out[2].depth)
+        assertEquals(0, out[3].depth)
+        assertEquals(0, out[0].folderIndex)
+        assertEquals(null, out[0].parentFolderId)
+        assertEquals(0, out[1].folderIndex)
+        assertEquals("f1", out[1].parentFolderId)
+        assertEquals(0, out[2].connectionIndex)
+        assertEquals(1, out[3].folderIndex)
+    }
+
+    @Test
+    fun `nested folder search keeps ancestor chain`() {
+        val out = rows(
+            folders = listOf(
+                FolderRow("f1", "root", null, 0),
+                FolderRow("f2", "child", "f1", 0),
+            ),
+            connections = listOf(conn("c1", folderId = "f2")),
+            runtime = searchRuntime(),
+            search = "users",
+        )
+        assertEquals(listOf("root", "child", "conn-c1"), out.take(3).map { it.name })
+        assertEquals(0, out[0].depth)
+        assertEquals(1, out[1].depth)
+        assertEquals(2, out[2].depth)
+    }
+
+    @Test
     fun `connection status placeholders`() {
         fun placeholderFor(status: ConnUiStatus, message: String? = null) = rows(
             connections = listOf(conn("c1")),

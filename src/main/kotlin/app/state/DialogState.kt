@@ -44,7 +44,7 @@ data class TableDdlRequest(
 
 /** 危险操作确认弹窗请求（删除类）。 */
 sealed interface ConfirmRequest {
-    data class DeleteFolder(val id: String, val name: String, val movingConnections: Int) : ConfirmRequest
+    data class DeleteFolder(val id: String, val name: String, val movingConnections: Int, val childFolders: Int = 0) : ConfirmRequest
     data class DeleteConnection(val id: String, val name: String) : ConfirmRequest
     data class DeleteConsole(val id: String, val name: String, val connectionName: String) : ConfirmRequest
 

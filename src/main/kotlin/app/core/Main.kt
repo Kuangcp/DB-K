@@ -822,10 +822,15 @@ private fun WindowScope.AppBody(
                             }
                         },
                         onAddFolder = { dialogState.folderDialog = FolderDialogRequest.Create(null) },
+                        onAddFolderAt = { folderId -> dialogState.folderDialog = FolderDialogRequest.Create(folderId) },
                         onAddConnectionAt = { folderId -> dialogState.connectionEditor = ConnectionEditorRequest.Create(folderId) },
                         onRenameFolder = { f -> dialogState.folderDialog = FolderDialogRequest.Rename(f) },
                         onDeleteFolder = { f ->
-                            dialogState.confirm = ConfirmRequest.DeleteFolder(f.id, f.name, treeState.countConnectionsInFolder(f.id))
+                            dialogState.confirm = ConfirmRequest.DeleteFolder(
+                                f.id, f.name,
+                                treeState.countConnectionsInFolder(f.id),
+                                treeState.countChildFolders(f.id),
+                            )
                         },
                         onEditConnection = { p -> dialogState.connectionEditor = ConnectionEditorRequest.Edit(p) },
                         onDeleteConnection = { p -> dialogState.confirm = ConfirmRequest.DeleteConnection(p.id, p.name) },
@@ -858,6 +863,7 @@ private fun WindowScope.AppBody(
                         },
                         onKeyPatternChange = { p, pattern -> keySearchRequest = p to pattern },
                         onLoadMoreObjects = { p -> scope.launch { connectionsState.loadMoreObjects(p) } },
+                        onApplyTreeDrop = { payload, target -> treeState.applyDrop(payload, target) },
                     )
                     TreeSplitter { delta -> treeWidthDp = (treeWidthDp + delta).coerceIn(180f, 680f) }
                     val runState = activeConsole?.let { consoleState.runStateOf(it.id) } ?: ConsoleRunUi()
@@ -1182,7 +1188,7 @@ private fun DialogHost(
             onDismiss = { dialogState.folderDialog = null },
             onConfirm = { name ->
                 when (request) {
-                    is FolderDialogRequest.Create -> treeState.addFolder(name)
+                    is FolderDialogRequest.Create -> treeState.addFolder(name, request.parentId)
                     is FolderDialogRequest.Rename -> treeState.renameFolder(request.folder.id, name)
                 }
                 dialogState.folderDialog = null

@@ -66,6 +66,7 @@ import jdbc.ExternalDrivers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import tree.flattenFolderTree
 
 /** 字段统一紧凑高度 + 圆角 + 字号。 */
 private val FieldHeight = 40.dp
@@ -210,11 +211,20 @@ fun ConnectionEditorDialog(
                     )
                 }
                 FormRow("文件夹") {
+                    val flatFolders = remember(folders) { flattenFolderTree(folders) }
+                    val options = remember(folders) {
+                        listOf("未分组") + flatFolders.map { (f, depth) ->
+                            buildString {
+                                repeat(depth) { append("    ") }
+                                append(f.name)
+                            }
+                        }
+                    }
                     DropdownField(
                         label = folderId?.let { fid -> folders.firstOrNull { it.id == fid }?.name } ?: "未分组",
-                        options = listOf("未分组") + folders.map { it.name },
+                        options = options,
                         onSelect = { idx ->
-                            folderId = if (idx == 0) null else folders[idx - 1].id
+                            folderId = if (idx == 0) null else flatFolders[idx - 1].first.id
                         },
                     )
                 }

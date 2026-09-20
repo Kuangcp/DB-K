@@ -70,7 +70,7 @@ object ProfileTransfer {
             formatVersion = FORMAT_VERSION,
             app = APP_TAG,
             exportedAt = System.currentTimeMillis(),
-            folders = folders.map { FolderDto(id = it.id, name = it.name, sortOrder = it.sortOrder) },
+            folders = folders.map { FolderDto(id = it.id, name = it.name, parentId = it.parentId, sortOrder = it.sortOrder) },
             connections = connections.map { p ->
                 ConnectionDto(
                     id = p.id,
@@ -101,7 +101,7 @@ object ProfileTransfer {
         require(dto.formatVersion <= FORMAT_VERSION) {
             "档案文件版本 ${dto.formatVersion} 高于当前支持的 $FORMAT_VERSION，请升级 db-k"
         }
-        val folders = dto.folders.map { FolderRow(id = it.id, name = it.name, parentId = null, sortOrder = it.sortOrder) }
+        val folders = dto.folders.map { FolderRow(id = it.id, name = it.name, parentId = it.parentId, sortOrder = it.sortOrder) }
         val folderIds = folders.map { it.id }.toSet()
         var skipped = 0
         val connections = dto.connections.mapNotNull { c ->
@@ -227,6 +227,7 @@ object ProfileTransfer {
     internal data class FolderDto(
         val id: String,
         val name: String,
+        val parentId: String? = null,
         val sortOrder: Int = 0,
     )
 

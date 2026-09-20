@@ -9,6 +9,8 @@ import db.ConnectionsRepository
 import db.FolderRow
 import db.ProfileImportSummary
 import db.ProfileTransfer
+import tree.TreeDragPayload
+import tree.TreeDropTarget
 
 /**
  * 左侧树状态：本地元数据（文件夹 + 连接档案）内存镜像 + 展开/选中 + 增删改动作。
@@ -102,10 +104,19 @@ class TreeState(
 
     // ---------- folder actions ----------
 
-    fun addFolder(name: String) {
-        val id = repository.createFolder(name)
+    fun addFolder(name: String, parentId: String? = null) {
+        val id = repository.createFolder(name, parentId)
         refresh()
-        expandedFolderIds = expandedFolderIds + id
+        // 展开父链到新文件夹可见（含刚建的文件夹本身）
+        var chain = expandedFolderIds
+        if (parentId != null) {
+            var cur: String? = parentId
+            while (cur != null) {
+                chain = chain + cur
+                cur = folderById(cur)?.parentId
+            }
+        }
+        expandedFolderIds = chain + id
         TreeExpandPrefs.save(expandedFolderIds)
         selectedRowKey = "f:$id"
     }
@@ -115,11 +126,41 @@ class TreeState(
         refresh()
     }
 
-    /** 删除文件夹（其下连接移至根）。调用前需用户确认。 */
+    /** 删除文件夹（其下连接移至根、子文件夹上移）。调用前需用户确认。 */
     fun deleteFolder(id: String) {
         repository.deleteFolder(id)
         refresh()
         if (selectedRowKey == "f:$id") selectedRowKey = null
+        expandedFolderIds = expandedFolderIds - id
+        TreeExpandPrefs.save(expandedFolderIds)
+    }
+
+    // ---------- 拖拽 ----------
+
+    fun applyDrop(payload: TreeDragPayload, target: TreeDropTarget): Boolean {
+        val ok = when (payload) {
+            is TreeDragPayload.Connection -> when (target) {
+                is TreeDropTarget.ConnectionSlot -> repository.moveConnection(payload.id, target.folderId, target.insertIndex)
+                is TreeDropTarget.IntoFolder -> repository.moveConnection(payload.id, target.folderId, Int.MAX_VALUE)
+                is TreeDropTarget.FolderSlot -> false
+            }
+            is TreeDragPayload.Folder -> when (target) {
+                is TreeDropTarget.FolderSlot -> repository.moveFolder(payload.id, target.parentFolderId, target.insertIndex)
+                is TreeDropTarget.IntoFolder -> repository.moveFolder(payload.id, target.folderId, Int.MAX_VALUE)
+                is TreeDropTarget.ConnectionSlot -> false
+            }
+        }
+        if (ok) {
+            refresh()
+            // 自动展开目标父级，让移动结果可见
+            when (target) {
+                is TreeDropTarget.IntoFolder -> expandedFolderIds = expandedFolderIds + target.folderId
+                is TreeDropTarget.ConnectionSlot -> target.folderId?.let { expandedFolderIds = expandedFolderIds + it }
+                is TreeDropTarget.FolderSlot -> target.parentFolderId?.let { expandedFolderIds = expandedFolderIds + it }
+            }
+            TreeExpandPrefs.save(expandedFolderIds)
+        }
+        return ok
     }
 
     // ---------- connection actions ----------
@@ -159,4 +200,7 @@ class TreeState(
 
     /** 删除确认文案需要：该文件夹下的连接数（删除时这些连接会移到根）。 */
     fun countConnectionsInFolder(id: String): Int = repository.countConnectionsInFolder(id)
+
+    /** 删除确认文案需要：该文件夹下的子文件夹数（删除时这些子文件夹会上一级）。 */
+    fun countChildFolders(id: String): Int = repository.countChildFolders(id)
 }

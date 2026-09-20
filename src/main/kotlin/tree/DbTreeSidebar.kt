@@ -6,7 +6,9 @@ import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -40,7 +42,9 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +69,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -94,6 +100,7 @@ import engine.model.isPreviewable
 /** 行上下文动作（闭包已绑定具体行）。 */
 class RowActions(
     val onAddConnectionAt: () -> Unit = {},
+    val onAddFolderAt: () -> Unit = {},
     val onRenameFolder: () -> Unit = {},
     val onDeleteFolder: () -> Unit = {},
     val onEditConnection: () -> Unit = {},
@@ -178,6 +185,8 @@ fun DbTreeSidebar(
     onCopyName: (TreeRowInfo) -> Unit = {},
     onCopyQuery: (TreeRowInfo) -> Unit = {},
     onAddFolder: () -> Unit = {},
+    /** 在某文件夹下新建子文件夹（null = 根级）。 */
+    onAddFolderAt: (String?) -> Unit = {},
     onAddConnectionAt: (String?) -> Unit = {},
     onRenameFolder: (FolderRow) -> Unit = {},
     onDeleteFolder: (FolderRow) -> Unit = {},
@@ -212,6 +221,8 @@ fun DbTreeSidebar(
     onKeyPatternChange: (ConnectionProfile, String) -> Unit = { _, _ -> },
     /** 「继续扫描」：拉取下一页键（Redis `SCAN` 游标）。 */
     onLoadMoreObjects: (ConnectionProfile) -> Unit = {},
+    /** 拖拽落下：应用移动/排序，返回是否成功。 */
+    onApplyTreeDrop: (TreeDragPayload, TreeDropTarget) -> Boolean = { _, _ -> false },
     modifier: Modifier = Modifier,
 ) {
     val trimmedQuery = searchQuery.trim()
@@ -240,6 +251,31 @@ fun DbTreeSidebar(
         val index = rows.indexOfFirst { it.key == key }
         if (index >= 0) listState.animateScrollToItem((index - 2).coerceAtLeast(0))
     }
+
+    // ── 拖拽落点解析（同 api-x：注册行边界 → 按指针根坐标 + 上下半区解析） ──
+    val dragEnabled = trimmedQuery.isEmpty()
+    val dropRegistry = remember { DropZoneRegistry() }
+    var treeDragPayload by remember { mutableStateOf<TreeDragPayload?>(null) }
+    var treeDragPointerRoot by remember { mutableStateOf(Offset.Zero) }
+    val hoveredDrop by remember {
+        derivedStateOf {
+            resolveDrop(treeDragPayload, dropRegistry.zones, treeDragPointerRoot)
+        }
+    }
+    val onTreeDragStart: (TreeDragPayload, Offset) -> Unit = { payload, rootPos ->
+        treeDragPayload = payload
+        treeDragPointerRoot = rootPos
+    }
+    val onTreeDragMove: (Offset) -> Unit = { rootPos -> treeDragPointerRoot = rootPos }
+    val onTreeDragEnd: () -> Unit = {
+        val p = treeDragPayload
+        val hit = resolveDrop(p, dropRegistry.zones, treeDragPointerRoot)
+        treeDragPayload = null
+        if (p != null && hit != null) {
+            onApplyTreeDrop(p, hit.target)
+        }
+    }
+    val dragActive = treeDragPayload != null && dragEnabled
 
     Column(modifier = modifier) {
         SidebarToolbar(
@@ -278,8 +314,22 @@ fun DbTreeSidebar(
                     state = listState,
                     modifier = Modifier.fillMaxSize().padding(end = 8.dp),
                     contentPadding = PaddingValues(vertical = 4.dp),
+                    userScrollEnabled = !dragActive,
                 ) {
                     items(rows, key = { it.key }) { row ->
+                        val dropIndicator = if (hoveredDrop?.rowKey == row.key) hoveredDrop!!.indicator else DropIndicator.None
+                        val dropDesc: RowDropDesc? = when {
+                            !dragEnabled -> null
+                            row.kind == TreeRowKind.FOLDER -> RowDropDesc.FolderDesc(row.folderId ?: "", row.parentFolderId, row.folderIndex ?: 0)
+                            row.kind == TreeRowKind.CONNECTION && row.profile != null -> RowDropDesc.ConnectionDesc(row.profile.id, row.folderId, row.connectionIndex ?: 0)
+                            else -> null
+                        }
+                        val dragPayload: TreeDragPayload? = when {
+                            !dragEnabled -> null
+                            row.kind == TreeRowKind.FOLDER -> TreeDragPayload.Folder(row.folderId ?: "")
+                            row.kind == TreeRowKind.CONNECTION && row.profile != null -> TreeDragPayload.Connection(row.profile.id, row.folderId)
+                            else -> null
+                        }
                         TreeRowView(
                             row = row,
                             selected = row.key == selectedKey,
@@ -295,9 +345,17 @@ fun DbTreeSidebar(
                             },
                             onSelect = { onSelectRow(row.key) },
                             onToggle = { onToggleExpand(row) },
+                            dropIndicator = dropIndicator,
+                            dropDesc = dropDesc,
+                            dragPayload = dragPayload,
+                            dropRegistry = dropRegistry,
+                            onTreeDragStart = onTreeDragStart,
+                            onTreeDragMove = onTreeDragMove,
+                            onTreeDragEnd = onTreeDragEnd,
                             actions = RowActions(
                                 onConnect = { onToggleExpand(row) },
                                 onAddConnectionAt = { onAddConnectionAt(row.folderId) },
+                                onAddFolderAt = { onAddFolderAt(row.folderId) },
                                 onRenameFolder = { onRenameFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
                                 onDeleteFolder = { onDeleteFolder(FolderRow(id = row.folderId ?: "", name = row.name)) },
                                 onEditConnection = { row.profile?.let(onEditConnection) },
@@ -337,6 +395,15 @@ fun DbTreeSidebar(
                     modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                     style = treeScrollbarStyle(),
                 )
+                val showRootDrop = dragActive &&
+                    treeDragPayload is TreeDragPayload.Connection &&
+                    (treeDragPayload as TreeDragPayload.Connection).fromFolderId != null
+                if (showRootDrop) {
+                    RootDropStrip(
+                        dropIndicator = if (hoveredDrop?.rowKey == RowDropDesc.RootDesc.rowKey) hoveredDrop!!.indicator else DropIndicator.None,
+                        dropRegistry = dropRegistry,
+                    )
+                }
             }
         }
     }
@@ -364,6 +431,7 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
     when (row.kind) {
         TreeRowKind.FOLDER -> listOf(
             TreeMenuItem.Action("在此新建连接") { actions.onAddConnectionAt() },
+            TreeMenuItem.Action("新建子文件夹") { actions.onAddFolderAt() },
             TreeMenuItem.Action("重命名文件夹") { actions.onRenameFolder() },
             TreeMenuItem.Action("删除文件夹") { actions.onDeleteFolder() },
         )
@@ -858,6 +926,13 @@ private fun TreeRowView(
     onSelect: () -> Unit,
     onToggle: () -> Unit,
     actions: RowActions,
+    dropIndicator: DropIndicator = DropIndicator.None,
+    dropDesc: RowDropDesc? = null,
+    dragPayload: TreeDragPayload? = null,
+    dropRegistry: DropZoneRegistry = remember { DropZoneRegistry() },
+    onTreeDragStart: (TreeDragPayload, Offset) -> Unit = { _, _ -> },
+    onTreeDragMove: (Offset) -> Unit = {},
+    onTreeDragEnd: () -> Unit = {},
 ) {
     val doubleTapMs = LocalViewConfiguration.current.doubleTapTimeoutMillis
     var lastClickMs by remember { mutableStateOf(0L) }
@@ -865,12 +940,46 @@ private fun TreeRowView(
     // 组行可点击（单击选中、箭头/双击展开折叠）；占位符与过滤条不可整行点击（控件自己处理）
     val clickable = row.kind != TreeRowKind.PLACEHOLDER && row.kind != TreeRowKind.FILTER
 
+    // 仅 FOLDER / CONNECTION 行参与拖拽：注册落点矩形 + 拖动手势
+    val rowLc = remember(row.key) { LayoutCoordsHolder() }
+    val desc = dropDesc
+    val payload = dragPayload
+    if (desc != null && payload != null) {
+        DisposableEffect(desc.rowKey) {
+            onDispose { dropRegistry.removeKey(desc.rowKey) }
+        }
+    }
+    val zoneModifier = if (desc != null && payload != null) {
+        Modifier.onGloballyPositioned { lc ->
+            rowLc.coords = lc
+            dropRegistry.sync(desc.rowKey, lc.boundsInRoot(), desc)
+        }
+    } else {
+        Modifier
+    }
+    val gestureModifier = if (desc != null && payload != null) {
+        Modifier.pointerInput(payload, desc) {
+            detectDragGestures(
+                onDragStart = { offset -> rowLc.coords?.localToRoot(offset)?.let { onTreeDragStart(payload, it) } },
+                onDrag = { change, _ ->
+                    change.consume()
+                    rowLc.coords?.localToRoot(change.position)?.let(onTreeDragMove)
+                },
+                onDragEnd = { onTreeDragEnd() },
+                onDragCancel = { onTreeDragEnd() },
+            )
+        }
+    } else {
+        Modifier
+    }
+
     val baseModifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 4.dp, vertical = 1.dp)
         .clip(RoundedCornerShape(4.dp))
         .background(
             when {
+                dropIndicator == DropIndicator.Into -> MaterialTheme.colors.primary.copy(alpha = 0.14f)
                 activeMatch -> MaterialTheme.colors.primary.copy(alpha = 0.30f)
                 selected -> MaterialTheme.colors.primary.copy(alpha = 0.16f)
                 else -> Color.Transparent
@@ -1041,31 +1150,96 @@ private fun TreeRowView(
     }
 
     if (menu.isEmpty()) {
-        Box(modifier = baseModifier) { content() }
+        Box(modifier = zoneModifier.then(baseModifier).then(gestureModifier)) {
+            content()
+            DropBar(dropIndicator)
+        }
     } else {
         // 右键菜单：记录点击点，在行内弹单层自绘菜单（支持「打开控制台」向右级联）
         var menuOpen by remember { mutableStateOf(false) }
         var menuAt by remember { mutableStateOf(Offset.Zero) }
         Box(
-            modifier = baseModifier.pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        // Initial pass：先于同链上的 clickable（Main）拿到右键，避免被它消费
-                        val e = awaitPointerEvent(PointerEventPass.Initial)
-                        if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
-                            menuAt = e.changes.firstOrNull()?.position ?: Offset.Zero
-                            menuOpen = true
-                            e.changes.forEach { it.consume() }
+            modifier = zoneModifier
+                .then(baseModifier)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            // Initial pass：先于同链上的 clickable（Main）拿到右键，避免被它消费
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                                menuAt = e.changes.firstOrNull()?.position ?: Offset.Zero
+                                menuOpen = true
+                                e.changes.forEach { it.consume() }
+                            }
                         }
                     }
                 }
-            },
+                .then(gestureModifier),
         ) {
             content()
+            DropBar(dropIndicator)
             if (menuOpen) {
                 TreeContextMenu(items = menu, clickOffset = menuAt, onDismiss = { menuOpen = false })
             }
         }
+    }
+}
+
+/** 拖拽落点指示条：插入到行顶/行底。 */
+@Composable
+private fun BoxScope.DropBar(indicator: DropIndicator) {
+    if (indicator == DropIndicator.InsertBefore || indicator == DropIndicator.InsertAfter) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .align(if (indicator == DropIndicator.InsertBefore) Alignment.TopCenter else Alignment.BottomCenter)
+                .background(MaterialTheme.colors.primary.copy(alpha = 0.75f)),
+        )
+    }
+}
+
+/** 拖拽连接时的「移到根级」落点（列表底部常驻条，仅拖拽中显示）。 */
+@Composable
+private fun BoxScope.RootDropStrip(
+    dropIndicator: DropIndicator,
+    dropRegistry: DropZoneRegistry,
+) {
+    val lcHolder = remember { LayoutCoordsHolder() }
+    val desc = RowDropDesc.RootDesc
+    DisposableEffect(desc.rowKey) {
+        onDispose { dropRegistry.removeKey(desc.rowKey) }
+    }
+    val highlighted = dropIndicator == DropIndicator.Into
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .onGloballyPositioned { lc ->
+                lcHolder.coords = lc
+                dropRegistry.sync(desc.rowKey, lc.boundsInRoot(), desc)
+            }
+            .clip(RoundedCornerShape(5.dp))
+            .background(
+                if (highlighted) MaterialTheme.colors.primary.copy(alpha = 0.16f)
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.08f),
+            )
+            .border(
+                1.dp,
+                if (highlighted) MaterialTheme.colors.primary.copy(alpha = 0.6f)
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.18f),
+                RoundedCornerShape(5.dp),
+            )
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "移到根级（未分组）",
+            fontSize = 11.5.sp,
+            color = if (highlighted) MaterialTheme.colors.primary
+                else MaterialTheme.colors.onSurface.copy(alpha = 0.65f),
+        )
     }
 }
 
