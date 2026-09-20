@@ -1,5 +1,8 @@
 package app.ui
 
+import i18n.I18n
+import i18n.Str
+
 /**
  * Elasticsearch JSON DSL 输入补全（纯逻辑，便于单测）。
  *
@@ -168,16 +171,16 @@ private fun valueSuggestions(
 // ---------- 候选项构造（引号由 forPosition 统一处理） ----------
 
 private fun keyItems(words: List<String>): List<CompletionItem> =
-    words.map { CompletionItem(it, "键", CompletionKind.KEYWORD, insertText = "\u0000K:$it") }
+    words.map { CompletionItem(it, I18n.t(Str.NounKey), CompletionKind.KEYWORD, insertText = "\u0000K:$it") }
 
 private fun valueItems(words: List<String>): List<CompletionItem> =
-    words.map { CompletionItem(it, "值", CompletionKind.KEYWORD, insertText = "\u0000V:$it") }
+    words.map { CompletionItem(it, I18n.t(Str.NounValue), CompletionKind.KEYWORD, insertText = "\u0000V:$it") }
 
 private fun fieldItems(fields: List<String>): List<CompletionItem> =
-    fields.distinct().sorted().map { CompletionItem(it, "字段", CompletionKind.COLUMN, insertText = "\u0000V:$it") }
+    fields.distinct().sorted().map { CompletionItem(it, I18n.t(Str.NounField), CompletionKind.COLUMN, insertText = "\u0000V:$it") }
 
 private fun indexItems(indices: List<String>): List<CompletionItem> =
-    indices.distinct().sorted().map { CompletionItem(it, "索引", CompletionKind.TABLE, insertText = "\u0000V:$it") }
+    indices.distinct().sorted().map { CompletionItem(it, I18n.t(Str.NounIndex), CompletionKind.TABLE, insertText = "\u0000V:$it") }
 
 /** 把内部占位（`\u0000K:` / `\u0000V:`）展开成按当前位置自适应的插入文本（含引号/冒号）。 */
 private fun CompletionItem.forPosition(quoted: Boolean): CompletionItem {

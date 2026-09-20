@@ -17,6 +17,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import java.sql.Types
+import i18n.I18n
+import i18n.Str
 
 /**
  * Elasticsearch 后端纯逻辑（无 HTTP / 无 compose），便于单测。
@@ -43,11 +45,11 @@ object ElasticsearchProtocol {
      */
     fun parseRequest(statement: String, defaultIndex: String? = null): Request {
         val trimmed = statement.trim()
-        require(trimmed.isNotEmpty()) { "空查询：请输入 JSON DSL" }
+        require(trimmed.isNotEmpty()) { I18n.t(Str.EsEmptyQuery) }
         val element = runCatching { compact.parseToJsonElement(trimmed) }
-            .getOrElse { throw IllegalArgumentException("不是合法 JSON：${it.message?.take(120)}") }
+            .getOrElse { throw IllegalArgumentException(I18n.t(Str.EsInvalidJson, it.message?.take(120))) }
         val obj = element as? JsonObject
-            ?: throw IllegalArgumentException("ES 查询体应为 JSON 对象（如 {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}）")
+            ?: throw IllegalArgumentException(I18n.t(Str.EsBodyNotObject))
         val explicitIndex = (obj["index"] ?: obj["_index"])
             ?.let { if (it is JsonPrimitive) it.contentOrNull else null }
             ?.takeIf { it.isNotBlank() }
@@ -83,7 +85,7 @@ object ElasticsearchProtocol {
     ): QueryResult {
         val root = parseObject(responseJson)
         root["error"]?.let { throw IllegalStateException(errorMessage(it)) }
-        val hits = root["hits"]?.jsonObject ?: throw IllegalStateException("响应缺少 hits：" + responseJson.take(200))
+        val hits = root["hits"]?.jsonObject ?: throw IllegalStateException(I18n.t(Str.EsResponseMissingHits, responseJson.take(200)))
         val hitList = hits["hits"]?.jsonArray ?: JsonArray(emptyList())
 
         val sourceKeys = LinkedHashSet<String>()
@@ -123,14 +125,14 @@ object ElasticsearchProtocol {
     /** `_cat/indices?format=json` → 索引名（按响应顺序）。 */
     fun catIndexNames(json: String): List<String> {
         val arr = runCatching { parseArray(json) }
-            .getOrElse { throw IllegalArgumentException("解析索引列表失败：${it.message?.take(120)}") }
+            .getOrElse { throw IllegalArgumentException(I18n.t(Str.EsParseIndicesFailed, it.message?.take(120))) }
         return arr.mapNotNull { (it as? JsonObject)?.get("index")?.let(::textOrNull)?.takeIf { n -> n.isNotBlank() } }
     }
 
     /** `_cat/aliases?format=json` → (别名, 指向的索引) 列表。 */
     fun catAliases(json: String): List<Pair<String, String?>> {
         val arr = runCatching { parseArray(json) }
-            .getOrElse { throw IllegalArgumentException("解析别名列表失败：${it.message?.take(120)}") }
+            .getOrElse { throw IllegalArgumentException(I18n.t(Str.EsParseAliasesFailed, it.message?.take(120))) }
         return arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val alias = o["alias"]?.let(::textOrNull)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -250,11 +252,11 @@ object ElasticsearchProtocol {
 
     private fun parseObject(json: String): JsonObject =
         compact.parseToJsonElement(json.trim()) as? JsonObject
-            ?: throw IllegalArgumentException("响应不是 JSON 对象")
+            ?: throw IllegalArgumentException(I18n.t(Str.EsResponseNotObject))
 
     private fun parseArray(json: String): JsonArray =
         compact.parseToJsonElement(json.trim()) as? JsonArray
-            ?: throw IllegalArgumentException("响应不是 JSON 数组")
+            ?: throw IllegalArgumentException(I18n.t(Str.EsResponseNotArray))
 
     /** 从 ES 错误响应提取可读原因（`error.reason` / `error.root_cause[0].reason` / 原始文本）。 */
     fun errorMessage(error: JsonElement): String {

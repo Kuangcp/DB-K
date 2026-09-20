@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import i18n.I18n
+import i18n.Str
 
 /**
  * 单元格内容的 JSON 识别 / 语法着色 / 树形折叠（纯逻辑，便于单测）。
@@ -62,10 +64,10 @@ internal fun looksLikeJson(content: String): Boolean {
 /** 解析单元格内容为 JSON；仅当顶层是对象/数组且语法合法时返回成功。 */
 internal fun parseJsonDocument(content: String): Result<JsonElement> = runCatching {
     val trimmed = content.trim()
-    require(trimmed.isNotEmpty()) { "内容为空" }
-    require(trimmed.first() == '{' || trimmed.first() == '[') { "顶层不是 JSON 对象/数组" }
+    require(trimmed.isNotEmpty()) { I18n.t(Str.JsonEmpty) }
+    require(trimmed.first() == '{' || trimmed.first() == '[') { I18n.t(Str.JsonTopLevel) }
     val element = Json.parseToJsonElement(trimmed)
-    require(element is JsonObject || element is JsonArray) { "顶层不是 JSON 对象/数组" }
+    require(element is JsonObject || element is JsonArray) { I18n.t(Str.JsonTopLevel) }
     element
 }
 

@@ -26,6 +26,8 @@ import java.util.Base64
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutionException
+import i18n.I18n
+import i18n.Str
 
 /**
  * Elasticsearch 后端（`engine.DataSourceSession` 的 ES 版）。
@@ -279,12 +281,11 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
             it.contains("403") || it.contains("security_exception") || it.contains("no permissions")
         }
         val prefix = if (forbidden) {
-            "无权限列出索引/别名（OpenSearch/ES 403）。可在连接里填写「默认索引」后手动查询，或让管理员授予 " +
-                "indices:monitor/settings/get（_cat/indices）或 indices:admin/aliases/get（_alias）。"
+            I18n.t(Str.EsListDeniedHint)
         } else {
-            "无法列出索引/别名。"
+            I18n.t(Str.EsListFailed)
         }
-        return prefix + "原始错误：" + errors.joinToString("；").take(240)
+        return prefix + I18n.t(Str.EsRawError, errors.joinToString(I18n.t(Str.CommonListSeparator)).take(240))
     }
 
     /** 发送请求并返回响应体；HTTP >= 400 时解析 ES 错误并抛出可读异常。 */
@@ -303,7 +304,7 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
             "POST" -> builder
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body ?: "{}", Charsets.UTF_8))
-            else -> error("不支持的 HTTP 方法：$method")
+            else -> error(I18n.t(Str.EsUnsupportedHttp, method))
         }
         val future = http.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString())
         inflight = future
@@ -312,10 +313,10 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
         } catch (e: ExecutionException) {
             throw unwrap(e)
         } catch (e: java.util.concurrent.CancellationException) {
-            throw IllegalStateException("查询已取消", e)
+            throw IllegalStateException(I18n.t(Str.EsQueryCancelled), e)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            throw IllegalStateException("请求已取消", e)
+            throw IllegalStateException(I18n.t(Str.EsRequestCancelled), e)
         } catch (e: CompletionException) {
             throw unwrap(e)
         } finally {

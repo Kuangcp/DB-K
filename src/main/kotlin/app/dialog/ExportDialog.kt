@@ -27,7 +27,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.core.export.ExportFormat
 import app.core.export.ExportOptions
+import app.i18n.t
 import app.state.ExportRequest
+import i18n.Str
 
 /**
  * 结果导出弹窗（N8）：选格式（CSV / JSON / SQL INSERT / Excel）与参数。
@@ -54,15 +56,15 @@ fun ExportDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导出结果", color = MaterialTheme.colors.onSurface) },
+        title = { Text(t(Str.ExportTitle), color = MaterialTheme.colors.onSurface) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     buildString {
-                        append("当前 ${request.rowCount} 行")
+                        append(t(Str.ExportCurrentRows, request.rowCount))
                         when {
-                            request.cellsTruncated -> append("（含超大字段，已截断展示；导出将重跑 SQL 取完整值）")
-                            request.truncated -> append("（结果已截断，可勾选下方「全量流式」导出全部）")
+                            request.cellsTruncated -> append(t(Str.ExportCellsTruncated))
+                            request.truncated -> append(t(Str.ExportTruncated))
                         }
                     },
                     fontSize = 12.sp,
@@ -77,7 +79,7 @@ fun ExportDialog(
                             .padding(vertical = 2.dp),
                     ) {
                         RadioButton(selected = format == f, onClick = { format = f })
-                        Text(f.label, fontSize = 13.sp, color = MaterialTheme.colors.onSurface)
+                        Text(t(f.labelKey), fontSize = 13.sp, color = MaterialTheme.colors.onSurface)
                     }
                 }
 
@@ -85,19 +87,19 @@ fun ExportDialog(
                     OutlinedTextField(
                         value = tableName,
                         onValueChange = { tableName = it },
-                        label = { Text("目标表名（可含 schema，如 public.users）") },
+                        label = { Text(t(Str.ExportTableNameLabel)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     )
                     OutlinedTextField(
                         value = batchSizeText,
                         onValueChange = { batchSizeText = it.filter(Char::isDigit).take(5) },
-                        label = { Text("每条 INSERT 合并行数（1~10000）") },
+                        label = { Text(t(Str.ExportBatchLabel)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     )
                     Text(
-                        "转义采用标准 SQL（单引号双写）；MySQL 默认把反斜杠当转义符，含反斜杠的数据可能受影响。",
+                        t(Str.ExportSqlEscapeHint),
                         fontSize = 11.sp,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.padding(top = 4.dp),
@@ -107,7 +109,7 @@ fun ExportDialog(
                 if (format == ExportFormat.JSON) {
                     OptionRow(
                         checked = prettyJson,
-                        label = "美化输出（缩进换行；大文件可关闭以减小体积）",
+                        label = t(Str.ExportPrettyLabel),
                         onCheckedChange = { prettyJson = it },
                     )
                 }
@@ -116,9 +118,9 @@ fun ExportDialog(
                     OptionRow(
                         checked = fullStream,
                         label = if (forceStream) {
-                            "全量流式：存在超大字段，必须重跑 SQL 按游标取完整内容"
+                            t(Str.ExportFullStreamRequired)
                         } else {
-                            "全量流式：重跑 SQL，游标逐行导出（不受 ${request.rowCount} 行限制）"
+                            t(Str.ExportFullStream, request.rowCount)
                         },
                         onCheckedChange = { if (!forceStream) fullStream = it },
                         enabled = !forceStream,
@@ -141,10 +143,10 @@ fun ExportDialog(
                         fullStream,
                     )
                 },
-            ) { Text("导出…") }
+            ) { Text(t(Str.ExportAction)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }

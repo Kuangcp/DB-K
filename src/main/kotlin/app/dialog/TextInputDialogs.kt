@@ -24,10 +24,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
+import app.i18n.t
+import app.i18n.tn
 import app.state.ConfirmRequest
 import app.state.ConsoleRenameRequest
 import app.state.FolderDialogRequest
 import db.FolderRow
+import i18n.Str
 
 /**
  * 单行输入弹窗的 Enter 提交处理：Enter / 数字键盘 Enter 等同于点「确定」（空白时忽略）。
@@ -56,18 +59,17 @@ fun ConsoleNameDialog(
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isCreate) "新建控制台" else "重命名控制台") },
+        title = { Text(t(if (isCreate) Str.ConsoleCreateTitle else Str.ConsoleRenameTitle)) },
         text = {
             Column {
                 Text(
-                    if (isCreate) "控制台绑定一个 SQL 文件，同一数据源可建多个控制台分别工作。"
-                    else "控制台对应一个 SQL 文件，改名不影响内容。",
+                    t(if (isCreate) Str.ConsoleCreateHint else Str.ConsoleRenameHint),
                     style = MaterialTheme.typography.body2,
                 )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("名称") },
+                    label = { Text(t(Str.CommonName)) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -78,10 +80,10 @@ fun ConsoleNameDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text("确定") }
+            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text(t(Str.CommonOk)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }
@@ -102,17 +104,17 @@ fun FolderNameDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isCreate) "新建文件夹" else "重命名文件夹") },
+        title = { Text(t(if (isCreate) Str.FolderCreateTitle else Str.FolderRenameTitle)) },
         text = {
             Column {
                 Text(
-                    if (isCreate) "文件夹用于分组管理连接档案，可再拖入任意数量连接。" else "输入新的文件夹名称：",
+                    t(if (isCreate) Str.FolderCreateHint else Str.FolderRenameHint),
                     style = MaterialTheme.typography.body2,
                 )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("名称") },
+                    label = { Text(t(Str.CommonName)) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -123,10 +125,10 @@ fun FolderNameDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text("确定") }
+            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text(t(Str.CommonOk)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }
@@ -141,38 +143,49 @@ fun ConfirmDialog(
     val (title, message) = when (request) {
         is ConfirmRequest.DeleteFolder -> {
             val parts = mutableListOf<String>()
-            if (request.movingConnections > 0) parts.add("${request.movingConnections} 个连接将移至「未分组」")
-            if (request.childFolders > 0) parts.add("${request.childFolders} 个子文件夹将上移到上一级")
-            val note = when {
-                parts.isNotEmpty() -> "\n\n" + parts.joinToString("，") + "（不会删除这些内容）。"
-                else -> "\n\n该文件夹为空。"
+            if (request.movingConnections > 0) {
+                parts += tn(
+                    Str.ConfirmFolderMovedConnectionsOne,
+                    Str.ConfirmFolderMovedConnectionsOther,
+                    request.movingConnections,
+                )
             }
-            "删除文件夹" to "确定删除文件夹「${request.name}」吗？$note"
+            if (request.childFolders > 0) {
+                parts += tn(
+                    Str.ConfirmFolderMovedFoldersOne,
+                    Str.ConfirmFolderMovedFoldersOther,
+                    request.childFolders,
+                )
+            }
+            val note = if (parts.isNotEmpty()) {
+                t(Str.ConfirmFolderNoteKeep, parts.joinToString(t(Str.CommonListSeparator)))
+            } else {
+                t(Str.ConfirmFolderEmpty)
+            }
+            t(Str.ConfirmDeleteFolderTitle) to t(Str.ConfirmDeleteFolderMessage, request.name, note)
         }
         is ConfirmRequest.DeleteConnection -> {
-            "删除连接" to "确定删除连接「${request.name}」吗？\n\n仅删除本机保存的连接档案，不影响远端数据库。"
+            t(Str.ConfirmDeleteConnectionTitle) to t(Str.ConfirmDeleteConnectionMessage, request.name)
         }
         is ConfirmRequest.DeleteConsole -> {
-            "删除控制台" to "确定删除控制台「${request.name}」（数据源：${request.connectionName}）吗？\n\n其绑定的 SQL 文件将一并删除，不可恢复。"
+            t(Str.ConfirmDeleteConsoleTitle) to
+                t(Str.ConfirmDeleteConsoleMessage, request.name, request.connectionName)
         }
         is ConfirmRequest.DiscardResultEdits -> {
-            "未提交的修改" to
-                "有 ${request.count} 处修改尚未提交，${request.actionLabel}将丢失这些修改。\n\n确定继续吗？"
+            t(Str.ConfirmDiscardTitle) to t(Str.ConfirmDiscardMessage, request.count, t(request.action))
         }
         is ConfirmRequest.DeleteRows -> {
-            "批量删除行" to
-                "已标记删除的行将达 ${request.count} 行，提交时这些行会从数据库删除且不可恢复。\n\n确定继续标记吗？"
+            t(Str.ConfirmDeleteRowsTitle) to t(Str.ConfirmDeleteRowsMessage, request.count)
         }
         is ConfirmRequest.DangerConfirm -> {
-            "危险命令确认" to
-                "即将执行「${request.command}」，该命令可能清空数据或中断服务且不可恢复。\n\n确定继续吗？"
+            t(Str.ConfirmDangerTitle) to t(Str.ConfirmDangerMessage, request.command)
         }
     }
     val confirmLabel = when (request) {
-        is ConfirmRequest.DiscardResultEdits -> "继续"
-        is ConfirmRequest.DeleteRows -> "继续"
-        is ConfirmRequest.DangerConfirm -> "执行"
-        else -> "删除"
+        is ConfirmRequest.DiscardResultEdits -> t(Str.CommonContinue)
+        is ConfirmRequest.DeleteRows -> t(Str.CommonContinue)
+        is ConfirmRequest.DangerConfirm -> t(Str.CommonExecute)
+        else -> t(Str.CommonDelete)
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -184,7 +197,7 @@ fun ConfirmDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }

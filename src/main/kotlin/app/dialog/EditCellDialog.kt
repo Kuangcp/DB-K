@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import jdbc.CellValue
+import i18n.I18n
+import i18n.Str
 
 /** 按初始内容估算弹窗尺寸：宽度按最长行，高度按行数；夹在合理区间内，超长时才出滚动条。 */
 private fun dialogSizeFor(initial: String?): DpSize {
@@ -98,7 +100,7 @@ fun EditCellDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = isNull, onCheckedChange = { isNull = it })
                 Text(
-                    "设为 NULL（与空串不同）",
+                    I18n.t(Str.EditCellSetNull),
                     style = MaterialTheme.typography.body2,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
                 )
@@ -133,7 +135,7 @@ fun EditCellDialog(
                 }
             }
             Text(
-                "Ctrl+Enter 提交 · Esc 取消 · Enter 换行",
+                I18n.t(Str.EditCellHint),
                 style = MaterialTheme.typography.caption,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                 modifier = Modifier.padding(top = 6.dp),
@@ -143,8 +145,8 @@ fun EditCellDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = commit) { Text("确定") }
-                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(onClick = commit) { Text(I18n.t(Str.CommonOk)) }
+                TextButton(onClick = onDismiss) { Text(I18n.t(Str.CommonCancel)) }
             }
         }
     }

@@ -1,5 +1,7 @@
 package app.settings
 
+import i18n.Str
+
 /**
  * 可识别的物理键（快捷键绑定的原子单位）。
  *
@@ -162,10 +164,10 @@ data class KeyChord(
 }
 
 /** 命令的作用域：决定由哪个拦截点处理，也是冲突检测的分组依据（跨作用域允许同键）。 */
-enum class ShortcutScope(val label: String) {
-    EDITOR("编辑器"),
-    WINDOW("窗口"),
-    RESULT("结果区"),
+enum class ShortcutScope(val labelKey: Str) {
+    EDITOR(Str.ShortcutScopeEditor),
+    WINDOW(Str.ShortcutScopeWindow),
+    RESULT(Str.ShortcutScopeResult),
 }
 
 /**
@@ -179,28 +181,28 @@ enum class ShortcutScope(val label: String) {
  */
 enum class ShortcutCommand(
     val id: String,
-    val label: String,
+    val labelKey: Str,
     val configurable: Boolean,
     val scope: ShortcutScope,
     val defaultChords: List<KeyChord>,
 ) {
     // ── 可配置：扩展业务功能 ──
-    EXECUTE("execute", "执行选中 SQL", true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.ENTER))),
-    FORMAT_SQL("formatSql", "格式化 SQL", true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, alt = true, key = ShortcutKey.L))),
-    VIEW_DDL("viewDdl", "查看对象定义", true, ShortcutScope.WINDOW, listOf(chord(ctrl = true, key = ShortcutKey.Q))),
-    TOGGLE_RESULTS("toggleResults", "显示/隐藏结果区", true, ShortcutScope.WINDOW, listOf(chord(alt = true, key = ShortcutKey.D))),
-    TRANSPOSE("transpose", "行列转置", true, ShortcutScope.RESULT, listOf(chord(ctrl = true, key = ShortcutKey.T))),
-    REFRESH_RESULT("refreshResult", "刷新结果", true, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.F5))),
+    EXECUTE("execute", Str.CmdExecute, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.ENTER))),
+    FORMAT_SQL("formatSql", Str.CmdFormatSql, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, alt = true, key = ShortcutKey.L))),
+    VIEW_DDL("viewDdl", Str.CmdViewDdl, true, ShortcutScope.WINDOW, listOf(chord(ctrl = true, key = ShortcutKey.Q))),
+    TOGGLE_RESULTS("toggleResults", Str.CmdToggleResults, true, ShortcutScope.WINDOW, listOf(chord(alt = true, key = ShortcutKey.D))),
+    TRANSPOSE("transpose", Str.CmdTranspose, true, ShortcutScope.RESULT, listOf(chord(ctrl = true, key = ShortcutKey.T))),
+    REFRESH_RESULT("refreshResult", Str.CmdRefreshResult, true, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.F5))),
 
     // ── 固定：基础编辑键（登记、消字面量，不进设置） ──
-    SAVE_CONSOLE("saveConsole", "保存控制台", false, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.S))),
+    SAVE_CONSOLE("saveConsole", Str.CmdSaveConsole, false, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.S))),
     FIND_REPLACE(
-        "findReplace", "查找替换", false, ShortcutScope.EDITOR,
+        "findReplace", Str.CmdFindReplace, false, ShortcutScope.EDITOR,
         listOf(chord(ctrl = true, key = ShortcutKey.F), chord(ctrl = true, key = ShortcutKey.H)),
     ),
-    COMPLETE("complete", "召唤补全", false, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.SPACE))),
-    COPY_CELL("copyCell", "复制单元格", false, ShortcutScope.RESULT, listOf(chord(ctrl = true, key = ShortcutKey.C))),
-    CANCEL_RUN("cancelRun", "取消执行", false, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.ESCAPE))),
+    COMPLETE("complete", Str.CmdComplete, false, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.SPACE))),
+    COPY_CELL("copyCell", Str.CmdCopyCell, false, ShortcutScope.RESULT, listOf(chord(ctrl = true, key = ShortcutKey.C))),
+    CANCEL_RUN("cancelRun", Str.CmdCancelRun, false, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.ESCAPE))),
     ;
 
     companion object {

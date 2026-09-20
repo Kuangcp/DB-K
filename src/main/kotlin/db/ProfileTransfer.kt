@@ -10,6 +10,8 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
+import i18n.I18n
+import i18n.Str
 
 /**
  * 连接档案导出 / 导入（换机迁移、备份）。
@@ -99,7 +101,7 @@ object ProfileTransfer {
     fun decode(text: String): ProfileBundle {
         val dto = json.decodeFromString(BundleDto.serializer(), text)
         require(dto.formatVersion <= FORMAT_VERSION) {
-            "档案文件版本 ${dto.formatVersion} 高于当前支持的 $FORMAT_VERSION，请升级 db-k"
+            I18n.t(Str.TransferFormatTooNew, dto.formatVersion, FORMAT_VERSION)
         }
         val folders = dto.folders.map { FolderRow(id = it.id, name = it.name, parentId = it.parentId, sortOrder = it.sortOrder) }
         val folderIds = folders.map { it.id }.toSet()
@@ -163,7 +165,7 @@ object ProfileTransfer {
 
     /** 加密任意文本，返回带前缀的 Base64 密文串。 */
     fun encrypt(plain: String, passphrase: String): String {
-        require(passphrase.isNotBlank()) { "加密口令不能为空" }
+        require(passphrase.isNotBlank()) { I18n.t(Str.TransferPassphraseEmpty) }
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
         val iv = ByteArray(IV_BYTES).also(random::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -177,10 +179,10 @@ object ProfileTransfer {
      * @throws IllegalArgumentException 非加密内容 / 口令错误 / 文件损坏。
      */
     fun decrypt(envelope: String, passphrase: String): String {
-        require(isEncrypted(envelope)) { "不是 db-k 加密文件" }
+        require(isEncrypted(envelope)) { I18n.t(Str.TransferNotEncryptedFile) }
         return try {
             val raw = Base64.getDecoder().decode(envelope.removePrefix(ENCRYPTED_PREFIX))
-            require(raw.size > SALT_BYTES + IV_BYTES) { "加密内容过短" }
+            require(raw.size > SALT_BYTES + IV_BYTES) { I18n.t(Str.TransferEncryptedTooShort) }
             val salt = raw.copyOfRange(0, SALT_BYTES)
             val iv = raw.copyOfRange(SALT_BYTES, SALT_BYTES + IV_BYTES)
             val ct = raw.copyOfRange(SALT_BYTES + IV_BYTES, raw.size)
@@ -188,7 +190,7 @@ object ProfileTransfer {
             cipher.init(Cipher.DECRYPT_MODE, deriveKey(passphrase, salt), GCMParameterSpec(GCM_TAG_BITS, iv))
             String(cipher.doFinal(ct), Charsets.UTF_8)
         } catch (e: Exception) {
-            throw IllegalArgumentException("口令错误或文件已损坏", e)
+            throw IllegalArgumentException(I18n.t(Str.MainPassphraseWrong), e)
         }
     }
 

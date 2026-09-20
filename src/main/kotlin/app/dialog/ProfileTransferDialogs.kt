@@ -26,8 +26,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.i18n.t
 import app.state.ImportConflictRequest
 import app.state.PassphraseRequest
+import i18n.Str
 
 /**
  * 导出加密 / 导入解密的口令弹窗。
@@ -59,7 +61,7 @@ fun PassphraseDialog(
                 OutlinedTextField(
                     value = passphrase,
                     onValueChange = { passphrase = it; error = null },
-                    label = { Text("口令") },
+                    label = { Text(t(Str.TransferPassphrase)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier
@@ -71,7 +73,7 @@ fun PassphraseDialog(
                     OutlinedTextField(
                         value = confirm,
                         onValueChange = { confirm = it; error = null },
-                        label = { Text("确认口令") },
+                        label = { Text(t(Str.TransferConfirmPassphrase)) },
                         singleLine = true,
                         isError = mismatch,
                         visualTransformation = PasswordVisualTransformation(),
@@ -82,7 +84,7 @@ fun PassphraseDialog(
                     )
                     if (mismatch) {
                         Text(
-                            "两次输入的口令不一致",
+                            t(Str.TransferPassphraseMismatch),
                             color = MaterialTheme.colors.error,
                             fontSize = 12.sp,
                             modifier = Modifier.padding(top = 4.dp),
@@ -103,7 +105,7 @@ fun PassphraseDialog(
             TextButton(enabled = canSubmit, onClick = submit) { Text(request.confirmLabel) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }
@@ -124,22 +126,22 @@ fun ImportConflictDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("存在同名数据源") },
+        title = { Text(t(Str.TransferConflictTitle)) },
         text = {
             Column {
                 Text(
-                    "导入的 ${request.conflicts.size} 个数据源与现有数据源同名。请逐项选择处理方式。",
+                    t(Str.TransferConflictMessage, request.conflicts.size),
                     style = MaterialTheme.typography.body2,
                 )
                 Row(modifier = Modifier.padding(top = 6.dp)) {
                     TextButton(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         onClick = { choices = choices.mapValues { false } },
-                    ) { Text("全部跳过", fontSize = 12.sp) }
+                    ) { Text(t(Str.TransferSkipAll), fontSize = 12.sp) }
                     TextButton(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         onClick = { choices = choices.mapValues { true } },
-                    ) { Text("全部新建", fontSize = 12.sp) }
+                    ) { Text(t(Str.TransferCreateAll), fontSize = 12.sp) }
                 }
                 Column(
                     modifier = Modifier
@@ -159,19 +161,19 @@ fun ImportConflictDialog(
                                 color = MaterialTheme.colors.onSurface,
                                 modifier = Modifier.weight(1f),
                             )
-                            ToggleText("跳过", selected = !asNew) { choices = choices + (c.id to false) }
+                            ToggleText(t(Str.TransferSkip), selected = !asNew) { choices = choices + (c.id to false) }
                             Spacer(Modifier.width(4.dp))
-                            ToggleText("新建", selected = asNew) { choices = choices + (c.id to true) }
+                            ToggleText(t(Str.TransferCreate), selected = asNew) { choices = choices + (c.id to true) }
                         }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { request.onSubmit(choices); onDismiss() }) { Text("确定") }
+            TextButton(onClick = { request.onSubmit(choices); onDismiss() }) { Text(t(Str.CommonOk)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }

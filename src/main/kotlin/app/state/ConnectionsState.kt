@@ -10,6 +10,8 @@ import db.ColumnCache
 import db.ConnectionProfile
 import db.MetaCache
 import engine.DataSourceSession
+import i18n.I18n
+import i18n.Str
 import engine.model.ColumnMeta
 import engine.model.ObjectKind
 import engine.model.ObjectSearch
@@ -27,15 +29,15 @@ import java.sql.SQLException
 
 /** 把异常压成一行可读短消息（供状态栏/弹层展示）。 */
 internal fun friendlySqlError(t: Throwable?): String {
-    val cause = t ?: return "未知错误"
+    val cause = t ?: return I18n.t(Str.ConnectionUnknownError)
     // 连接中断：读操作已自动重试，写操作不重试（可能已执行）但连接已重建，提示用户重试
-    if (isConnectionLost(cause)) return "连接已中断，已尝试自动重连，请重试执行"
+    if (isConnectionLost(cause)) return I18n.t(Str.ConnectionLost)
     val root = generateSequence(cause) { it.cause }.last()
     return when (root) {
         is SQLException -> {
-            val detail = root.message ?: "数据库错误"
+            val detail = root.message ?: I18n.t(Str.ConnectionDbError)
             val short = detail.lineSequence().first().take(180)
-            if (root.errorCode != 0) "错误码 ${root.errorCode}: $short" else short
+            if (root.errorCode != 0) I18n.t(Str.ConnectionErrorCode, root.errorCode, short) else short
         }
         else -> (root.message ?: root.javaClass.simpleName).take(180)
     }
@@ -479,7 +481,7 @@ class ConnectionsState(
         }.fold(
             onSuccess = { ddl ->
                 if (ddl.isNullOrBlank()) {
-                    Result.failure(IllegalStateException("未获取到定义（对象可能不存在，或当前账号无权限）"))
+                    Result.failure(IllegalStateException(I18n.t(Str.DdlFetchFailed)))
                 } else {
                     Result.success(ddl)
                 }
@@ -607,7 +609,7 @@ class ConnectionsState(
             null
         } else {
             // 带上根因（如 ES 403 缺权限），否则树/状态栏只有一句“加载失败”无从排查
-            "对象加载失败：${failed.joinToString("、").take(40)}：${reasons.first().take(160)}"
+            I18n.t(Str.ObjectsLoadFailed, failed.joinToString(I18n.t(Str.CommonListSeparator)).take(40), reasons.first().take(160))
         }
         return Triple(schemas, objects, warn)
     }

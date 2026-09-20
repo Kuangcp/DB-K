@@ -2,6 +2,9 @@ package jdbc
 
 import engine.model.QueryColumn
 import engine.model.QueryResult
+import i18n.I18n
+import i18n.Lang
+import i18n.Str
 import org.tinylog.Logger
 import java.sql.Connection
 import java.sql.ResultSet
@@ -31,10 +34,17 @@ object QueryExecutor {
     const val MAX_CELL_BYTES = 1_000_000
 
     /** 单元格因超限被截断时追加的后缀标记（可被 [isTruncatedCell] 识别）。 */
-    const val CELL_TRUNCATION_MARKER = "…【db-k：内容过大已截断】"
+    val CELL_TRUNCATION_MARKER: String get() = I18n.t(Str.CellTruncationMarker)
+
+    /** 两种语言的截断标记——跨语言/历史结果都要能识别。 */
+    private val TRUNCATION_MARKERS: List<String>
+        get() = listOf(
+            I18n.t(Lang.ZH, Str.CellTruncationMarker),
+            I18n.t(Lang.EN, Str.CellTruncationMarker),
+        )
 
     /** 该单元格值是否为被截断的显示值（截断后禁止就地编辑，避免把截断内容写回库）。 */
-    fun isTruncatedCell(v: String?): Boolean = v != null && v.endsWith(CELL_TRUNCATION_MARKER)
+    fun isTruncatedCell(v: String?): Boolean = v != null && TRUNCATION_MARKERS.any { v.endsWith(it) }
 
     /** 可产生结果集的语句首关键字。 */
     private val QUERY_HEADS = setOf("select", "with", "show", "explain", "desc", "describe", "pragma", "table", "values")

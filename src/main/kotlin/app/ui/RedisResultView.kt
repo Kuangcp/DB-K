@@ -54,11 +54,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.dialog.CellViewerDialog
 import app.dialog.viewerScrollbarStyle
+import app.i18n.t
 import app.state.ConsoleRunUi
 import app.state.RedisKeyMeta
 import app.state.StatementOutcome
 import engine.model.QueryColumn
 import engine.model.QueryResult
+import i18n.I18n
+import i18n.Str
 import redis.RedisProtocol
 
 /**
@@ -143,7 +146,7 @@ private fun RedisResultToolbar(
         }
         if (run.executing) {
             CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
-            Text(" 执行中…", fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
+            Text(t(Str.EditorRunning), fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
         } else if (run.error == null && result != null) {
             Text(
                 redisMetaText(result),
@@ -156,20 +159,20 @@ private fun RedisResultToolbar(
         if (run.executing) {
             RedisIconButton(
                 icon = DbIcons.Stop,
-                description = "取消执行 (Esc)",
+                description = t(Str.ResultCancel),
                 danger = true,
                 onClick = onCancelRun,
             )
         } else {
             RedisIconButton(
                 icon = DbIcons.Refresh,
-                description = "刷新 (F5)",
+                description = t(Str.ResultRefresh),
                 enabled = result != null,
                 onClick = onRefreshResult,
             )
             RedisIconButton(
                 icon = DbIcons.Download,
-                description = "导出结果（CSV / JSON / SQL INSERT / Excel）",
+                description = t(Str.ResultExport),
                 enabled = result != null && result.isQuery && result.rowCount > 0,
                 onClick = onExport,
             )
@@ -186,8 +189,8 @@ private fun RedisOutcomeChip(index: Int, outcome: StatementOutcome, active: Bool
     }
     val suffix = when {
         !outcome.ok -> " ✕"
-        outcome.isQuery -> " · ${outcome.result?.rowCount ?: 0} 行"
-        else -> " · ${outcome.result?.affectedRows ?: 0} 行"
+        outcome.isQuery -> t(Str.ResultRowSuffix, outcome.result?.rowCount ?: 0)
+        else -> t(Str.ResultRowSuffix, outcome.result?.affectedRows ?: 0)
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -201,7 +204,7 @@ private fun RedisOutcomeChip(index: Int, outcome: StatementOutcome, active: Bool
         Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(dot))
         Spacer(Modifier.width(5.dp))
         Text(
-            "结果 ${index + 1}",
+            t(Str.ResultTabLabel, index + 1),
             fontSize = 11.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
             color = if (active) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
@@ -259,14 +262,14 @@ private fun RedisResultPane(
         val result = run.result
         val error = run.error
         when {
-            run.executing -> RedisCenteredHint("执行中…")
+            run.executing -> RedisCenteredHint(t(Str.RedisRunning))
             error != null -> RedisCenteredHint(error, isError = true)
             result == null -> RedisCenteredHint(
-                "双击左侧 Redis 键直接查看值，或在控制台执行 Redis 命令",
+                t(Str.RedisHint),
             )
             result.affectedRows != null -> RedisCenteredHint(
-                if (result.affectedRows == 0) "命令执行成功"
-                else "命令执行成功（影响 ${result.affectedRows} 行）",
+                if (result.affectedRows == 0) t(Str.RedisCommandOk)
+                else t(Str.RedisCommandOkRows, result.affectedRows),
             )
             else -> {
                 val cmd = RedisProtocol.tokenize(result.sql).firstOrNull()?.uppercase()
@@ -342,7 +345,7 @@ private fun RedisKeyHeader(meta: RedisKeyMeta?, sql: String) {
 @Composable
 private fun CopyTextButton(text: String, label: String, onCopyText: (String, String) -> Unit) {
     Text(
-        "复制",
+        t(Str.ViewerCopy),
         fontSize = 10.5.sp,
         color = MaterialTheme.colors.primary,
         modifier = Modifier
@@ -370,7 +373,7 @@ private fun RedisScalarView(
     onCopyText: (String, String) -> Unit,
 ) {
     val value = result.rows.firstOrNull()?.firstOrNull() ?: ""
-    val title = meta?.let { "值 · ${it.key}" } ?: "Redis 值"
+    val title = meta?.let { t(Str.RedisValueTitle, it.key) } ?: t(Str.RedisValue)
     Column(modifier = Modifier.fillMaxSize()) {
         RedisKeyHeader(meta, result.sql)
         Row(
@@ -378,12 +381,12 @@ private fun RedisScalarView(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
         ) {
             Text(
-                "双击查看大段内容 / JSON",
+                t(Str.RedisDoubleClickHint),
                 fontSize = 10.5.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
                 modifier = Modifier.weight(1f),
             )
-            CopyTextButton(value, "已复制值", onCopyText)
+            CopyTextButton(value, t(Str.RedisCopiedValue), onCopyText)
         }
         Box(
             modifier = Modifier
@@ -421,8 +424,8 @@ private fun RedisKvView(
         meta = meta,
         onOpenCell = onOpenCell,
         onCopyText = onCopyText,
-        labelHeader = "字段",
-        valueHeader = "值",
+        labelHeader = t(Str.RedisField),
+        valueHeader = t(Str.RedisValueHeader),
         labelOf = { _, row -> row.getOrNull(0) ?: "" },
         valueOf = { _, row -> row.getOrNull(1) },
     )
@@ -442,7 +445,7 @@ private fun RedisMembersView(
         onOpenCell = onOpenCell,
         onCopyText = onCopyText,
         labelHeader = "#",
-        valueHeader = "成员",
+        valueHeader = t(Str.RedisMember),
         labelOf = { i, _ -> (i + 1).toString() },
         valueOf = { _, row -> row.firstOrNull() },
     )
@@ -568,7 +571,7 @@ private fun RedisTwoColumnRows(
                                 modifier = Modifier.padding(end = 8.dp),
                             )
                         }
-                        CopyTextButton(value, "已复制值", onCopyText)
+                        CopyTextButton(value, t(Str.RedisCopiedValue), onCopyText)
                     }
                 }
             }
@@ -653,8 +656,9 @@ private fun RedisTextFallback(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            CopyTextButton(text, "已复制结果", onCopyText)
+            CopyTextButton(text, t(Str.RedisCopiedResult), onCopyText)
         }
+        val resultTitle = t(Str.RedisResultTitle, result.sql)
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -662,7 +666,7 @@ private fun RedisTextFallback(
                 .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(MaterialTheme.colors.onSurface.copy(alpha = 0.04f))
-                .onDoubleClick { onOpenCell("结果 · ${result.sql}", text) }
+                .onDoubleClick { onOpenCell(resultTitle, text) }
                 .verticalScroll(rememberScrollState())
                 .horizontalScroll(rememberScrollState())
                 .padding(8.dp),
@@ -693,15 +697,15 @@ private fun RedisCenteredHint(text: String, isError: Boolean = false) {
 private fun redisMetaText(result: QueryResult): String {
     val ms = "${result.durationMs} ms"
     return when {
-        result.affectedRows != null -> "已执行 · $ms"
-        result.rowCount == 0 -> "查询完成 · 0 行 · $ms"
-        result.rowCount == 1 && result.columns.size == 1 -> "1 个值 · $ms"
-        else -> "${result.columns.size} 列 × ${result.rowCount} 行 · $ms"
+        result.affectedRows != null -> I18n.t(Str.RedisExecuted, ms)
+        result.rowCount == 0 -> I18n.t(Str.ResultQueryZero, ms)
+        result.rowCount == 1 && result.columns.size == 1 -> I18n.t(Str.RedisOneValue, ms)
+        else -> I18n.t(Str.ResultColsRows, result.columns.size, result.rowCount, "", ms)
     }
 }
 
 private fun redisTtlLabel(seconds: Long?): String = when {
-    seconds == null || seconds < 0 -> "永久"
+    seconds == null || seconds < 0 -> I18n.t(Str.TreeTtlForever)
     seconds < 60 -> "${seconds}s"
     seconds < 3600 -> "${seconds / 60}m"
     seconds < 86400 -> "${seconds / 3600}h"

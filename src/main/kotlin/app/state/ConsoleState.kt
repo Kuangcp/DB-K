@@ -17,6 +17,8 @@ import db.SqlHistoryRow
 import engine.Protocol
 import engine.model.QueryColumn
 import engine.model.QueryResult
+import i18n.I18n
+import i18n.Str
 import engine.model.SchemaMeta
 import jdbc.CellValue
 import jdbc.DialectRegistry
@@ -322,32 +324,32 @@ class ConsoleState(
      * 失败保留 overlay，返回可读错误（由 UI Toast 展示）。
      */
     suspend fun commitEdits(console: ConsoleRecord, profile: db.ConnectionProfile): Result<Int> {
-        val ui = runSlots[console.id] ?: return Result.failure(IllegalStateException("没有可提交的结果"))
-        if (ui.executing || resultBusyOf(console.id)) return Result.failure(IllegalStateException("正在执行，稍后再提交"))
-        val result = ui.result ?: return Result.failure(IllegalStateException("没有可提交的结果"))
-        val plan = editPlanOf(console.id) ?: return Result.failure(IllegalStateException("当前结果不可编辑"))
+        val ui = runSlots[console.id] ?: return Result.failure(IllegalStateException(I18n.t(Str.ConsoleNoResult)))
+        if (ui.executing || resultBusyOf(console.id)) return Result.failure(IllegalStateException(I18n.t(Str.ConsoleRunning)))
+        val result = ui.result ?: return Result.failure(IllegalStateException(I18n.t(Str.ConsoleNoResult)))
+        val plan = editPlanOf(console.id) ?: return Result.failure(IllegalStateException(I18n.t(Str.ConsoleNotEditable)))
         val edits = editsOf(console.id)
         if (edits.isEmpty) return Result.success(0)
         // 待插入行必须至少填一个可编辑列，否则无法生成 INSERT（不能静默丢弃）
         val blankInserts = edits.inserts.count { !edits.insertHasValues(plan, it) }
         if (blankInserts > 0) {
-            return Result.failure(IllegalStateException("有 $blankInserts 个待插入行未填写任何值"))
+            return Result.failure(IllegalStateException(I18n.t(Str.ConsoleBlankInserts, blankInserts)))
         }
         val ops = buildWriteOps(result, plan, edits)
-        if (ops.isEmpty()) return Result.failure(IllegalStateException("没有可提交的修改"))
+        if (ops.isEmpty()) return Result.failure(IllegalStateException(I18n.t(Str.ConsoleNoChanges)))
 
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             connectionsState.ensureConnectionReady(profile)
         }
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             return Result.failure(
-                IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: "连接不可用"),
+                IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: I18n.t(Str.ConsoleConnectionUnavailable)),
             )
         }
         val session = connectionsState.sessionOf(profile.id)
-            ?: return Result.failure(IllegalStateException("连接已断开"))
+            ?: return Result.failure(IllegalStateException(I18n.t(Str.ConsoleConnectionClosed)))
         if (session !is jdbc.EditableSession || !session.capabilities.editableResult) {
-            return Result.failure(IllegalStateException("当前数据源不支持写回"))
+            return Result.failure(IllegalStateException(I18n.t(Str.ConsoleWriteNotSupported)))
         }
         val dialect = DialectRegistry.forProfile(profile)
         val contextSql = sessionContextSqlFor(console, profile)
@@ -460,18 +462,18 @@ class ConsoleState(
      * 原查询无 ORDER BY 时由 UI 提示「顺序不保证」。
      */
     suspend fun fetchMore(console: ConsoleRecord, profile: db.ConnectionProfile): Result<Int> {
-        val ui = runSlots[console.id] ?: return Result.failure(IllegalStateException("没有可追加的结果"))
+        val ui = runSlots[console.id] ?: return Result.failure(IllegalStateException(I18n.t(Str.AppendNoResult)))
         if (ui.executing || resultBusyOf(console.id)) {
-            return Result.failure(IllegalStateException("正在执行，稍后再试"))
+            return Result.failure(IllegalStateException(I18n.t(Str.AppendRunning)))
         }
         val idx = ui.activeIndex
-        val outcome = ui.outcomes.getOrNull(idx) ?: return Result.failure(IllegalStateException("没有可追加的结果"))
-        val result = outcome.result ?: return Result.failure(IllegalStateException("没有可追加的结果"))
-        if (!result.isQuery) return Result.failure(IllegalStateException("当前结果不是查询"))
+        val outcome = ui.outcomes.getOrNull(idx) ?: return Result.failure(IllegalStateException(I18n.t(Str.AppendNoResult)))
+        val result = outcome.result ?: return Result.failure(IllegalStateException(I18n.t(Str.AppendNoResult)))
+        if (!result.isQuery) return Result.failure(IllegalStateException(I18n.t(Str.AppendNotQuery)))
         val baseSql = outcome.sql.trim().trimEnd(';').trim()
-        if (baseSql.isEmpty()) return Result.failure(IllegalStateException("原语句为空，无法取更多"))
+        if (baseSql.isEmpty()) return Result.failure(IllegalStateException(I18n.t(Str.AppendEmptySql)))
         if (sqlHasPaginationClause(baseSql) && profile.dbType.protocol == Protocol.JDBC) {
-            return Result.failure(IllegalStateException("原查询已含分页子句，无法取更多"))
+            return Result.failure(IllegalStateException(I18n.t(Str.AppendHasPaging)))
         }
 
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
@@ -479,13 +481,13 @@ class ConsoleState(
         }
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             return Result.failure(
-                IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: "连接不可用"),
+                IllegalStateException(connectionsState.statusMessageOf(profile.id) ?: I18n.t(Str.ConsoleConnectionUnavailable)),
             )
         }
         val session = connectionsState.sessionOf(profile.id)
-            ?: return Result.failure(IllegalStateException("连接已断开"))
+            ?: return Result.failure(IllegalStateException(I18n.t(Str.ConsoleConnectionClosed)))
         val pageSql = session.paginate(baseSql, result.rows.size.toLong(), FETCH_MORE_PAGE)
-            ?: return Result.failure(IllegalStateException("当前数据源不支持「取更多」"))
+            ?: return Result.failure(IllegalStateException(I18n.t(Str.AppendNotSupported)))
         val contextSql = sessionContextSqlFor(console, profile)
 
         resultBusy[console.id] = true
@@ -497,7 +499,7 @@ class ConsoleState(
         return fetched.fold(
             onSuccess = { page ->
                 if (!page.isQuery) {
-                    Result.failure(IllegalStateException("取更多未返回结果集"))
+                    Result.failure(IllegalStateException(I18n.t(Str.AppendNoResultSet)))
                 } else {
                     val merged = result.copy(
                         rows = result.rows + page.rows,
@@ -550,7 +552,7 @@ class ConsoleState(
                 setClosedFlag(any.id, false)
                 findConsole(any.id) ?: any
             } else {
-                createConsole(profileId, "控制台 1")
+                createConsole(profileId, I18n.t(Str.ConsoleDefaultName, 1))
             }
         }
         activate(chosen)
@@ -825,14 +827,14 @@ class ConsoleState(
         val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
         if (target.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(sql = "", error = "请输入要执行的 SQL")),
+                outcomes = listOf(StatementOutcome(sql = "", error = I18n.t(Str.RunEnterSql))),
             )
             return
         }
         val statements = SessionFactory.splitStatements(profile, target)
         if (statements.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(sql = target, error = "没有可执行的 SQL（选中内容全是注释/空白）")),
+                outcomes = listOf(StatementOutcome(sql = target, error = I18n.t(Str.RunOnlyComments))),
             )
             return
         }
@@ -844,7 +846,7 @@ class ConsoleState(
             runSlots[console.id] = ConsoleRunUi(
                 outcomes = listOf(StatementOutcome(
                     sql = target,
-                    error = connectionsState.statusMessageOf(profile.id) ?: "连接不可用",
+                    error = connectionsState.statusMessageOf(profile.id) ?: I18n.t(Str.ConsoleConnectionUnavailable),
                 )),
             )
             return
@@ -852,7 +854,7 @@ class ConsoleState(
         val session = connectionsState.sessionOf(profile.id)
         if (session == null) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(sql = target, error = "连接已断开")),
+                outcomes = listOf(StatementOutcome(sql = target, error = I18n.t(Str.ConsoleConnectionClosed))),
             )
             return
         }
@@ -871,7 +873,7 @@ class ConsoleState(
             // Redis 危险命令：执行前二次确认（由 UI 注入钩子）。
             val danger = if (session.protocol == Protocol.REDIS) RedisProtocol.dangerousCommand(stmt) else null
             if (danger != null && confirmDangerous?.invoke(danger) == false) {
-                outcomes += StatementOutcome(stmt, error = "已取消执行危险命令「$danger」")
+                outcomes += StatementOutcome(stmt, error = I18n.t(Str.RunDangerCancelled, danger))
                 break
             }
             val stmtStarted = System.currentTimeMillis()
@@ -940,7 +942,7 @@ class ConsoleState(
             val durationMs = startedAt?.let { System.currentTimeMillis() - it } ?: 0L
             recordHistory(
                 profileId = rec.connectionId, sql = sqlText, ok = false,
-                durationMs = durationMs, rowCount = 0, error = "已取消执行",
+                durationMs = durationMs, rowCount = 0, error = I18n.t(Str.ErrorCancelled),
             )
         }
         return hit

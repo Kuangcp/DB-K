@@ -2,6 +2,8 @@ package app.ui
 
 import java.security.MessageDigest
 import java.util.Base64
+import i18n.I18n
+import i18n.Str
 
 /**
  * 单元格内容工具（纯逻辑，便于单测）：MD5 摘要 / 内容当 Base64 图片解码 / 图片格式识别。
@@ -30,7 +32,7 @@ internal fun decodeBase64Bytes(content: String): ByteArray {
     val cleaned = content
         .substringAfter("base64,", content) // 有 data URI 前缀则取其后的纯数据部分
         .filterNot { it.isWhitespace() }
-    require(cleaned.isNotEmpty()) { "内容为空" }
+    require(cleaned.isNotEmpty()) { I18n.t(Str.ImageEmptyContent) }
 
     val candidates = buildList {
         add(cleaned)
@@ -48,7 +50,7 @@ internal fun decodeBase64Bytes(content: String): ByteArray {
             runCatching { d.decode(s) }.onSuccess { return it }
         }
     }
-    throw IllegalArgumentException("不是合法的 Base64 内容")
+    throw IllegalArgumentException(I18n.t(Str.ImageInvalidBase64))
 }
 
 /** 依据文件头识别图片格式（与解码结果无关，仅用于展示信息行）。 */

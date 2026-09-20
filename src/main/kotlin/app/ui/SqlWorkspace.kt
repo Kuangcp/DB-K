@@ -137,6 +137,8 @@ import app.settings.ShortcutCommand
 import app.dialog.CellViewerDialog
 import app.dialog.EditCellDialog
 import app.dialog.TextViewerDialog
+import app.i18n.LocalLang
+import app.i18n.t
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
@@ -144,6 +146,8 @@ import engine.EditorLanguage
 import engine.Protocol
 import engine.model.QueryResult
 import engine.model.SchemaMeta
+import i18n.I18n
+import i18n.Str
 import jdbc.CellValue
 import jdbc.QueryExecutor
 import tree.ConnUiStatus
@@ -196,7 +200,7 @@ fun WindowScope.SqlWorkspace(
     /** 数据源方言是否支持切换执行目标（SQLite 单文件不支持）。 */
     supportsTargetSwitch: Boolean,
     /** 执行目标切换器的标签（SQL = 「目标」；Redis DB = 「DB」）。 */
-    targetLabel: String = "目标",
+    targetLabel: String = I18n.t(Str.EditorTargetLabel),
     /** 是否显示「默认（连接库）」选项（Redis DB 不需要）。 */
     targetAllowDefault: Boolean = true,
     /** 激活控制台已选执行目标库/schema（"" = 连接默认）。 */
@@ -389,7 +393,7 @@ fun WindowScope.SqlWorkspace(
         if (profiles.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "还没有数据源。请在左侧新建连接档案，单击连接即可创建控制台开始写 SQL。",
+                    t(Str.EditorEmptyNoSource),
                     style = MaterialTheme.typography.body2,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
                     modifier = Modifier.padding(horizontal = 24.dp),
@@ -601,15 +605,15 @@ fun WindowScope.SqlWorkspace(
     }
     historyView?.let { row ->
         TextViewerDialog(
-            title = "历史 SQL",
+            title = t(Str.HistoryTitle),
             content = row.sqlText,
             onDismiss = { historyView = null },
             onCopy = onCopyText,
             highlightSql = true,
             subtitle = historyEntryMeta(row),
-            copyToast = "已复制历史 SQL",
+            copyToast = t(Str.HistoryCopied),
             extraAction = if (activeConsole != null) {
-                "插入到当前控制台" to {
+                t(Str.HistoryInsertCurrent) to {
                     onRequestInsert(row.sqlText)
                     historyView = null
                 }
@@ -692,7 +696,7 @@ private fun WindowScope.HeaderBar(
                     IconButton(onClick = onFormatSql, modifier = Modifier.size(28.dp)) {
                         Icon(
                             imageVector = DbIcons.Format,
-                            contentDescription = "格式化 SQL（Ctrl+Alt+L）",
+                            contentDescription = t(Str.EditorFormatSql),
                             tint = topBarIconTint,
                             modifier = Modifier.size(17.dp),
                         )
@@ -700,7 +704,7 @@ private fun WindowScope.HeaderBar(
                     IconButton(onClick = onOpenFindReplace, modifier = Modifier.size(28.dp)) {
                         Icon(
                             imageVector = DbIcons.FindReplace,
-                            contentDescription = "查找替换（Ctrl+F / Ctrl+H）",
+                            contentDescription = t(Str.EditorFindReplace),
                             tint = if (findOpen) MaterialTheme.colors.primary
                             else topBarIconTint,
                             modifier = Modifier.size(17.dp),
@@ -713,7 +717,7 @@ private fun WindowScope.HeaderBar(
                     IconButton(onClick = onToggleHistory, modifier = Modifier.size(28.dp)) {
                         Icon(
                             imageVector = DbIcons.History,
-                            contentDescription = if (historyOpen) "收起执行历史" else "打开执行历史",
+                            contentDescription = if (historyOpen) t(Str.EditorCollapseHistory) else t(Str.EditorOpenHistory),
                             tint = if (historyOpen) MaterialTheme.colors.primary
                             else topBarIconTint,
                             modifier = Modifier.size(17.dp),
@@ -723,7 +727,7 @@ private fun WindowScope.HeaderBar(
                 IconButton(onClick = onToggleTheme, modifier = Modifier.size(28.dp)) {
                     Icon(
                         imageVector = if (isDark) DbIcons.Sun else DbIcons.Moon,
-                        contentDescription = if (isDark) "切换浅色主题" else "切换深色主题",
+                        contentDescription = if (isDark) t(Str.EditorSwitchToLight) else t(Str.EditorSwitchToDark),
                         tint = topBarIconTint,
                         modifier = Modifier.size(17.dp),
                     )
@@ -731,7 +735,7 @@ private fun WindowScope.HeaderBar(
                 IconButton(onClick = onOpenSettings, modifier = Modifier.size(28.dp)) {
                     Icon(
                         imageVector = Icons.Filled.Settings,
-                        contentDescription = "设置",
+                        contentDescription = t(Str.SettingsTitle),
                         tint = topBarIconTint,
                         modifier = Modifier.size(17.dp),
                     )
@@ -744,7 +748,7 @@ private fun WindowScope.HeaderBar(
         ) {
             Icon(
                 imageVector = DbIcons.WindowMinimize,
-                contentDescription = "最小化",
+                contentDescription = t(Str.WindowMinimize),
                 tint = topBarIconTint,
                 modifier = Modifier.size(16.dp),
             )
@@ -761,7 +765,7 @@ private fun WindowScope.HeaderBar(
         ) {
             Icon(
                 imageVector = if (isWindowMaximized) DbIcons.WindowRestore else DbIcons.WindowMaximize,
-                contentDescription = if (isWindowMaximized) "还原" else "最大化",
+                contentDescription = if (isWindowMaximized) t(Str.WindowRestore) else t(Str.WindowMaximize),
                 tint = topBarIconTint,
                 modifier = Modifier.size(16.dp),
             )
@@ -772,7 +776,7 @@ private fun WindowScope.HeaderBar(
         ) {
             Icon(
                 imageVector = Icons.Filled.Close,
-                contentDescription = "关闭",
+                contentDescription = t(Str.ViewerClose),
                 tint = topBarIconTint,
                 modifier = Modifier.size(16.dp),
             )
@@ -823,7 +827,7 @@ private fun ConnectionNavBar(
             )
             if (profiles.size > 1) {
                 Icon(
-                    Icons.Filled.ArrowDropDown, "切换数据源",
+                    Icons.Filled.ArrowDropDown, t(Str.EditorSwitchSource),
                     tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                     modifier = Modifier.size(18.dp),
                 )
@@ -879,7 +883,7 @@ private fun ConnectionNavBar(
             )
         }
         if (status == ConnUiStatus.CONNECTED) {
-            TextButton(onClick = onDisconnect) { Text("断开", fontSize = 12.sp) }
+            TextButton(onClick = onDisconnect) { Text(t(Str.EditorDisconnect), fontSize = 12.sp) }
         }
     }
 }
@@ -899,7 +903,7 @@ private fun TargetSwitcher(
     onSelectTarget: (String) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    val label = if (target.isBlank()) "默认" else target
+    val label = if (target.isBlank()) t(Str.EditorTargetDefault) else target
     // DropdownMenu 的定位锤点是「与它同一父布局」的节点；本组件自身不产生布局节点，
     // 若把锤点 Row 与 DropdownMenu 直接放进父 Row，弹层会按整行（全宽）换算 → 跑到左上角。
     // 用 Box 把锤点与弹层包在一起，弹层即贴着「目标」按钮弹出。
@@ -917,7 +921,7 @@ private fun TargetSwitcher(
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
             )
             Text(
-                if (loading) "加载中…" else label,
+                if (loading) t(Str.EditorTargetLoading) else label,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (enabled) MaterialTheme.colors.onSurface.copy(alpha = 0.75f)
@@ -927,7 +931,7 @@ private fun TargetSwitcher(
                 modifier = Modifier.padding(start = 5.dp).widthIn(max = 150.dp),
             )
             Icon(
-                Icons.Filled.ArrowDropDown, "切换执行目标库/Schema",
+                Icons.Filled.ArrowDropDown, t(Str.EditorSwitchTarget),
                 tint = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 0.5f else 0.25f),
                 modifier = Modifier.size(16.dp),
             )
@@ -945,7 +949,7 @@ private fun TargetSwitcher(
                             color = MaterialTheme.colors.primary,
                         )
                         Text(
-                            "默认（连接库/连接默认 schema）",
+                            t(Str.EditorTargetDefaultHint),
                             fontSize = 13.sp,
                             color = if (target.isBlank()) MaterialTheme.colors.primary
                             else MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
@@ -1033,7 +1037,7 @@ private fun ConsoleTabBar(
                 modifier = Modifier.size(24.dp),
             ) {
                 Icon(
-                    Icons.Filled.Add, "新建控制台…",
+                    Icons.Filled.Add, t(Str.TreeMenuNewConsole),
                     tint = MaterialTheme.colors.primary,
                     modifier = Modifier.size(16.dp),
                 )
@@ -1047,7 +1051,7 @@ private fun ConsoleTabBar(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             TypeBadge(p.dbType)
                             Text(
-                                "在「${p.name}」新建控制台",
+                                t(Str.EditorNewConsoleIn, p.name),
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
                                 modifier = Modifier.padding(start = 8.dp),
@@ -1076,9 +1080,9 @@ private fun ConsoleChip(
     onClose: () -> Unit,
 ) {
     val menu = listOf(
-        ContextMenuItem("重命名控制台") { onRename() },
-        ContextMenuItem("关闭控制台") { onClose() },
-        ContextMenuItem("删除控制台") { onDelete() },
+        ContextMenuItem(t(Str.ConsoleRenameTitle)) { onRename() },
+        ContextMenuItem(t(Str.EditorCloseConsole)) { onClose() },
+        ContextMenuItem(t(Str.ConfirmDeleteConsoleTitle)) { onDelete() },
     )
     ContextMenuArea(items = { menu }) {
         Row(
@@ -1145,14 +1149,12 @@ private fun StarterPane(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            "还没有打开的控制台",
+            t(Str.EditorNoOpenConsole),
             style = MaterialTheme.typography.subtitle1,
             color = MaterialTheme.colors.onSurface,
         )
         Text(
-            "每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）。\n" +
-                "在左侧树右键数据源 →「打开控制台」可选择已有控制台并重新打开；\n" +
-                "也可点下面按钮/标签条「+」新建。",
+            t(Str.EditorNoOpenConsoleHint),
             fontSize = 12.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
             textAlign = TextAlign.Center,
@@ -1170,7 +1172,7 @@ private fun StarterPane(
                 ) {
                     TypeBadge(p.dbType)
                     Text(
-                        "在「${p.name}」新建控制台",
+                        t(Str.EditorNewConsoleIn, p.name),
                         fontSize = 12.sp,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.8f),
                         modifier = Modifier.padding(start = 7.dp),
@@ -1424,10 +1426,10 @@ private fun EditorPane(
         }
     }
     val aliasItems = if (qualified != null) emptyList() else allRefs.mapNotNull { (ref, _) ->
-        ref.alias?.let { CompletionItem(it, if (ref.derived) "子查询" else ref.table, CompletionKind.ALIAS) }
+        ref.alias?.let { CompletionItem(it, if (ref.derived) t(Str.EditorCompletionSubquery) else ref.table, CompletionKind.ALIAS) }
     }
     val functionItems = if (qualified != null) emptyList() else completionFunctions.map {
-        CompletionItem(it, "函数", CompletionKind.FUNCTION)
+        CompletionItem(it, t(Str.EditorCompletionFunction), CompletionKind.FUNCTION)
     }
     val objectItems = if (qualified != null) emptyList() else completionIdentifiers.map { name ->
         CompletionItem(
@@ -1441,7 +1443,7 @@ private fun EditorPane(
         listOf(
             CompletionItem(
                 text = "*",
-                detail = "展开为 ${columnItems.size} 列",
+                detail = t(Str.EditorCompletionExpandColumns, columnItems.size),
                 kind = CompletionKind.EXPAND,
                 insertText = columnItems.joinToString(", ") { it.text },
             ),
@@ -1784,9 +1786,9 @@ private fun EditorPane(
                                 if (content.isEmpty()) {
                                     Text(
                                         if (jsonMode) {
-                                            "输入 ES JSON DSL，如 {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space 补全键/查询类型/字段名"
+                                            t(Str.EditorEsPlaceholder)
                                         } else {
-                                            "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）"
+                                            t(Str.EditorSqlPlaceholder)
                                         },
                                         fontSize = editorStyle.fontSize,
                                         lineHeight = editorStyle.lineHeight,
@@ -1810,7 +1812,7 @@ private fun EditorPane(
             )
             // 编辑状态提示（● = 有未落盘改动；Ctrl+S 立即保存）
             Text(
-                if (dirty) "● 未保存 · Ctrl+S 保存" else "已保存到 .sql 文件",
+                if (dirty) t(Str.EditorDirty) else t(Str.EditorSaved),
                 fontSize = 10.sp,
                 color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
@@ -1945,7 +1947,7 @@ private fun FindReplaceBar(
             FindInputField(
                 value = findText,
                 onValueChange = onFindTextChange,
-                placeholder = "查找",
+                placeholder = t(Str.FindPlaceholder),
                 focus = findFocus,
                 onKey = { e ->
                     when {
@@ -1971,28 +1973,28 @@ private fun FindReplaceBar(
                 modifier = Modifier.widthIn(min = 34.dp),
             )
             IconButton(onClick = onPrev, modifier = Modifier.size(26.dp)) {
-                Icon(Icons.Filled.KeyboardArrowUp, "上一个", tint = iconTint, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.KeyboardArrowUp, t(Str.FindPrev), tint = iconTint, modifier = Modifier.size(16.dp))
             }
             IconButton(onClick = onNext, modifier = Modifier.size(26.dp)) {
-                Icon(Icons.Filled.KeyboardArrowDown, "下一个", tint = iconTint, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.KeyboardArrowDown, t(Str.FindNext), tint = iconTint, modifier = Modifier.size(16.dp))
             }
             IconButton(onClick = onClose, modifier = Modifier.size(26.dp)) {
-                Icon(Icons.Filled.Close, "关闭查找", tint = iconTint, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Close, t(Str.FindClose), tint = iconTint, modifier = Modifier.size(16.dp))
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             FindInputField(
                 value = replaceText,
                 onValueChange = onReplaceTextChange,
-                placeholder = "替换为",
+                placeholder = t(Str.FindReplacePlaceholder),
                 focus = null,
                 onKey = null,
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(6.dp))
-            FindSmallButton("替换") { onReplace() }
+            FindSmallButton(t(Str.FindReplace)) { onReplace() }
             Spacer(Modifier.width(4.dp))
-            FindSmallButton("全部替换") { onReplaceAll() }
+            FindSmallButton(t(Str.FindReplaceAll)) { onReplaceAll() }
         }
     }
 }
@@ -2124,7 +2126,7 @@ private fun CompletionPopup(
             },
     ) {
         Text(
-            "补全 ${items.size} 项 · Enter 上屏 · Esc 关闭",
+            t(Str.EditorCompletionHint, items.size),
             fontSize = 10.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
@@ -2242,10 +2244,10 @@ private fun ResultToolbar(
         // 状态：执行中 / 列×行·耗时（错误时结果区已居中红字，不重复）
         if (run.executing) {
             CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
-            Text(" 执行中…", fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
+            Text(t(Str.EditorRunning), fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
         } else if (run.error == null && result != null) {
             Text(
-                if (editCount > 0) "${metaText(result, transposed)} · $editCount 处未提交"
+                if (editCount > 0) "${metaText(result, transposed)} · ${t(Str.ResultUncommitted, editCount)}"
                 else metaText(result, transposed),
                 fontSize = 11.sp,
                 color = if (editCount > 0) MaterialTheme.colors.primary
@@ -2258,7 +2260,7 @@ private fun ResultToolbar(
         if (run.executing) {
             ResultIconButton(
                 icon = DbIcons.Stop,
-                description = "取消执行 (Esc)",
+                description = t(Str.ResultCancel),
                 enabled = enabled,
                 danger = true,
                 onClick = onCancelRun,
@@ -2268,14 +2270,14 @@ private fun ResultToolbar(
             if (editCount > 0) {
                 ResultIconButton(
                     icon = DbIcons.Undo,
-                    description = "撤销全部 $editCount 处修改",
+                    description = t(Str.ResultUndoAll, editCount),
                     enabled = !resultBusy,
                     onClick = onClearAllEdits,
                 )
             }
             ResultIconButton(
                 icon = DbIcons.Commit,
-                description = if (editCount > 0) "提交 $editCount 处修改" else "提交修改",
+                description = if (editCount > 0) t(Str.ResultCommit, editCount) else t(Str.ResultCommitPlain),
                 enabled = canCommit && editCount > 0 && !resultBusy,
                 active = editCount > 0,
                 badgeCount = editCount.takeIf { it > 0 },
@@ -2283,7 +2285,7 @@ private fun ResultToolbar(
             )
             ResultIconButton(
                 icon = DbIcons.Refresh,
-                description = "刷新查询结果 (F5)",
+                description = t(Str.ResultRefresh),
                 enabled = result != null && !resultBusy,
                 onClick = onRefreshResult,
             )
@@ -2291,16 +2293,16 @@ private fun ResultToolbar(
             if (canModifyRows) {
                 ResultIconButton(
                     icon = DbIcons.AddRow,
-                    description = "插入行（提交时写入）",
+                    description = t(Str.ResultInsertRow),
                     enabled = !resultBusy,
                     onClick = onInsertRow,
                 )
                 ResultIconButton(
                     icon = DbIcons.DeleteRow,
                     description = when {
-                        selectedRow == null -> "删除行（请先选中一行）"
-                        selectedRowDeleted -> "撤销删除该行"
-                        else -> "标记删除选中行（提交时从库删除）"
+                        selectedRow == null -> t(Str.ResultDeleteRowNeedsSelection)
+                        selectedRowDeleted -> t(Str.ResultUndoDeleteRow)
+                        else -> t(Str.ResultMarkDeleteRow)
                     },
                     enabled = !resultBusy && selectedRow != null,
                     active = selectedRowDeleted,
@@ -2310,7 +2312,7 @@ private fun ResultToolbar(
             if (canTranspose(run)) {
                 ResultIconButton(
                     icon = DbIcons.Transpose,
-                    description = if (transposed) "还原行列 (Ctrl+T)" else "转置行列 (Ctrl+T)",
+                    description = if (transposed) t(Str.ResultRestoreTranspose) else t(Str.ResultTranspose),
                     active = transposed,
                     onClick = onToggleTranspose,
                 )
@@ -2318,7 +2320,7 @@ private fun ResultToolbar(
             if (canFetchMore) {
                 ResultIconButton(
                     icon = DbIcons.FetchMore,
-                    description = "取更多（按方言分页追加下一页）",
+                    description = t(Str.ResultFetchMore),
                     enabled = !resultBusy,
                     active = true,
                     onClick = onFetchMore,
@@ -2326,7 +2328,7 @@ private fun ResultToolbar(
             }
             ResultIconButton(
                 icon = DbIcons.Download,
-                description = "导出结果（CSV / JSON / SQL INSERT / Excel）",
+                description = t(Str.ResultExport),
                 enabled = exportEnabled,
                 onClick = onExport,
             )
@@ -2344,8 +2346,8 @@ private fun ResultChip(index: Int, outcome: StatementOutcome, active: Boolean, o
     }
     val suffix = when {
         !outcome.ok -> " ✕"
-        outcome.isQuery -> " · ${outcome.result?.rowCount ?: 0} 行"
-        else -> " · ${outcome.result?.affectedRows ?: 0} 行"
+        outcome.isQuery -> t(Str.ResultRowSuffix, outcome.result?.rowCount ?: 0)
+        else -> t(Str.ResultRowSuffix, outcome.result?.affectedRows ?: 0)
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -2359,7 +2361,7 @@ private fun ResultChip(index: Int, outcome: StatementOutcome, active: Boolean, o
         Box(Modifier.size(6.dp).clip(CircleShape).background(dot))
         Spacer(Modifier.width(5.dp))
         Text(
-            "结果 ${index + 1}",
+            t(Str.ResultTabLabel, index + 1),
             fontSize = 11.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
             color = if (active) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
@@ -2485,15 +2487,15 @@ private fun ResultSplitter(
 private fun metaText(result: QueryResult, transposed: Boolean): String {
     val ms = "${result.durationMs} ms"
     return when {
-        result.affectedRows != null -> "已更新 ${result.affectedRows} 行 · $ms"
-        result.rowCount == 0 -> "查询完成 · 0 行 · $ms"
+        result.affectedRows != null -> I18n.t(Str.ResultUpdated, result.affectedRows, ms)
+        result.rowCount == 0 -> I18n.t(Str.ResultQueryZero, ms)
         transposed -> {
             // 转置视图：C 列 → C 行，外加一列“列名”标签列
-            "已转置（Ctrl+T 还原）· ${result.columns.size} 行 × ${result.rowCount + 1} 列 · $ms"
+            I18n.t(Str.ResultTransposed, result.columns.size, result.rowCount + 1, ms)
         }
         else -> {
-            val truncated = if (result.truncated) "（截断）" else ""
-            "${result.columns.size} 列 × ${result.rowCount} 行$truncated · $ms"
+            val truncated = if (result.truncated) I18n.t(Str.ResultTruncatedMark) else ""
+            I18n.t(Str.ResultColsRows, result.columns.size, result.rowCount, truncated, ms)
         }
     }
 }
@@ -2623,9 +2625,9 @@ private fun ResultPane(
         var viewSpec by remember(result?.sql) { mutableStateOf(ResultViewSpec()) }
         when {
             error != null -> CenteredHint(error, isError = true)
-            result == null -> CenteredHint("执行 SELECT 后在此查看结果表格；可导出 CSV / JSON / SQL / Excel", isError = false)
+            result == null -> CenteredHint(t(Str.ResultEmptyHint), isError = false)
             result.isQuery && result.rowCount == 0 && resultEdits.inserts.isEmpty() ->
-                CenteredHint("查询完成：0 行", isError = false)
+                CenteredHint(t(Str.ResultQueryZeroHint), isError = false)
             result.isQuery -> Column(modifier = Modifier.fillMaxSize()) {
                 if (result.truncated) TruncationBanner()
                 ResultTable(
@@ -2650,8 +2652,8 @@ private fun ResultPane(
                 )
             }
             else -> CenteredHint(
-                if (result.affectedRows != null) "已更新 ${result.affectedRows} 行"
-                else "语句执行成功（非查询，未产生结果集）",
+                if (result.affectedRows != null) t(Str.ResultUpdatedPlain, result.affectedRows)
+                else t(Str.ResultNonQueryOk),
                 isError = false,
             )
         }
@@ -2676,8 +2678,7 @@ private fun TruncationBanner() {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            "结果已截断（达到 ${QueryExecutor.MAX_ROWS} 行上限或单次结果内存上限）。可用工具栏「取更多」继续追加，" +
-                "或用「导出」选「全量流式」重新执行并导出全部行。",
+            t(Str.ResultTruncatedHint, QueryExecutor.MAX_ROWS),
             fontSize = 11.sp,
             lineHeight = 15.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
@@ -2743,6 +2744,9 @@ private fun ResultTable(
 ) {
     // 当前快捷键表：结果网格的复制单元格走注册表（基础键，固定），方向键等仍为模态导航。
     val keymap = LocalKeymap.current
+    // 订阅语言变化：下面非 composable 的 lambda（buildList / onClick）里用 I18n.t(lang, ...) 取词，
+    // 读 LocalLang 使本组件在语言切换时重组，菜单文案随即刷新。
+    val lang = LocalLang.current
     // 窗口级 Ctrl 状态（AWT dispatcher 维护）；结果表格 Ctrl+双击=编辑用
     val ctrlHeld = LocalCtrlHeld.current
     // 单元格大段文本查看器（双击 / 右键「查看完整内容」）
@@ -3015,7 +3019,7 @@ private fun ResultTable(
                             )
                             row.forEachIndexed { c, v ->
                                 val colName = view.columns[c].name
-                                val cellView = v?.let { CellView("$colName · 第 ${index + 1} 行", it) }
+                                val cellView = v?.let { CellView(I18n.t(lang, Str.ResultCellTitle, colName, index + 1), it) }
                                 val origKey = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, index, c)
                                 val isEditable = editableAt(index, c)
                                 val pending = origKey != null && resultEdits.cells.containsKey(origKey)
@@ -3051,7 +3055,7 @@ private fun ResultTable(
                                                         origKey?.let {
                                                             dialogEdit = EditRequest.Cell(
                                                                 it,
-                                                                "${result.columns[it.col].name} · 第 ${it.row + 1} 行",
+                                                                I18n.t(lang, Str.ResultCellTitle, result.columns[it.col].name, it.row + 1),
                                                                 v,
                                                             )
                                                         }
@@ -3067,56 +3071,56 @@ private fun ResultTable(
                                     },
                                     menuItems = buildList {
                                         add(
-                                            ContextMenuItem("复制单元格值") {
+                                            ContextMenuItem(I18n.t(lang, Str.ResultCopyCell)) {
                                                 copyCellValue(onCopyText, v, colName)
                                             },
                                         )
                                         if (cellView != null) {
-                                            add(ContextMenuItem("查看完整内容") { viewer = cellView })
+                                            add(ContextMenuItem(I18n.t(lang, Str.ResultViewFull)) { viewer = cellView })
                                         }
                                         if (canInsertRow && origRow != null && origRow !in truncatedRows) {
                                             add(
-                                                ContextMenuItem("复制本行 → INSERT") {
+                                                ContextMenuItem(I18n.t(lang, Str.ResultCopyRowInsert)) {
                                                     val insertSql = rowToInsertSql(
                                                         result.sql,
                                                         result.columns.map { it.name },
                                                         result.rows[origRow],
                                                     )
                                                     if (insertSql != null) {
-                                                        onCopyText(insertSql, "已复制本行 → INSERT（表 $tableName）")
+                                                        onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedRowInsert, tableName))
                                                     }
                                                 },
                                             )
                                         }
                                         if (isEditable && !deleted) {
-                                            add(ContextMenuItem("编辑单元格（Ctrl+双击）") { beginEdit(index, c) })
+                                            add(ContextMenuItem(I18n.t(lang, Str.ResultEditCell)) { beginEdit(index, c) })
                                             add(
-                                                ContextMenuItem("在对话框中编辑…") {
+                                                ContextMenuItem(I18n.t(lang, Str.ResultEditInDialog)) {
                                                     origKey?.let {
                                                         dialogEdit = EditRequest.Cell(
                                                             it,
-                                                            "${result.columns[it.col].name} · 第 ${it.row + 1} 行",
+                                                            I18n.t(lang, Str.ResultCellTitle, result.columns[it.col].name, it.row + 1),
                                                             v,
                                                         )
                                                     }
                                                 },
                                             )
                                             add(
-                                                ContextMenuItem("置为 NULL") {
+                                                ContextMenuItem(I18n.t(lang, Str.ResultSetNull)) {
                                                     origKey?.let { onCellEdit(it, CellValue(null)) }
                                                 },
                                             )
                                         }
                                         if (pending) {
                                             add(
-                                                ContextMenuItem("撤销此单元格修改") {
+                                                ContextMenuItem(I18n.t(lang, Str.ResultUndoCellEdit)) {
                                                     onClearCellEdit(origKey)
                                                 },
                                             )
                                         }
                                         if (canModifyRows && origRow != null) {
                                             add(
-                                                ContextMenuItem(if (deleted) "撤销删除该行" else "标记删除该行（主键定位）") {
+                                                ContextMenuItem(if (deleted) I18n.t(lang, Str.ResultUndoDeleteRow) else I18n.t(lang, Str.ResultMarkDeleteRowCtx)) {
                                                     onToggleRowDelete(origRow)
                                                 },
                                             )
@@ -3148,7 +3152,7 @@ private fun ResultTable(
                                         value = filled?.raw,
                                         width = widths[c],
                                         pending = filled != null,
-                                        nullText = if (c in ins.values) "(NULL)" else "未填",
+                                        nullText = if (c in ins.values) "(NULL)" else I18n.t(lang, Str.ResultPendingUnset),
                                         onSelect = {
                                             val cur = editing
                                             if (cur != null && cur != EditTarget.Insert(ins.id, c)) commitEditDraft()
@@ -3168,30 +3172,31 @@ private fun ResultTable(
                                         } else null,
                                         menuItems = buildList {
                                             if (isEditable) {
-                                                add(ContextMenuItem("编辑此格") { beginInsertEdit(ins.id, c) })
+                                                add(ContextMenuItem(I18n.t(lang, Str.ResultEditPendingCell)) { beginInsertEdit(ins.id, c) })
                                                 add(
-                                                    ContextMenuItem("在对话框中编辑…") {
+                                                    ContextMenuItem(I18n.t(lang, Str.ResultEditInDialog)) {
+                                                        val pendingName = result.columns.getOrNull(c)?.name ?: I18n.t(lang, Str.ResultColumnFallback)
                                                         dialogEdit = EditRequest.Insert(
                                                             ins.id, c,
-                                                            "${result.columns.getOrNull(c)?.name ?: "列"} · 待插入行",
+                                                            I18n.t(lang, Str.ResultPendingRowTitle, pendingName),
                                                             filled?.raw,
                                                         )
                                                     },
                                                 )
                                                 add(
-                                                    ContextMenuItem("置为 NULL") {
+                                                    ContextMenuItem(I18n.t(lang, Str.ResultSetNull)) {
                                                         onInsertCellEdit(ins.id, c, CellValue(null))
                                                     },
                                                 )
                                                 if (c in ins.values) {
                                                     add(
-                                                        ContextMenuItem("清除此格填写（走库默认值）") {
+                                                        ContextMenuItem(I18n.t(lang, Str.ResultClearPendingCell)) {
                                                             onClearInsertCell(ins.id, c)
                                                         },
                                                     )
                                                 }
                                             }
-                                            add(ContextMenuItem("移除该待插入行") { onRemoveInsertRow(ins.id) })
+                                            add(ContextMenuItem(I18n.t(lang, Str.ResultRemovePendingRow)) { onRemoveInsertRow(ins.id) })
                                         },
                                     )
                                 }
@@ -3218,7 +3223,7 @@ private fun ResultTable(
     }
     dialogEdit?.let { request ->
         EditCellDialog(
-            title = "编辑单元格 · ${request.title}",
+            title = t(Str.ResultEditCellTitle, request.title),
             initial = request.value,
             onDismiss = { dialogEdit = null },
             onConfirm = { value ->
@@ -3314,12 +3319,12 @@ private fun ColumnResizeHandle(
 /** 复制单元格值：NULL 复制为空串（与 CSV 导出规则一致），Toast 文案带预览。 */
 private fun copyCellValue(onCopyText: (String, String) -> Unit, v: String?, colName: String) {
     if (v == null) {
-        onCopyText("", "已复制（NULL → 空串），列 $colName")
+        onCopyText("", I18n.t(Str.ResultCopiedNull, colName))
     } else if (QueryExecutor.isTruncatedCell(v)) {
-        onCopyText(v, "已复制单元格（列 $colName）：内容过大已截断，仅复制了显示部分")
+        onCopyText(v, I18n.t(Str.ResultCopiedTruncated, colName))
     } else {
         val preview = if (v.length > 28) v.take(28) + "…" else v
-        onCopyText(v, "已复制单元格（列 $colName）：$preview")
+        onCopyText(v, I18n.t(Str.ResultCopiedCell, colName, preview))
     }
 }
 
@@ -3364,7 +3369,7 @@ private fun ResultFilterBar(
             )
             if (spec.quickFilter.isEmpty()) {
                 Text(
-                    "快速过滤（所有列）",
+                    t(Str.ResultQuickFilter),
                     fontSize = 12.sp,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
                 )
@@ -3378,7 +3383,7 @@ private fun ResultFilterBar(
             ) {
                 Icon(
                     Icons.Filled.Close,
-                    contentDescription = "清除快速过滤",
+                    contentDescription = t(Str.ResultClearQuickFilter),
                     tint = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.size(13.dp),
                 )
@@ -3386,7 +3391,7 @@ private fun ResultFilterBar(
         }
         Spacer(Modifier.width(10.dp))
         Text(
-            if (shownRows != totalRows) "命中 $shownRows / 共 $totalRows 行" else "共 $totalRows 行",
+            if (shownRows != totalRows) t(Str.ResultMatchRows, shownRows, totalRows) else t(Str.ResultTotalRows, totalRows),
             fontSize = 11.sp,
             color = if (shownRows != totalRows) MaterialTheme.colors.primary
             else MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
@@ -3394,7 +3399,7 @@ private fun ResultFilterBar(
         Spacer(Modifier.weight(1f))
         if (spec.filterCount > 0) {
             Text(
-                "筛选 ${spec.filterCount} 条",
+                t(Str.ResultFilterCount, spec.filterCount),
                 fontSize = 11.sp,
                 color = MaterialTheme.colors.primary,
             )
@@ -3403,7 +3408,7 @@ private fun ResultFilterBar(
                 onClick = { onSpecChange(ResultViewSpec()) },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
             ) {
-                Text("清除全部", fontSize = 11.sp)
+                Text(t(Str.ResultClearAll), fontSize = 11.sp)
             }
         }
     }
@@ -3472,7 +3477,7 @@ private fun ResultHeaderCell(
             ) {
                 Icon(
                     DbIcons.Filter,
-                    contentDescription = "筛选「$name」",
+                    contentDescription = t(Str.ResultFilterLabel, name),
                     tint = if (!filterText.isNullOrEmpty()) MaterialTheme.colors.primary
                     else MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
                     modifier = Modifier.size(12.dp),
@@ -3481,13 +3486,13 @@ private fun ResultHeaderCell(
             DropdownMenu(expanded = filterOpen, onDismissRequest = { filterOpen = false }) {
                 Column(modifier = Modifier.width(228.dp).padding(horizontal = 10.dp, vertical = 8.dp)) {
                     Text(
-                        "筛选「$name」",
+                        t(Str.ResultFilterLabel, name),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colors.onSurface,
                     )
                     Text(
-                        "= 精确 · != 不等 · > >= < <= 比较 · ~ 正则 · 默认包含",
+                        t(Str.ResultFilterOpsHint),
                         fontSize = 10.sp,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                         modifier = Modifier.padding(top = 2.dp),
@@ -3515,11 +3520,11 @@ private fun ResultHeaderCell(
                         TextButton(
                             onClick = { onFilterChange(""); filterOpen = false },
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        ) { Text("清除", fontSize = 12.sp) }
+                        ) { Text(t(Str.ResultClear), fontSize = 12.sp) }
                         TextButton(
                             onClick = { onFilterChange(draft); filterOpen = false },
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        ) { Text("应用", fontSize = 12.sp) }
+                        ) { Text(t(Str.ResultApply), fontSize = 12.sp) }
                     }
                 }
             }
@@ -3701,10 +3706,10 @@ private fun CellEditor(
 }
 
 internal fun statusLabel(status: ConnUiStatus): String = when (status) {
-    ConnUiStatus.DISCONNECTED -> "未连接"
-    ConnUiStatus.CONNECTING -> "连接中…"
-    ConnUiStatus.CONNECTED -> "已连接"
-    ConnUiStatus.ERROR -> "连接失败"
+    ConnUiStatus.DISCONNECTED -> I18n.t(Str.TreeDisconnected)
+    ConnUiStatus.CONNECTING -> I18n.t(Str.TreeMenuConnecting)
+    ConnUiStatus.CONNECTED -> I18n.t(Str.ConnStatusConnected)
+    ConnUiStatus.ERROR -> I18n.t(Str.TreeConnectFailed)
 }
 
 internal fun statusColor(status: ConnUiStatus): Color = when (status) {

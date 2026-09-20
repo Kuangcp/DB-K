@@ -60,8 +60,10 @@ import app.dialog.ImportConflictDialog
 import app.dialog.PassphraseDialog
 import app.dialog.SettingsDialog
 import app.dialog.SettingsSnapshot
+import app.i18n.LocalLang
 import app.settings.EditorPrefs
 import app.settings.KeymapPrefs
+import app.settings.LanguagePrefs
 import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
 import app.settings.TreeExpandPrefs
@@ -102,8 +104,11 @@ import engine.Protocol
 import engine.model.ObjectKind
 import engine.model.QueryResult
 import engine.model.SchemaMeta
-import engine.model.displayNoun
+import engine.model.nounKey
 import engine.model.isPreviewable
+import i18n.I18n
+import i18n.Lang
+import i18n.Str
 import jdbc.ExternalDrivers
 import jdbc.QueryExecutor
 import kotlin.coroutines.resume
@@ -128,6 +133,8 @@ import java.io.File
 fun main() = application {
     // 首条日志触发 tinylog 初始化 → SessionLogWriter 立即创建本次会话日志文件（logs/yyyy-MM/yyyy-MM-dd_N.log）
     Logger.info("db-k session start; dataDir={}", AppPaths.dataDirectory())
+    // 语言：启动即确定（存档优先，否则跟随系统 locale），供非 UI 层（RowUpdater 等）与 UI 共用。
+    I18n.lang = LanguagePrefs.load() ?: Lang.system()
     // 未捕获异常（AWT-EventQueue / 后台线程 / 协程）默认只打到 stderr、不进会话日志；统一挂到
     // tinylog。JDK 的 EDT 在 processException 里调线程的 UncaughtExceptionHandler，最终落到这里。
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -211,7 +218,7 @@ private fun AppRoot(onExit: () -> Unit) {
     val requestClose: () -> Unit = {
         val pending = consoleState.totalEditCount()
         if (pending > 0) {
-            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "退出应用") { performExit() }
+            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionExitApp) { performExit() }
         } else {
             performExit()
         }
@@ -261,6 +268,9 @@ private fun WindowScope.AppBody(
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
     // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
     var keymap by remember { mutableStateOf(KeymapPrefs.load()) }
+    // 语言偏好（null = 跟随系统）：设置窗口保存后写盘并即时生效（无重启）
+    var languagePref by remember { mutableStateOf(LanguagePrefs.load()) }
+    val effectiveLang = languagePref ?: Lang.system()
     var treeWidthDp by remember { mutableStateOf(280f) }
     // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
@@ -272,8 +282,8 @@ private fun WindowScope.AppBody(
     fun commitEditsNow(c: ConsoleRecord, p: ConnectionProfile) {
         scope.launch {
             consoleState.commitEdits(c, p)
-                .onSuccess { n -> toastState.show(if (n > 0) "已提交 $n 处修改" else "没有修改") }
-                .onFailure { t -> toastState.show("提交失败：${t.message?.take(120)}") }
+                .onSuccess { n -> toastState.show(if (n > 0) I18n.t(Str.MainCommitted, n) else I18n.t(Str.MainNoChanges)) }
+                .onFailure { t -> toastState.show(I18n.t(Str.MainCommitFailed, t.message?.take(120))) }
         }
     }
 
@@ -293,10 +303,10 @@ private fun WindowScope.AppBody(
         if (!fullStream) {
             val quote = connectionsState.jdbcConnection(p.id)?.let { l -> l::quoteIdent } ?: ::defaultQuoteIdent
             runCatching { ResultExport.writeCached(file, format, result, options, quote) }
-                .onSuccess { n -> toastState.show("已导出 $n 行 → ${file.name}") }
+                .onSuccess { n -> toastState.show(I18n.t(Str.MainExported, n, file.name)) }
                 .onFailure { t ->
                     Logger.error(t, "result export failed")
-                    toastState.show("导出失败：${t.message?.take(80)}")
+                    toastState.show(I18n.t(Str.MainExportFailed, t.message?.take(80)))
                 }
             return
         }
@@ -305,7 +315,7 @@ private fun WindowScope.AppBody(
             connectionsState.ensureConnectionReady(p)
             val live = connectionsState.jdbcConnection(p.id)
             if (live == null) {
-                toastState.show("全量导出需要可用的 JDBC 连接，请重连后再试")
+                toastState.show(I18n.t(Str.MainStreamExportNeedsJdbc))
                 return@launch
             }
             val outcome = withContext(Dispatchers.IO) {
@@ -314,10 +324,10 @@ private fun WindowScope.AppBody(
                     ResultExport.writeStreamed(file, format, live, result.sql, contextSql, options, live::quoteIdent)
                 }
             }
-            outcome.onSuccess { n -> toastState.show("已导出 $n 行 → ${file.name}") }
+            outcome.onSuccess { n -> toastState.show(I18n.t(Str.MainExported, n, file.name)) }
                 .onFailure { t ->
                     Logger.error(t, "stream export failed")
-                    toastState.show("全量导出失败：${t.message?.take(80)}")
+                    toastState.show(I18n.t(Str.MainStreamExportFailed, t.message?.take(80)))
                 }
         }
     }
@@ -471,16 +481,16 @@ private fun WindowScope.AppBody(
         val p = profiles.firstOrNull { it.id == c.connectionId } ?: return
         val target = sql?.trim().orEmpty()
         if (target.isEmpty()) {
-            toastState.show("请先选中要执行的 SQL（Ctrl+A 全选）")
+            toastState.show(I18n.t(Str.MainSelectSql))
             return
         }
         if (consoleState.runStateOf(c.id).executing) {
-            toastState.show("已有查询在执行中（可点「取消」或按 Esc）")
+            toastState.show(I18n.t(Str.MainQueryRunning))
             return
         }
         val pending = consoleState.editCount(c.id)
         if (pending > 0) {
-            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "重新执行") {
+            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionRerun) {
                 scope.launch { consoleState.run(c, p, target); NativeMemory.trim("after query") }
             }
             return
@@ -490,7 +500,7 @@ private fun WindowScope.AppBody(
 
     fun suggestConsoleName(profile: ConnectionProfile): String {
         val n = consoleState.profileConsoles(profile.id).size + 1
-        return "控制台 $n"
+        return I18n.t(Str.ConsoleDefaultName, n)
     }
 
     /**
@@ -502,20 +512,20 @@ private fun WindowScope.AppBody(
         val p = row.profile ?: return
         val obj = row.dbObject ?: return
         if (!obj.kind.isPreviewable()) {
-            toastState.show("该对象类型不支持预览")
+            toastState.show(I18n.t(Str.MainPreviewUnsupportedKind))
             return
         }
         scope.launch {
             if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) {
                 connectionsState.ensureConnectionReady(p)
                 if (connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED) {
-                    toastState.show("连接「${p.name}」失败：${connectionsState.statusMessageOf(p.id)?.take(80) ?: "未知错误"}")
+                    toastState.show(I18n.t(Str.MainConnectFailed, p.name, connectionsState.statusMessageOf(p.id)?.take(80) ?: I18n.t(Str.ConnectionUnknownError)))
                     return@launch
                 }
             }
             val session = connectionsState.sessionOf(p.id)
             if (session == null || !session.capabilities.objectPreview) {
-                toastState.show("当前连接不支持对象预览")
+                toastState.show(I18n.t(Str.MainConnectionNoPreview))
                 return@launch
             }
             val sql = session.previewQuery(row.schema, obj)
@@ -553,14 +563,14 @@ private fun WindowScope.AppBody(
     // 编辑器与树都没指向可看定义的表时提示。用 rememberUpdatedState 把最新 Lambda 交给 AWT 派发器。
     val lastEditorActivity = remember { java.util.concurrent.atomic.AtomicLong(0L) }
 
-    fun ddlNoun(profileId: String, schema: SchemaMeta?, name: String): String {
-        val s = schema ?: return "对象"
+    fun ddlNoun(profileId: String, schema: SchemaMeta?, name: String): Str {
+        val s = schema ?: return Str.NounObject
         // searchObjectsOf：已连接实时、未连接本地缓存——离线也能给出正确名词
-        val objs = connectionsState.searchObjectsOf(profileId, s.key) ?: return "对象"
+        val objs = connectionsState.searchObjectsOf(profileId, s.key) ?: return Str.NounObject
         for (kind in listOf(ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MATERIALIZED_VIEW, ObjectKind.INDEX, ObjectKind.ALIAS)) {
-            if (objs.forKind(kind).any { it.name.equals(name, ignoreCase = true) }) return kind.displayNoun
+            if (objs.forKind(kind).any { it.name.equals(name, ignoreCase = true) }) return kind.nounKey
         }
-        return "对象"
+        return Str.NounObject
     }
 
     val resolveDdlTarget: () -> TableDdlRequest? = {
@@ -571,7 +581,7 @@ private fun WindowScope.AppBody(
                 (p.dbType.protocol == Protocol.JDBC || p.dbType.protocol == Protocol.ELASTICSEARCH) &&
                 obj.kind.isPreviewable()
             ) {
-                TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
+                TableDdlRequest(p, row.schema, obj.name, obj.kind.nounKey)
             } else {
                 null
             }
@@ -608,7 +618,7 @@ private fun WindowScope.AppBody(
     val createConsoleFor: (ConnectionProfile) -> Unit = { p ->
         val name = suggestConsoleName(p)
         consoleState.createConsole(p.id, name)
-        toastState.show("已新建控制台「$name」（绑定 ${p.name}）")
+        toastState.show(I18n.t(Str.MainConsoleCreated, name, p.name))
     }
 
     // ---------- P5 连接档案导出 / 导入（AES 口令加密；不自动连接，导入后刷新树） ----------
@@ -618,17 +628,17 @@ private fun WindowScope.AppBody(
         runCatching { treeState.importProfiles(bundle, skipConnectionIds) }
             .onSuccess { summary ->
                 val notes = buildList {
-                    if (bundle.skipped > 0) add("跳过 ${bundle.skipped} 个未知类型连接")
-                    if (summary.connectionsSkipped > 0) add("跳过 ${summary.connectionsSkipped} 个同名数据源")
+                    if (bundle.skipped > 0) add(I18n.t(Str.MainImportSkippedUnknown, bundle.skipped))
+                    if (summary.connectionsSkipped > 0) add(I18n.t(Str.MainImportSkippedDuplicate, summary.connectionsSkipped))
                 }
                 val skipNote = if (notes.isEmpty()) "" else "（${notes.joinToString("，")}）"
                 toastState.show(
-                    "已导入 ${summary.foldersAdded} 个文件夹 / ${summary.connectionsAdded} 个数据源$skipNote",
+                    I18n.t(Str.MainImportSummary, summary.foldersAdded, summary.connectionsAdded, skipNote),
                 )
             }
             .onFailure {
                 Logger.error(it, "import profiles failed")
-                toastState.show("导入失败：${it.message?.take(140)}")
+                toastState.show(I18n.t(Str.MainImportFailed, it.message?.take(140)))
             }
     }
 
@@ -650,7 +660,7 @@ private fun WindowScope.AppBody(
         val ownerFrame: java.awt.Frame? = null
         val fd = FileDialog(
             ownerFrame,
-            if (includePasswords) "导出数据源（含密码）" else "导出数据源（不含密码）",
+            if (includePasswords) I18n.t(Str.MainExportArchiveWithPasswords) else I18n.t(Str.MainExportArchiveNoPasswords),
             FileDialog.SAVE,
         )
         fd.file = "db-k-connections.dbk"
@@ -658,14 +668,14 @@ private fun WindowScope.AppBody(
         val name = fd.file ?: return
         val file = File(fd.directory, name)
         val passwordNote = if (includePasswords) {
-            "\n\n注意：本次导出包含明文密码，任何能解密该文件的人都能直接读取，请仅在可信环境使用。"
+            I18n.t(Str.MainExportPlaintextWarning)
         } else {
-            "\n\n本次导出不含密码，导入后需重新填写。"
+            I18n.t(Str.MainExportNoPasswords)
         }
         dialogState.passphrase = PassphraseRequest(
-            title = "设置加密口令",
-            message = "文件将用 AES-256-GCM 加密，请设置口令（导入时需要输入相同口令）。$passwordNote",
-            confirmLabel = "加密导出",
+            title = I18n.t(Str.MainSetPassphraseTitle),
+            message = I18n.t(Str.MainSetPassphraseMessage, passwordNote),
+            confirmLabel = I18n.t(Str.MainEncryptExport),
             requireConfirmation = true,
         ) { passphrase ->
             runCatching {
@@ -673,13 +683,13 @@ private fun WindowScope.AppBody(
             }.fold(
                 onSuccess = {
                     toastState.show(
-                        "已导出 ${treeState.folders.size} 个文件夹 / ${treeState.connections.size} 个数据源 → ${file.name}",
+                        I18n.t(Str.MainExportedFolders, treeState.folders.size, treeState.connections.size, file.name),
                     )
                     null
                 },
                 onFailure = {
                     Logger.error(it, "export profiles failed")
-                    "导出失败：${it.message?.take(120)}"
+                    I18n.t(Str.MainExportFailed, it.message?.take(120))
                 },
             )
         }
@@ -687,22 +697,22 @@ private fun WindowScope.AppBody(
 
     fun importProfiles() {
         val ownerFrame: java.awt.Frame? = null
-        val fd = FileDialog(ownerFrame, "导入数据源", FileDialog.LOAD)
+        val fd = FileDialog(ownerFrame, I18n.t(Str.MainImportDialogTitle), FileDialog.LOAD)
         fd.file = "*.dbk"
         fd.isVisible = true
         val name = fd.file ?: return
         val file = File(fd.directory, name)
         dialogState.passphrase = PassphraseRequest(
-            title = "输入解密口令",
-            message = "该文件由 db-k 加密导出，请输入导出时设置的口令。",
-            confirmLabel = "解密导入",
+            title = I18n.t(Str.MainDecryptPassphraseTitle),
+            message = I18n.t(Str.MainDecryptPassphraseMessage),
+            confirmLabel = I18n.t(Str.MainDecryptImport),
             requireConfirmation = false,
         ) { passphrase ->
             val result = runCatching { ProfileTransfer.read(file, passphrase) }
             val error = result.exceptionOrNull()
             if (error != null) {
                 Logger.error(error, "import profiles read failed")
-                "解密失败：${error.message?.take(100) ?: "口令错误或文件已损坏"}"
+                I18n.t(Str.MainDecryptFailed, error.message?.take(100) ?: I18n.t(Str.MainPassphraseWrong))
             } else {
                 startImport(result.getOrThrow())
                 null
@@ -718,6 +728,7 @@ private fun WindowScope.AppBody(
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colors.onSurface,
+            LocalLang provides effectiveLang,
             LocalKeymap provides keymap,
             LocalCompletionDismiss provides completionDismiss,
             LocalCtrlHeld provides ctrlHeld,
@@ -751,7 +762,7 @@ private fun WindowScope.AppBody(
                                 } else {
                                     val keys = keymapState.value.chordsOf(ShortcutCommand.VIEW_DDL)
                                         .joinToString(" / ") { it.format() }
-                                    toastState.show("请把编辑器光标放到表名上，或在左侧选中表/视图，再按 $keys")
+                                    toastState.show(I18n.t(Str.MainDdlCaretHint, keys))
                                 }
                             }
                             true
@@ -789,12 +800,12 @@ private fun WindowScope.AppBody(
                         onSearchQueryChange = { treeSearchQuery = it },
                         searchScopeId = treeSearchScope,
                         scopeOptions = buildList {
-                            add(null to "全部数据源")
+                            add(null to I18n.t(Str.MainAllSources))
                             profiles.forEach { p ->
                                 val suffix = when {
                                     connectionsState.statusOf(p.id) == ConnUiStatus.CONNECTED -> ""
-                                    connectionsState.hasSearchCache(p.id) -> "（缓存）"
-                                    else -> "（未连接）"
+                                    connectionsState.hasSearchCache(p.id) -> I18n.t(Str.MainSearchCached)
+                                    else -> I18n.t(Str.MainSearchDisconnected)
                                 }
                                 add(p.id to (p.name + suffix))
                             }
@@ -807,8 +818,8 @@ private fun WindowScope.AppBody(
                             scope.launch {
                                 val ok = connectionsState.refreshMetadata(p)
                                 toastState.show(
-                                    if (ok) "已刷新「${p.name}」元数据缓存"
-                                    else "刷新「${p.name}」失败：${connectionsState.statusMessageOf(p.id)?.take(80) ?: "未知错误"}",
+                                    if (ok) I18n.t(Str.MainCacheRefreshed, p.name)
+                                    else I18n.t(Str.MainCacheRefreshFailed, p.name, connectionsState.statusMessageOf(p.id)?.take(80) ?: I18n.t(Str.ConnectionUnknownError)),
                                 )
                             }
                         },
@@ -845,7 +856,7 @@ private fun WindowScope.AppBody(
                             val p = row.profile
                             val obj = row.dbObject
                             if (p != null && obj != null) {
-                                dialogState.tableDdl = TableDdlRequest(p, row.schema, obj.name, obj.kind.displayNoun)
+                                dialogState.tableDdl = TableDdlRequest(p, row.schema, obj.name, obj.kind.nounKey)
                             }
                         },
                         onExportProfiles = { exportProfiles(includePasswords = false) },
@@ -895,7 +906,7 @@ private fun WindowScope.AppBody(
                         schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
                         supportsTargetSwitch =
                             activeProfile?.let { connectionsState.sessionOf(it.id)?.capabilities?.sessionContext } == true,
-                        targetLabel = if (activeProfile?.let { connectionsState.flatNamespaceOf(it.id) } == true) "DB" else "目标",
+                        targetLabel = if (activeProfile?.let { connectionsState.flatNamespaceOf(it.id) } == true) "DB" else I18n.t(Str.EditorTargetLabel),
                         targetAllowDefault = activeProfile?.let { !connectionsState.flatNamespaceOf(it.id) } ?: true,
                         targetSchema = activeProfile?.let { p ->
                             if (connectionsState.flatNamespaceOf(p.id)) {
@@ -911,14 +922,14 @@ private fun WindowScope.AppBody(
                                     .firstOrNull { it.displayName.equals(t, ignoreCase = true) }
                                 if (ns != null) {
                                     scope.launch { connectionsState.setActiveDb(p, ns) }
-                                    toastState.show("已切换到 DB：${ns.displayName}")
+                                    toastState.show(I18n.t(Str.MainSwitchedDb, ns.displayName))
                                 }
                             } else {
                                 val c = consoleState.activeConsole()
                                 if (c != null) {
                                     consoleState.setTarget(c.id, t)
                                     toastState.show(
-                                        if (t.isBlank()) "已恢复默认执行目标（连接库）" else "执行目标已设为：$t",
+                                        if (t.isBlank()) I18n.t(Str.MainTargetReset) else I18n.t(Str.MainTargetSet, t),
                                     )
                                 }
                             }
@@ -952,7 +963,7 @@ private fun WindowScope.AppBody(
                                 val pending = consoleState.editCount(c.id)
                                 val current = consoleState.runStateOf(c.id).activeIndex
                                 if (pending > 0 && i != current) {
-                                    dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "切换结果 Tab") {
+                                    dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionSwitchResultTab) {
                                         consoleState.selectRunOutcome(c.id, i)
                                     }
                                 } else {
@@ -989,7 +1000,7 @@ private fun WindowScope.AppBody(
                                     }
                                 }
                                 if (pending > 0) {
-                                    dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, "刷新结果", doRefresh)
+                                    dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionRefreshResult, doRefresh)
                                 } else {
                                     doRefresh()
                                 }
@@ -1002,14 +1013,14 @@ private fun WindowScope.AppBody(
                             if (c != null && p != null) {
                                 val stmt = consoleState.runStateOf(c.id).active?.sql
                                 if (stmt != null && !sqlHasOrderBy(stmt)) {
-                                    toastState.show("原查询无 ORDER BY，取更多顺序不保证")
+                                    toastState.show(I18n.t(Str.MainFetchMoreNoOrder))
                                 }
                                 scope.launch {
                                     consoleState.fetchMore(c, p)
                                         .onSuccess { n ->
-                                            toastState.show(if (n > 0) "已追加 $n 行" else "没有更多数据了")
+                                            toastState.show(if (n > 0) I18n.t(Str.MainAppended, n) else I18n.t(Str.MainNoMoreData))
                                         }
-                                        .onFailure { toastState.show("取更多失败：${it.message?.take(120)}") }
+                                        .onFailure { toastState.show(I18n.t(Str.MainFetchMoreFailed, it.message?.take(120))) }
                                 }
                             }
                         },
@@ -1063,7 +1074,7 @@ private fun WindowScope.AppBody(
                                     onSubmit = { format, options, fullStream ->
                                         dialogState.export = null
                                         // Linux 桌面支持无主窗口的 AWT 文件对话框（owner=null）
-                                        val fd = FileDialog(null as java.awt.Frame?, "导出 ${format.label}", FileDialog.SAVE)
+                                        val fd = FileDialog(null as java.awt.Frame?, I18n.t(Str.MainExportDialogTitle, I18n.t(format.labelKey)), FileDialog.SAVE)
                                         fd.file = "${p.name}.${format.extension}"
                                         fd.isVisible = true
                                         val name = fd.file
@@ -1080,8 +1091,8 @@ private fun WindowScope.AppBody(
                             if (c != null) {
                                 val hit = consoleState.cancelRun(c.id)
                                 toastState.show(
-                                    if (hit) "已请求取消当前查询"
-                                    else "取消未生效（语句未开始或驱动不支持取消）",
+                                    if (hit) I18n.t(Str.MainCancelRequested)
+                                    else I18n.t(Str.MainCancelIneffective),
                                 )
                             }
                         },
@@ -1089,7 +1100,7 @@ private fun WindowScope.AppBody(
                         onRefreshHistory = { activeProfile?.let { consoleState.refreshHistory(it.id) } },
                         onClearHistory = {
                             activeProfile?.let { consoleState.clearHistory(it.id) }
-                            toastState.show("已清空执行历史")
+                            toastState.show(I18n.t(Str.MainHistoryCleared))
                         },
                         completionIdentifiers = completionIdentifiers,
                         completionTables = completionTables,
@@ -1135,13 +1146,18 @@ private fun WindowScope.AppBody(
                 SettingsDialog(
                     visible = dialogState.showSettings,
                     isDark = isDark,
-                    initial = SettingsSnapshot(editorSettings, keymap),
+                    language = effectiveLang,
+                    initial = SettingsSnapshot(editorSettings, keymap, languagePref),
                     onDismiss = { dialogState.showSettings = false },
                     onSave = { snapshot ->
                         editorSettings = snapshot.editor
                         keymap = snapshot.keymap
+                        languagePref = snapshot.language
+                        // 非 UI 层读的是全局 I18n.lang；与 snapshot 同步更新，避免一帧旧语言
+                        I18n.lang = snapshot.language ?: Lang.system()
                         EditorPrefs.save(snapshot.editor)
                         KeymapPrefs.save(snapshot.keymap)
+                        LanguagePrefs.save(snapshot.language)
                         dialogState.showSettings = false
                     },
                 )

@@ -1,6 +1,7 @@
 package engine.model
 
 import kotlinx.serialization.Serializable
+import i18n.Str
 
 /**
  * 树中“库”节点：JDBC 中 catalog/schema 语义因库而异（PG 多 schema 单库、
@@ -49,23 +50,42 @@ val PREVIEWABLE_KINDS = setOf(
 
 fun ObjectKind.isPreviewable(): Boolean = this in PREVIEWABLE_KINDS
 
-/** 对象中文名词（右键“复制 XX 名”文案用）。 */
-val ObjectKind.displayNoun: String
+/** 对象单数名词 key（“复制 XX 名”/DDL 标题等短语用，由 UI 层翻译）。 */
+val ObjectKind.nounKey: Str
     get() = when (this) {
-        ObjectKind.TABLE -> "表"
-        ObjectKind.VIEW -> "视图"
-        ObjectKind.MATERIALIZED_VIEW -> "物化视图"
-        ObjectKind.TRIGGER -> "触发器"
-        ObjectKind.SEQUENCE -> "序列"
-        ObjectKind.ROUTINE -> "函数与过程"
-        ObjectKind.AGGREGATE -> "聚合"
-        ObjectKind.OPERATOR -> "操作符"
-        ObjectKind.TYPE -> "类型"
-        ObjectKind.OPERATOR_CLASS -> "操作符类"
-        ObjectKind.OPERATOR_FAMILY -> "操作符族"
-        ObjectKind.KEY -> "键"
-        ObjectKind.INDEX -> "索引"
-        ObjectKind.ALIAS -> "别名"
+        ObjectKind.TABLE -> Str.NounTable
+        ObjectKind.VIEW -> Str.NounView
+        ObjectKind.MATERIALIZED_VIEW -> Str.NounMaterializedView
+        ObjectKind.TRIGGER -> Str.NounTrigger
+        ObjectKind.SEQUENCE -> Str.NounSequence
+        ObjectKind.ROUTINE -> Str.NounRoutine
+        ObjectKind.AGGREGATE -> Str.NounAggregate
+        ObjectKind.OPERATOR -> Str.NounOperator
+        ObjectKind.TYPE -> Str.NounType
+        ObjectKind.OPERATOR_CLASS -> Str.NounOperatorClass
+        ObjectKind.OPERATOR_FAMILY -> Str.NounOperatorFamily
+        ObjectKind.KEY -> Str.NounKey
+        ObjectKind.INDEX -> Str.NounIndex
+        ObjectKind.ALIAS -> Str.NounAlias
+    }
+
+/** 对象组标题 key（树分组行；英文用复数）。 */
+val ObjectKind.groupKey: Str
+    get() = when (this) {
+        ObjectKind.TABLE -> Str.GroupTable
+        ObjectKind.VIEW -> Str.GroupView
+        ObjectKind.MATERIALIZED_VIEW -> Str.GroupMaterializedView
+        ObjectKind.TRIGGER -> Str.GroupTrigger
+        ObjectKind.SEQUENCE -> Str.GroupSequence
+        ObjectKind.ROUTINE -> Str.GroupRoutine
+        ObjectKind.AGGREGATE -> Str.GroupAggregate
+        ObjectKind.OPERATOR -> Str.GroupOperator
+        ObjectKind.TYPE -> Str.GroupType
+        ObjectKind.OPERATOR_CLASS -> Str.GroupOperatorClass
+        ObjectKind.OPERATOR_FAMILY -> Str.GroupOperatorFamily
+        ObjectKind.KEY -> Str.GroupKey
+        ObjectKind.INDEX -> Str.GroupIndex
+        ObjectKind.ALIAS -> Str.GroupAlias
     }
 
 /**

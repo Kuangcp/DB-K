@@ -3,6 +3,8 @@ package app.ui
 import engine.model.QueryColumn
 import engine.model.QueryResult
 import engine.model.SchemaMeta
+import i18n.I18n
+import i18n.Str
 
 /*
  * SQL 编辑器补全 / 结果交互的纯逻辑（app.ui 层但无 compose 依赖，便于后续单测）。
@@ -566,7 +568,7 @@ fun tableAtCaret(
 fun transposeResult(result: QueryResult): QueryResult {
     val rowCount = result.rows.size
     // 新表头：首列“列名”承载原列名标签，其后每列对应原表一行
-    val newCols = listOf(QueryColumn("列名")) + (1..rowCount).map { QueryColumn("行 $it") }
+    val newCols = listOf(QueryColumn(I18n.t(Str.ResultColumnName))) + (1..rowCount).map { QueryColumn(I18n.t(Str.ResultRowLabel, it)) }
     val newRows: List<List<String?>> = result.columns.mapIndexed { c, col ->
         listOf(col.name) + result.rows.map { it[c] }
     }

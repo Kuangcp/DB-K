@@ -28,7 +28,9 @@ import androidx.compose.ui.unit.sp
 import app.settings.Keymap
 import app.settings.ShortcutCommand
 import app.settings.ShortcutScope
+import app.i18n.t
 import app.ui.KeyCaptureEffect
+import i18n.Str
 
 /** 冲突警示用的语义红（与全局状态点同源）。 */
 private val ConflictRed = Color(0xFFE53935)
@@ -70,13 +72,12 @@ fun ShortcutSettingsSection(
     )
 
     Text(
-        "业务功能快捷键",
+        t(Str.ShortcutSectionTitle),
         style = MaterialTheme.typography.subtitle2,
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
     Text(
-        "只有扩展业务功能可自定义；保存、复制粘贴、方向导航等基础编辑键固定不可改。" +
-            "点组合键胶囊即可录制新键（需含 Ctrl/Alt，或使用 F1–F12）。",
+        t(Str.ShortcutSectionHint),
         style = MaterialTheme.typography.body2,
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
@@ -85,7 +86,7 @@ fun ShortcutSettingsSection(
         val commands = ShortcutCommand.configurableCommands.filter { it.scope == scope }
         if (commands.isEmpty()) continue
         Text(
-            scope.label,
+            t(scope.labelKey),
             style = MaterialTheme.typography.subtitle2,
             color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
             modifier = Modifier.padding(top = 4.dp),
@@ -104,7 +105,7 @@ fun ShortcutSettingsSection(
 
     conflicts.forEach { conflict ->
         Text(
-            "⚠「${conflict.first.label}」与「${conflict.second.label}」冲突：${conflict.chord.format()}",
+            t(Str.ShortcutConflict, t(conflict.first.labelKey), t(conflict.second.labelKey), conflict.chord.format()),
             style = MaterialTheme.typography.body2,
             color = ConflictRed,
         )
@@ -116,12 +117,12 @@ fun ShortcutSettingsSection(
             onKeymapChange(keymap.resetAll())
         },
     ) {
-        Text("全部恢复默认")
+        Text(t(Str.ShortcutResetAll))
     }
 
     recording?.let { command ->
         Text(
-            "正在录制「${command.label}」：按下新的组合键；Esc 取消，Delete / Backspace 清除绑定。",
+            t(Str.ShortcutRecording, t(command.labelKey)),
             style = MaterialTheme.typography.body2,
             color = MaterialTheme.colors.primary,
         )
@@ -143,17 +144,17 @@ private fun ShortcutRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            command.label,
+            t(command.labelKey),
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.body2,
             color = MaterialTheme.colors.onSurface,
         )
         if (recording == command) {
-            ChordChip(label = "按下组合键…", active = true, warning = false, onClick = {})
+            ChordChip(label = t(Str.ShortcutPressKeys), active = true, warning = false, onClick = {})
         } else {
             val chords = keymap.chordsOf(command)
             if (chords.isEmpty()) {
-                ChordChip(label = "未绑定", active = false, warning = conflicted, onClick = onStartRecording)
+                ChordChip(label = t(Str.ShortcutUnbound), active = false, warning = conflicted, onClick = onStartRecording)
             } else {
                 chords.forEach { chord ->
                     ChordChip(
@@ -166,7 +167,7 @@ private fun ShortcutRow(
             }
         }
         TextButton(onClick = onReset, enabled = !keymap.isDefault(command)) {
-            Text("重置", fontSize = 12.sp)
+            Text(t(Str.ShortcutReset), fontSize = 12.sp)
         }
     }
 }

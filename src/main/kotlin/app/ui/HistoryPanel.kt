@@ -29,7 +29,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.i18n.t
 import db.SqlHistoryRow
+import i18n.I18n
+import i18n.Str
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -60,18 +63,18 @@ fun HistoryPanel(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp).padding(top = 6.dp),
         ) {
             Text(
-                "执行历史",
+                t(Str.HistoryPanelTitle),
                 style = MaterialTheme.typography.subtitle2,
                 fontSize = 13.sp,
                 color = MaterialTheme.colors.onSurface,
             )
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onClear, enabled = entries.isNotEmpty()) {
-                Text("清空", fontSize = 11.sp)
+                Text(t(Str.TreeClear), fontSize = 11.sp)
             }
         }
         Text(
-            "双击条目查看完整 SQL",
+            t(Str.HistoryDoubleClickHint),
             fontSize = 10.sp,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
             modifier = Modifier.padding(start = 12.dp, bottom = 6.dp),
@@ -80,7 +83,7 @@ fun HistoryPanel(
         if (entries.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    "暂无历史。\n执行过的 SQL（含失败）会记录在这里。",
+                    t(Str.HistoryEmpty),
                     fontSize = 11.sp,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
                 )
@@ -118,7 +121,7 @@ private fun HistoryEntry(row: SqlHistoryRow, onView: (SqlHistoryRow) -> Unit) {
         Spacer(Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                row.sqlText.replace('\n', ' ').trim().ifEmpty { "(空)" },
+                row.sqlText.replace('\n', ' ').trim().ifEmpty { t(Str.HistoryEmptySql) },
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
@@ -145,10 +148,10 @@ internal fun historyEntryMeta(row: SqlHistoryRow): String {
         )
     }.getOrDefault("")
     val head = when {
-        !row.ok -> "失败"
-        row.rowCount > 0 -> "${row.rowCount} 行"
-        else -> "完成"
+        !row.ok -> I18n.t(Str.HistoryFailed)
+        row.rowCount > 0 -> I18n.t(Str.HistoryRows, row.rowCount)
+        else -> I18n.t(Str.HistoryDone)
     }
     return "$t · $head · ${row.durationMs} ms" +
-        if (row.errorMessage != null && row.errorMessage != "已取消执行") " · ${row.errorMessage}" else ""
+        if (row.errorMessage != null && row.errorMessage != I18n.t(Str.ErrorCancelled)) " · ${row.errorMessage}" else ""
 }

@@ -1,6 +1,8 @@
 package jdbc
 
 import engine.model.SchemaMeta
+import i18n.I18n
+import i18n.Str
 import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.PreparedStatement
@@ -147,16 +149,16 @@ object RowUpdater {
     ): Int {
         val sql = when (op) {
             is WriteOp.Update -> {
-                require(op.plan.sets.isNotEmpty()) { "没有要更新的列" }
-                require(op.plan.keys.isNotEmpty()) { "缺少行定位键" }
+                require(op.plan.sets.isNotEmpty()) { I18n.t(Str.ErrNoColumnsToUpdate) }
+                require(op.plan.keys.isNotEmpty()) { I18n.t(Str.ErrMissingRowKey) }
                 buildUpdateSql(op.plan, dialect)
             }
             is WriteOp.Insert -> {
-                require(op.plan.columns.isNotEmpty()) { "没有要插入的列" }
+                require(op.plan.columns.isNotEmpty()) { I18n.t(Str.ErrNoColumnsToInsert) }
                 buildInsertSql(op.plan, dialect)
             }
             is WriteOp.Delete -> {
-                require(op.plan.keys.isNotEmpty()) { "缺少行定位键" }
+                require(op.plan.keys.isNotEmpty()) { I18n.t(Str.ErrMissingRowKey) }
                 buildDeleteSql(op.plan, dialect)
             }
         }
@@ -208,8 +210,8 @@ object RowUpdater {
         }
 
     private fun affectedMessage(op: WriteOp, affected: Int): String = when (op) {
-        is WriteOp.Insert -> "INSERT 未影响 1 行：影响 $affected 行（期望 1 行），已回滚"
-        else -> "WHERE 未能唯一定位：影响 $affected 行（期望 1 行），已回滚"
+        is WriteOp.Insert -> I18n.t(Str.ErrInsertAffected, affected)
+        else -> I18n.t(Str.ErrWhereNotUnique, affected)
     }
 
     /** 按目标列 JDBC 类型把字符串单元格值绑到参数上；类型不符抛 [CellValueException]。 */
@@ -219,7 +221,7 @@ object RowUpdater {
             ps.setNull(index, cv.sqlType)
             return
         }
-        if (isBinarySqlType(cv.sqlType)) throw CellValueException("列 ${cv.column}：二进制列不支持编辑")
+        if (isBinarySqlType(cv.sqlType)) throw CellValueException(I18n.t(Str.ErrBinaryNotEditable, cv.column))
         try {
             when (cv.sqlType) {
                 Types.TINYINT, Types.SMALLINT, Types.INTEGER, Types.BIGINT ->
@@ -241,7 +243,7 @@ object RowUpdater {
         } catch (e: CellValueException) {
             throw e
         } catch (_: Exception) {
-            throw CellValueException("列 ${cv.column}：\"$raw\" 不是合法的${typeLabel(cv.sqlType)}")
+            throw CellValueException(I18n.t(Str.ErrInvalidValue, cv.column, raw, typeLabel(cv.sqlType)))
         }
     }
 
@@ -252,14 +254,14 @@ object RowUpdater {
     }
 
     private fun typeLabel(sqlType: Int): String = when (sqlType) {
-        Types.TINYINT, Types.SMALLINT, Types.INTEGER, Types.BIGINT -> "整数"
-        Types.NUMERIC, Types.DECIMAL -> "小数"
-        Types.FLOAT, Types.REAL, Types.DOUBLE -> "浮点数"
-        Types.BOOLEAN, Types.BIT -> "布尔值"
-        Types.DATE -> "日期"
-        Types.TIME -> "时间"
-        Types.TIMESTAMP -> "时间戳"
-        else -> "字符串"
+        Types.TINYINT, Types.SMALLINT, Types.INTEGER, Types.BIGINT -> I18n.t(Str.TypeInteger)
+        Types.NUMERIC, Types.DECIMAL -> I18n.t(Str.TypeDecimal)
+        Types.FLOAT, Types.REAL, Types.DOUBLE -> I18n.t(Str.TypeFloat)
+        Types.BOOLEAN, Types.BIT -> I18n.t(Str.TypeBoolean)
+        Types.DATE -> I18n.t(Str.TypeDate)
+        Types.TIME -> I18n.t(Str.TypeTime)
+        Types.TIMESTAMP -> I18n.t(Str.TypeTimestamp)
+        else -> I18n.t(Str.TypeString)
     }
 
     private fun literal(v: CellValue): String =

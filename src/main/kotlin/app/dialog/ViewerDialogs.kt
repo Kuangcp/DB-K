@@ -62,6 +62,8 @@ import app.ui.sqlHighlightSpans
 import app.ui.jsonHighlightSpans
 import app.ui.sqlSyntaxPalette
 import engine.Protocol
+import i18n.I18n
+import i18n.Str
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Image
@@ -137,10 +139,10 @@ private fun decodeImageSafely(bytes: ByteArray): ImageBitmap {
         val srcW = image.width
         val srcH = image.height
         require(srcW.toLong() * srcH <= MAX_IMAGE_PIXELS) {
-            "图片分辨率过大（$srcW×$srcH）"
+            I18n.t(Str.ViewerImageTooLarge, srcW, srcH)
         }
         val (dstW, dstH) = previewSize(srcW, srcH)
-        check(bitmap.allocPixels(ImageInfo.makeN32Premul(dstW, dstH))) { "无法分配图片内存" }
+        check(bitmap.allocPixels(ImageInfo.makeN32Premul(dstW, dstH))) { I18n.t(Str.ViewerOutOfMemory) }
         Canvas(bitmap).use { canvas ->
             if (dstW == srcW && dstH == srcH) {
                 canvas.drawImage(image, 0f, 0f)
@@ -289,15 +291,15 @@ fun DdlDialog(
         ddl = null
         loadDdl(request.profile, request.schema, request.objectName).fold(
             onSuccess = { ddl = it },
-            onFailure = { error = it.message ?: "读取失败" },
+            onFailure = { error = it.message ?: I18n.t(Str.ViewerReadFailed) },
         )
         loading = false
     }
 
     val title = if (request.profile.dbType.protocol == Protocol.ELASTICSEARCH) {
-        "${request.noun}映射 · ${request.objectName}"
+        I18n.t(Str.DdlTitleMapping, I18n.t(request.noun), request.objectName)
     } else {
-        "${request.noun}定义 · ${request.objectName}"
+        I18n.t(Str.DdlTitleDefinition, I18n.t(request.noun), request.objectName)
     }
     DialogWindow(
         onCloseRequest = onDismiss,
@@ -318,7 +320,7 @@ fun DdlDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(" 正在读取定义…", style = MaterialTheme.typography.body2)
+                    Text(I18n.t(Str.ViewerLoadingDefinition), style = MaterialTheme.typography.body2)
                 }
                 ddl != null -> if (request.profile.dbType.protocol == Protocol.ELASTICSEARCH) {
                     JsonCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
@@ -327,7 +329,7 @@ fun DdlDialog(
                 }
                 else -> Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     Text(
-                        error ?: "未获取到定义。",
+                        error ?: I18n.t(Str.ViewerNoDefinition),
                         style = MaterialTheme.typography.body2,
                         color = MaterialTheme.colors.error,
                     )
@@ -340,9 +342,9 @@ fun DdlDialog(
             ) {
                 TextButton(
                     enabled = !ddl.isNullOrBlank(),
-                    onClick = { ddl?.let { onCopy(it, "已复制「${request.objectName}」定义") } },
-                ) { Text("复制全部") }
-                TextButton(onClick = onDismiss) { Text("关闭") }
+                    onClick = { ddl?.let { onCopy(it, I18n.t(Str.ViewerCopiedDefinition, request.objectName)) } },
+                ) { Text(I18n.t(Str.ViewerCopyAll)) }
+                TextButton(onClick = onDismiss) { Text(I18n.t(Str.ViewerClose)) }
             }
         }
     }
@@ -364,7 +366,7 @@ fun TextViewerDialog(
     /** 副标题；null 时回退为「N 字符 · M 行」。 */
     subtitle: String? = null,
     /** 复制成功后的 Toast 文案。 */
-    copyToast: String = "已复制全部内容",
+    copyToast: String = I18n.t(Str.ViewerCopiedAll),
     /** 可选的额外动作按钮（如历史 SQL 的「插入到当前控制台」）；null 则不显示。 */
     extraAction: Pair<String, () -> Unit>? = null,
 ) {
@@ -383,7 +385,7 @@ fun TextViewerDialog(
                 .padding(12.dp),
         ) {
             Text(
-                subtitle ?: "${content.length} 字符 · $lineCount 行",
+                subtitle ?: I18n.t(Str.ViewerCharLines, content.length, lineCount),
                 style = MaterialTheme.typography.caption,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                 modifier = Modifier.padding(bottom = 6.dp),
@@ -401,8 +403,8 @@ fun TextViewerDialog(
                 extraAction?.let { (label, onClick) ->
                     TextButton(onClick = onClick) { Text(label) }
                 }
-                TextButton(onClick = { onCopy(content, copyToast) }) { Text("复制全部") }
-                TextButton(onClick = onDismiss) { Text("关闭") }
+                TextButton(onClick = { onCopy(content, copyToast) }) { Text(I18n.t(Str.ViewerCopyAll)) }
+                TextButton(onClick = onDismiss) { Text(I18n.t(Str.ViewerClose)) }
             }
         }
     }
@@ -473,9 +475,9 @@ fun CellViewerDialog(
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val bytes = decodeBase64Bytes(content)
-                    require(bytes.size <= MAX_IMAGE_BYTES) { "图片过大（${humanSize(bytes.size)}）" }
+                    require(bytes.size <= MAX_IMAGE_BYTES) { I18n.t(Str.ViewerImageTooBigBytes, humanSize(bytes.size)) }
                     val bmp = decodeImageSafely(bytes)
-                    Triple(bmp, imageFormatName(bytes) ?: "图片", bytes.size)
+                    Triple(bmp, imageFormatName(bytes) ?: I18n.t(Str.ViewerImage), bytes.size)
                 }
             }
             result.onSuccess { (bmp, fmt, size) ->
@@ -487,7 +489,7 @@ fun CellViewerDialog(
                     fmt, bmp.width, bmp.height, size, NativeMemory.rssKb(),
                 )
             }.onFailure {
-                imageError = it.message ?: "无法识别为图片"
+                imageError = it.message ?: I18n.t(Str.ViewerNotImage)
                 showImage = false
             }
             imageBusy = false
@@ -511,7 +513,7 @@ fun CellViewerDialog(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     buildString {
-                        append("${content.length} 字符 · $lineCount 行")
+                        append(I18n.t(Str.ViewerCharLines, content.length, lineCount))
                         if (jsonRoot != null) append(" · JSON")
                     },
                     style = MaterialTheme.typography.caption,
@@ -526,17 +528,17 @@ fun CellViewerDialog(
                         Text(
                             when {
                                 jsonBusy -> "JSON…"
-                                jsonRoot == null -> "非 JSON"
-                                jsonMode -> "原文"
-                                else -> "JSON 树"
+                                jsonRoot == null -> I18n.t(Str.ViewerNotJson)
+                                jsonMode -> I18n.t(Str.ViewerRaw)
+                                else -> I18n.t(Str.ViewerJsonTree)
                             },
                             fontSize = 12.sp,
                         )
                     }
                 }
                 if (jsonRoot != null && jsonMode && !showImage) {
-                    TextButton(onClick = { jsonTreeState.expandAll() }) { Text("展开全部", fontSize = 12.sp) }
-                    TextButton(onClick = { jsonTreeState.collapseAll() }) { Text("收起全部", fontSize = 12.sp) }
+                    TextButton(onClick = { jsonTreeState.expandAll() }) { Text(I18n.t(Str.ViewerExpandAll), fontSize = 12.sp) }
+                    TextButton(onClick = { jsonTreeState.collapseAll() }) { Text(I18n.t(Str.ViewerCollapseAll), fontSize = 12.sp) }
                 }
                 TextButton(
                     enabled = !md5Busy,
@@ -554,9 +556,9 @@ fun CellViewerDialog(
                 ) {
                     Text(
                         when {
-                            imageBusy -> "解码中…"
-                            showImage -> "返回文本"
-                            else -> "按图片查看"
+                            imageBusy -> I18n.t(Str.ViewerDecoding)
+                            showImage -> I18n.t(Str.ViewerBackToText)
+                            else -> I18n.t(Str.ViewerViewAsImage)
                         },
                         fontSize = 12.sp,
                     )
@@ -580,7 +582,7 @@ fun CellViewerDialog(
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                     )
-                    TextButton(onClick = { onCopy(hash, "已复制 MD5") }) { Text("复制", fontSize = 12.sp) }
+                    TextButton(onClick = { onCopy(hash, I18n.t(Str.ViewerCopiedMd5)) }) { Text(I18n.t(Str.ViewerCopy), fontSize = 12.sp) }
                     TextButton(onClick = { md5 = null }) { Text("×", fontSize = 12.sp) }
                 }
             }
@@ -591,7 +593,7 @@ fun CellViewerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "无法按图片查看：$msg",
+                        I18n.t(Str.ViewerCannotViewImage, msg),
                         fontSize = 11.sp,
                         color = MaterialTheme.colors.error,
                         modifier = Modifier.weight(1f),
@@ -639,8 +641,8 @@ fun CellViewerDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { onCopy(content, "已复制单元格内容") }) { Text("复制全部") }
-                TextButton(onClick = onDismiss) { Text("关闭") }
+                TextButton(onClick = { onCopy(content, I18n.t(Str.ViewerCopiedCell)) }) { Text(I18n.t(Str.ViewerCopyAll)) }
+                TextButton(onClick = onDismiss) { Text(I18n.t(Str.ViewerClose)) }
             }
         }
     }
@@ -660,7 +662,7 @@ fun CommitPreviewDialog(
     DialogWindow(
         onCloseRequest = onDismiss,
         state = rememberDialogState(size = DpSize(720.dp, 520.dp)),
-        title = "提交预览 · ${request.statements.size} 条 UPDATE",
+        title = I18n.t(Str.CommitPreviewTitle, request.statements.size),
         resizable = true,
         onPreviewKeyEvent = escapeCloses(onDismiss),
     ) {
@@ -671,7 +673,7 @@ fun CommitPreviewDialog(
                 .padding(12.dp),
         ) {
             Text(
-                "将按主键定位、在同一事务中执行下列语句；任一语句影响行数 ≠ 1 则整体回滚。",
+                I18n.t(Str.CommitPreviewHint),
                 style = MaterialTheme.typography.caption,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -682,13 +684,13 @@ fun CommitPreviewDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(onClick = onDismiss) { Text(I18n.t(Str.CommonCancel)) }
                 TextButton(
                     onClick = {
                         onDismiss()
                         request.onConfirm()
                     },
-                ) { Text("提交", color = MaterialTheme.colors.primary) }
+                ) { Text(I18n.t(Str.CommonSubmit), color = MaterialTheme.colors.primary) }
             }
         }
     }

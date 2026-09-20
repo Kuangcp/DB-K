@@ -45,6 +45,7 @@ src/main/kotlin/
 │   ├── ui/         #   AppTheme、SqlWorkspace、SqlEditing（补全/高亮）、ResultEditPlan、自绘图标
 │   ├── dialog/     #   连接编辑、设置、单字段输入、查看器（SQL/单元格/DDL/提交预览）
 │   └── settings/   #   主题 / 窗口 / 树展开 / 编辑器字体 / Redis 浏览状态 等 properties 持久化
+├── i18n/           # 国际化文案纯叶层：Lang / Str key / CatalogZh+En / I18n.t（只依赖 JDK）
 ├── engine/         # 协议无关契约层（叶层，不 import jdbc/db/app/compose/coroutines）
 │   ├── DataSourceSession.kt   # 通用会话接口：元数据 + 执行 + cancel
 │   ├── BackendCapabilities.kt # 能力位（可编辑/SQL 补全/DDL/懒加载/编辑器语言）
@@ -62,9 +63,11 @@ src/main/kotlin/
 - `engine/` 是**协议无关叶层**：JDBC / Redis / ES 都实现它的 `DataSourceSession`；
   它不依赖 `jdbc`/`db`/`app`，也不依赖 compose/coroutines（阻塞 API，由 app 层包 `Dispatchers.IO`）；
 - `jdbc/`、`redis/`、`tree/`、`db/` 不依赖 compose，纯 Kotlin + JDK，逻辑可单测；
+- `i18n/` 是文案纯叶层（只依赖 JDK），任何层可取文案（非 UI 用 `I18n.t`，UI 用可组合 `t`），见 `doc/I18N.md`；
 - JDBC 专属概念（主键写回、DDL、事务）留在 `jdbc/`（如 `EditableSession`），不进入通用层；新增协议按能力位降级；
 - `app/` 允许 import 所有层，负责状态与调用编排；**后端选择集中在 `app/state/SessionFactory`**（按 `dbType.protocol`）；
-- 依赖方向单向：`app → (engine, db, jdbc, redis, tree)`，`jdbc/redis → engine`，`db → engine/model`，`engine` 不反向依赖。
+- 依赖方向单向：`app → (engine, db, jdbc, redis, tree)`，`jdbc/redis → engine`，`db → engine/model`，`engine` 不反向依赖；
+  `i18n/` 被所有层单向依赖。
 
 ---
 

@@ -8,7 +8,9 @@ import engine.model.ObjectSearch
 import engine.model.SQL_OBJECT_KINDS
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
-import engine.model.displayNoun
+import engine.model.groupKey
+import i18n.I18n
+import i18n.Str
 
 /** 左侧树行类别。M2：连接行之下支持 schema / 对象组 / 对象。 */
 enum class TreeRowKind {
@@ -55,7 +57,7 @@ data class TreeRowInfo(
     val message: String? = null,
     /** SCHEMA 行。 */
     val schema: SchemaMeta? = null,
-    /** OBJECT_GROUP 行：该组的对象类型（label 取 [ObjectKind.displayNoun]）。 */
+    /** OBJECT_GROUP 行：该组的对象类型（label 取 [ObjectKind.groupKey]）。 */
     val groupKind: ObjectKind? = null,
     /** DB_OBJECT 行。 */
     val dbObject: DbObjectMeta? = null,
@@ -255,23 +257,23 @@ private fun appendConnection(
     if (!expanded) return
 
     when (status) {
-        ConnUiStatus.CONNECTING -> out += loadingPlaceholder(depth + 1, "p:${conn.id}:connecting", "正在连接…")
-        ConnUiStatus.DISCONNECTED -> out += infoPlaceholder(depth + 1, "p:${conn.id}:disconnected", "未连接")
+        ConnUiStatus.CONNECTING -> out += loadingPlaceholder(depth + 1, "p:${conn.id}:connecting", I18n.t(Str.TreeConnecting))
+        ConnUiStatus.DISCONNECTED -> out += infoPlaceholder(depth + 1, "p:${conn.id}:disconnected", I18n.t(Str.TreeDisconnected))
         ConnUiStatus.ERROR -> out += TreeRowInfo(
             key = "p:${conn.id}:error",
             kind = TreeRowKind.PLACEHOLDER,
             depth = depth + 1,
-            name = runtime.statusMessageOf(conn.id) ?: "连接失败",
+            name = runtime.statusMessageOf(conn.id) ?: I18n.t(Str.TreeConnectFailed),
             placeholderKind = PlaceholderKind.ERROR,
         )
         ConnUiStatus.CONNECTED -> {
             when {
                 schemas == null && runtime.schemasLoadingOf(conn.id) ->
-                    out += loadingPlaceholder(depth + 1, "p:${conn.id}:schemas", "正在加载库列表…")
+                    out += loadingPlaceholder(depth + 1, "p:${conn.id}:schemas", I18n.t(Str.TreeLoadingSchemas))
                 schemas == null ->
-                    out += infoPlaceholder(depth + 1, "p:${conn.id}:schemas", "尚未加载库列表")
+                    out += infoPlaceholder(depth + 1, "p:${conn.id}:schemas", I18n.t(Str.TreeSchemasNotLoaded))
                 schemas.isEmpty() ->
-                    out += infoPlaceholder(depth + 1, "p:${conn.id}:empty", "该连接下没有可见的库")
+                    out += infoPlaceholder(depth + 1, "p:${conn.id}:empty", I18n.t(Str.TreeNoVisibleSchemas))
                 // 命名空间即过滤器（Redis）：不铺 DB 行，只渲染当前 DB 的过滤条 + 键列表
                 flat -> appendFlatNamespace(out, conn, schemas, depth + 1, expandedGroupKeys, expandedKeyNamespaceKeys, runtime)
                 else -> schemas.forEach { schema ->
@@ -294,7 +296,7 @@ private fun appendFlatNamespace(
 ) {
     val active = runtime.activeNamespaceOf(conn.id)
     if (active == null) {
-        out += infoPlaceholder(depth, "p:${conn.id}:ns", "尚未选择库")
+        out += infoPlaceholder(depth, "p:${conn.id}:ns", I18n.t(Str.TreeNoNamespaceSelected))
         return
     }
     val search = runtime.objectSearchOf(conn.id)
@@ -316,7 +318,7 @@ private fun appendFlatNamespace(
         out += infoPlaceholder(
             depth + 1,
             "p:${conn.id}:keys",
-            runtime.statusMessageOf(conn.id) ?: "尚未加载键",
+            runtime.statusMessageOf(conn.id) ?: I18n.t(Str.TreeKeysNotLoaded),
         )
     } else {
         appendGroups(out, conn, active, depth, expandedGroupKeys, expandedKeyNamespaceKeys, runtime, lockedExpanded = true)
@@ -351,11 +353,11 @@ private fun appendSchema(
 
     when {
         objects == null && runtime.objectsLoadingOf(conn.id, schema.key) ->
-            out += loadingPlaceholder(depth + 1, "$rowKey:load", "正在加载对象…")
+            out += loadingPlaceholder(depth + 1, "$rowKey:load", I18n.t(Str.TreeLoadingObjects))
         objects == null ->
-            out += infoPlaceholder(depth + 1, "$rowKey:load", "尚未加载")
+            out += infoPlaceholder(depth + 1, "$rowKey:load", I18n.t(Str.TreeNotLoaded))
         objects.isEmpty ->
-            out += infoPlaceholder(depth + 1, "$rowKey:empty", "（空 schema）")
+            out += infoPlaceholder(depth + 1, "$rowKey:empty", I18n.t(Str.TreeEmptySchema))
         else -> appendGroups(out, conn, schema, depth + 1, expandedGroupKeys, expandedKeyNamespaceKeys, runtime, lockedExpanded = false)
     }
 }
@@ -386,7 +388,7 @@ private fun appendGroups(
                 out += infoPlaceholder(
                     depth,
                     "$schemaKey:g:${kind.name}:none",
-                    if (filtered) "无匹配的键" else "（无键）",
+                    if (filtered) I18n.t(Str.TreeNoMatchingKeys) else I18n.t(Str.TreeNoKeys),
                 )
             }
             return@forEach
@@ -397,7 +399,7 @@ private fun appendGroups(
             key = groupKey,
             kind = TreeRowKind.OBJECT_GROUP,
             depth = depth,
-            name = kind.displayNoun,
+            name = I18n.t(kind.groupKey),
             profile = conn,
             schema = schema,
             groupKind = kind,
@@ -410,9 +412,9 @@ private fun appendGroups(
         when {
             !objects.isLoaded(kind) && runtime.groupObjectsLoadingOf(conn.id, schema.key, kind) ->
                 // P6 懒加载：正文未拉取时给占位；上层在展开时触发 ensureGroupObjects
-                out += loadingPlaceholder(depth + 1, "$groupKey:load", "正在加载${kind.displayNoun}…")
+                out += loadingPlaceholder(depth + 1, "$groupKey:load", I18n.t(Str.TreeLoadingGroup, I18n.t(kind.groupKey)))
             !objects.isLoaded(kind) ->
-                out += infoPlaceholder(depth + 1, "$groupKey:load", "尚未加载")
+                out += infoPlaceholder(depth + 1, "$groupKey:load", I18n.t(Str.TreeNotLoaded))
             else -> {
                 val items = objects.forKind(kind)
                 if (kind == ObjectKind.KEY && conn.keySeparator.isNotBlank()) {
@@ -435,7 +437,7 @@ private fun appendGroups(
                         key = "$groupKey:more",
                         kind = TreeRowKind.LOAD_MORE,
                         depth = depth + 1,
-                        name = "继续扫描…",
+                        name = I18n.t(Str.TreeContinueScanning),
                         profile = conn,
                         schema = schema,
                         groupKind = kind,
@@ -625,7 +627,7 @@ private fun buildTreeRowsSearch(
                     key = groupKey,
                     kind = TreeRowKind.OBJECT_GROUP,
                     depth = depth + 2,
-                    name = kind.displayNoun,
+                    name = I18n.t(kind.groupKey),
                     profile = conn,
                     schema = schema,
                     groupKind = kind,
@@ -653,7 +655,7 @@ private fun buildTreeRowsSearch(
                         .filter { !cached.isLoaded(it) && cached.countOf(it) > 0 }
                     if (pending.isNotEmpty()) {
                         val n = pending.sumOf { cached.countOf(it) }
-                        out += infoPlaceholder(depth + 2, "$rowKey:pending", "另有 $n 个对象未缓存（连接后可搜索）")
+                        out += infoPlaceholder(depth + 2, "$rowKey:pending", I18n.t(Str.TreeUncachedObjects, n))
                     }
                 }
             }

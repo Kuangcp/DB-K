@@ -22,6 +22,8 @@
 - `engine/` → **协议无关契约层**（`DataSourceSession` / `BackendCapabilities` / `Protocol` + `engine/model`）：
   **纯叶层，不得 import `jdbc`/`db`/`app`/compose/coroutines**；新数据源（Redis / ES）实现同一接口，
   JDBC 专属能力（主键写回等）另立接口（如 `jdbc.EditableSession`），不污染通用层。
+- `i18n/` → **国际化文案纯叶层**（`Lang` / `Str` key 注册表 / 各语言 catalog / `I18n.t`）：
+  **只依赖 JDK，禁止 import compose/coroutines/任何上层**；被 `engine`/`tree`/`db`/`jdbc`/`redis`/`es`/`app` 依赖。
 - 状态即 snapshot：UI 可观察状态一律 `mutableStateOf`，读写经 `app/state` 的类方法
 
 ## 主题适配（主题切换 / 深色可读性）★ 必读
@@ -61,6 +63,25 @@
 - 配置项：编辑器字体族（系统字体名，空 = 默认等宽）+ 字号（8~24sp，带实时预览）。
 - 状态：`Main.kt` 的 `var editorSettings`，**持久化** `<dataDir>/editor.properties`（`EditorPrefs`/`EditorSettings`）；
   保存后即时重排编辑器（行高按 `EditorSettings.lineHeightSp` 随字号等比）。版本号来自构建产生的 `app/build/Version.kt`。
+
+## 国际化（i18n：中文 / English）★ 必读
+
+完整设计见 `doc/I18N.md`（结构、选型、迁移计划、测试）。落地必须遵守：
+
+1. **所有用户可见文案必须走 key，禁止硬编码中文/英文**：UI/状态/纯层统一用
+   `I18n.t(Str.Xxx, args…)`；Composable 内用 `app/i18n` 的可组合 `t(...)`（读 `LocalLang`，语言切换触发重组）。
+   key 唯一来源是 `i18n/Str.kt`；catalog 用 `when` 表达式 → **漏一种语言编译不过**。
+2. **新功能必须同时补 zh + en**（`CatalogZh` / `CatalogEn`），不得只写一种；`gradle test` 的
+   `I18nCatalogTest` 会校验占位符一致与非空。
+3. **派生 / 缓存 / 状态模型只存 key + 参数，绝不存已翻译文本**：典型如树分组行、`TableDdlRequest`，
+   渲染时再 `t(...)`；否则语言切换后旧译文不刷新。
+4. **分层**：`i18n/` 是纯叶层；`jdbc`/`redis`/`es`/`engine`/`tree`/`db` 用非 composable 的 `I18n.t`，
+   严禁为了取文案 import compose/coroutines。语言运行期状态 `I18n.lang` 由 `Main` 切换时同步写入。
+5. **不翻译**：`Logger.*` 日志、`*Smoke.kt` 自检输出、SQL 关键字/方言语法、数据源品牌名
+   （PostgreSQL / Redis / Ctrl / F5…）、数据库对象名 / 用户数据 / SQL 正文。
+6. **持久化**：语言存 `<dataDir>/app.properties`（key `language`，见 `LanguagePrefs`）；
+   属应用级偏好，**不落 SQLite**。默认跟随系统 locale。
+7. **新增界面必须中英各切一遍检查**（与主题深色检查同等要求）：无残留中文/英文、无占位符错位。
 
 ## 会话日志（每次启动一个文件，按月分目录）★ 必读
 

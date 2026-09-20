@@ -19,7 +19,6 @@ repositories {
 
 dependencies {
     implementation(compose.desktop.currentOs)
-    implementation("org.jetbrains.compose.components:components-resources:${property("compose.version")}")
     implementation("org.jetbrains.compose.material:material-icons-core:1.7.3")
     // 应用自身元数据存储（连接档案/文件夹/SQL 历史），与目标库无关
     implementation("org.xerial:sqlite-jdbc:3.47.2.0")

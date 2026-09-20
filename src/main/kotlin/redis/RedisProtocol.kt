@@ -2,6 +2,8 @@ package redis
 
 import engine.model.QueryColumn
 import engine.model.QueryResult
+import i18n.I18n
+import i18n.Str
 
 /**
  * Redis 控制台文本 → 命令 / 结果 的纯逻辑（无 Jedis 依赖，可单测）。
@@ -74,7 +76,7 @@ object RedisProtocol {
         val head = tokenize(statement).firstOrNull()?.uppercase()
         val (columns, rows) = when (reply) {
             null -> listOf(nullColumn()) to listOf(listOf("(nil)"))
-            is Map<*, *> -> listOf(nullColumn("键"), nullColumn("值")) to
+            is Map<*, *> -> listOf(nullColumn(I18n.t(Str.NounKey)), nullColumn(I18n.t(Str.NounValue))) to
                 reply.entries.map { listOf(replyToString(it.key), replyToString(it.value)) }
             is Collection<*> -> collectionToRows(reply.toList(), head)
             else -> listOf(nullColumn()) to listOf(listOf(replyToString(reply)))
@@ -83,7 +85,7 @@ object RedisProtocol {
     }
 
     private fun collectionToRows(items: List<Any?>, head: String?): Pair<List<QueryColumn>, List<List<String?>>> {
-        if (items.isEmpty()) return listOf(nullColumn()) to listOf(listOf("(空)"))
+        if (items.isEmpty()) return listOf(nullColumn()) to listOf(listOf(I18n.t(Str.RedisEmptyValue)))
         if (items.all { it is Collection<*> }) {
             // 嵌套数组（如 XRANGE）：展示为「# | 值」（内层用 " | " 连接）
             val rows = items.mapIndexed { i, e ->
@@ -93,7 +95,7 @@ object RedisProtocol {
         }
         if (head in TWO_COLUMN_COMMANDS && items.size % 2 == 0) {
             val rows = items.chunked(2).map { (k, v) -> listOf(replyToString(k), replyToString(v)) }
-            return listOf(nullColumn("键"), nullColumn("值")) to rows
+            return listOf(nullColumn(I18n.t(Str.NounKey)), nullColumn(I18n.t(Str.NounValue))) to rows
         }
         return listOf(nullColumn()) to items.map { listOf(replyToString(it)) }
     }
@@ -107,5 +109,5 @@ object RedisProtocol {
         else -> o.toString()
     }
 
-    private fun nullColumn(name: String = "值") = QueryColumn(name)
+    private fun nullColumn(name: String = I18n.t(Str.NounValue)) = QueryColumn(name)
 }

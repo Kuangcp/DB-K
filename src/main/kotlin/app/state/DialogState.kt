@@ -8,6 +8,7 @@ import app.core.export.ExportOptions
 import db.ConnectionProfile
 import db.FolderRow
 import engine.model.SchemaMeta
+import i18n.Str
 
 /** 连接档案编辑弹窗请求。 */
 sealed interface ConnectionEditorRequest {
@@ -38,8 +39,8 @@ data class TableDdlRequest(
     val profile: ConnectionProfile,
     val schema: SchemaMeta?,
     val objectName: String,
-    /** 中文名词（表/视图/物化视图），用于标题。 */
-    val noun: String,
+    /** 对象名词 key（表/视图/物化视图/对象…），用于标题；由 UI 层翻译。 */
+    val noun: Str,
 )
 
 /** 危险操作确认弹窗请求（删除类）。 */
@@ -49,7 +50,7 @@ sealed interface ConfirmRequest {
     data class DeleteConsole(val id: String, val name: String, val connectionName: String) : ConfirmRequest
 
     /** 有未提交的结果修改时，刷新/重跑等动作会丢弃它们 → 确认；[onDiscard] 为确认后执行的动作。 */
-    class DiscardResultEdits(val count: Int, val actionLabel: String, val onDiscard: () -> Unit) : ConfirmRequest
+    class DiscardResultEdits(val count: Int, val action: Str, val onDiscard: () -> Unit) : ConfirmRequest
 
     /** 批量标记删除结果行（已有多行待删时）→ 二次确认；[onConfirm] 为确认后执行的标记动作。 */
     class DeleteRows(val count: Int, val onConfirm: () -> Unit) : ConfirmRequest

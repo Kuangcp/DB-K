@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import app.i18n.t
 import app.ui.DbIcons
 import db.ConnectionProfile
 import db.ConsoleRecord
@@ -94,8 +95,10 @@ import db.FolderRow
 import engine.Protocol
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
-import engine.model.displayNoun
 import engine.model.isPreviewable
+import engine.model.nounKey
+import i18n.I18n
+import i18n.Str
 
 /** 行上下文动作（闭包已绑定具体行）。 */
 class RowActions(
@@ -430,62 +433,62 @@ private val MENU_COL_W = 208.dp
 private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
     when (row.kind) {
         TreeRowKind.FOLDER -> listOf(
-            TreeMenuItem.Action("在此新建连接") { actions.onAddConnectionAt() },
-            TreeMenuItem.Action("新建子文件夹") { actions.onAddFolderAt() },
-            TreeMenuItem.Action("重命名文件夹") { actions.onRenameFolder() },
-            TreeMenuItem.Action("删除文件夹") { actions.onDeleteFolder() },
+            TreeMenuItem.Action(I18n.t(Str.TreeMenuNewConnectionHere)) { actions.onAddConnectionAt() },
+            TreeMenuItem.Action(I18n.t(Str.TreeMenuNewSubfolder)) { actions.onAddFolderAt() },
+            TreeMenuItem.Action(I18n.t(Str.FolderRenameTitle)) { actions.onRenameFolder() },
+            TreeMenuItem.Action(I18n.t(Str.ConfirmDeleteFolderTitle)) { actions.onDeleteFolder() },
         )
         TreeRowKind.CONNECTION -> {
             val items = buildList {
                 when (row.connStatus) {
-                    ConnUiStatus.DISCONNECTED -> add(TreeMenuItem.Action("连接") { actions.onConnect() })
-                    ConnUiStatus.CONNECTING -> add(TreeMenuItem.Action("连接中…", enabled = false) {})
-                    ConnUiStatus.ERROR -> add(TreeMenuItem.Action("重新连接") { actions.onConnect() })
+                    ConnUiStatus.DISCONNECTED -> add(TreeMenuItem.Action(I18n.t(Str.TreeMenuConnect)) { actions.onConnect() })
+                    ConnUiStatus.CONNECTING -> add(TreeMenuItem.Action(I18n.t(Str.TreeMenuConnecting), enabled = false) {})
+                    ConnUiStatus.ERROR -> add(TreeMenuItem.Action(I18n.t(Str.TreeMenuReconnect)) { actions.onConnect() })
                     ConnUiStatus.CONNECTED -> {
-                        add(TreeMenuItem.Action("断开连接") { actions.onDisconnect() })
-                        add(TreeMenuItem.Action("刷新元数据缓存") { actions.onRefreshMetadata() })
+                        add(TreeMenuItem.Action(I18n.t(Str.TreeMenuDisconnect)) { actions.onDisconnect() })
+                        add(TreeMenuItem.Action(I18n.t(Str.TreeMenuRefreshMetadata)) { actions.onRefreshMetadata() })
                     }
                     null -> {}
                 }
             }
             items + listOf(
                 consoleMenuItem(actions),
-                TreeMenuItem.Action("在此数据源中搜索") { actions.onSearchInProfile() },
-                TreeMenuItem.Action("编辑连接") { actions.onEditConnection() },
-                TreeMenuItem.Action("删除连接档案") { actions.onDeleteConnection() },
+                TreeMenuItem.Action(I18n.t(Str.TreeMenuSearchInProfile)) { actions.onSearchInProfile() },
+                TreeMenuItem.Action(I18n.t(Str.TreeMenuEditConnection)) { actions.onEditConnection() },
+                TreeMenuItem.Action(I18n.t(Str.TreeMenuDeleteConnection)) { actions.onDeleteConnection() },
             )
         }
         TreeRowKind.DB_OBJECT -> {
             val obj = row.dbObject ?: return emptyList()
             val kind = obj.kind
             if (kind == ObjectKind.TRIGGER) {
-                return listOf(TreeMenuItem.Action("复制触发器名") { actions.onCopyName() })
+                return listOf(TreeMenuItem.Action(I18n.t(Str.TreeMenuCopyTriggerName)) { actions.onCopyName() })
             }
             val isSql = (row.profile?.dbType?.protocol ?: Protocol.JDBC) == Protocol.JDBC
             val isEs = row.profile?.dbType?.protocol == Protocol.ELASTICSEARCH
             buildList {
-                add(TreeMenuItem.Action("复制${kind.displayNoun}名") { actions.onCopyName() })
+                add(TreeMenuItem.Action(I18n.t(Str.TreeMenuCopyNounName, I18n.t(kind.nounKey))) { actions.onCopyName() })
                 if (kind.isPreviewable()) {
                     add(
                         TreeMenuItem.Action(
                             when {
-                                isSql -> "预览（前 100 行）"
-                                isEs -> "预览（DSL 查询）"
-                                else -> "查看键"
+                                isSql -> I18n.t(Str.TreeMenuPreviewRows)
+                                isEs -> I18n.t(Str.TreeMenuPreviewDsl)
+                                else -> I18n.t(Str.TreeMenuViewKey)
                             },
                         ) { actions.onPreviewTable() },
                     )
                     add(
                         TreeMenuItem.Action(
                             when {
-                                isSql -> "复制查询（SELECT 预览）"
-                                isEs -> "复制查询（DSL）"
-                                else -> "复制查看命令"
+                                isSql -> I18n.t(Str.TreeMenuCopyPreviewQuery)
+                                isEs -> I18n.t(Str.TreeMenuCopyDslQuery)
+                                else -> I18n.t(Str.TreeMenuCopyViewCommand)
                             },
                         ) { actions.onCopyQuery() },
                     )
-                    if (isSql) add(TreeMenuItem.Action("查看定义 (Ctrl+Q)") { actions.onViewDdl() })
-                    if (isEs) add(TreeMenuItem.Action("查看映射 (Ctrl+Q)") { actions.onViewDdl() })
+                    if (isSql) add(TreeMenuItem.Action(I18n.t(Str.TreeMenuViewDefinition)) { actions.onViewDdl() })
+                    if (isEs) add(TreeMenuItem.Action(I18n.t(Str.TreeMenuViewMapping)) { actions.onViewDdl() })
                 }
             }
         }
@@ -495,17 +498,17 @@ private fun rowMenu(row: TreeRowInfo, actions: RowActions): List<TreeMenuItem> =
 /** 「打开控制台」：无控制台时直接建首个并打开；否则给出向右级联（控制台列表 + 新建）。 */
 private fun consoleMenuItem(actions: RowActions): TreeMenuItem {
     if (actions.consoles.isEmpty()) {
-        return TreeMenuItem.Action("打开控制台") { actions.onOpenConsole() }
+        return TreeMenuItem.Action(I18n.t(Str.TreeMenuOpenConsole)) { actions.onOpenConsole() }
     }
     return TreeMenuItem.Submenu(
-        "打开控制台",
+        I18n.t(Str.TreeMenuOpenConsole),
         buildList {
             actions.consoles.forEach { c ->
                 val mark = if (c.id == actions.activeConsoleId) "  ✓" else ""
                 add(TreeMenuItem.Action(c.name + mark) { actions.onOpenConsoleRecord(c) })
             }
             add(TreeMenuItem.Separator)
-            add(TreeMenuItem.Action("新建控制台…") { actions.onCreateConsole() })
+            add(TreeMenuItem.Action(I18n.t(Str.TreeMenuNewConsole)) { actions.onCreateConsole() })
         },
     )
 }
@@ -666,11 +669,11 @@ private fun SidebarToolbar(
         modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("连接管理", style = MaterialTheme.typography.subtitle2, color = MaterialTheme.colors.onBackground)
+        Text(t(Str.TreeTitleConnectionManagement), style = MaterialTheme.typography.subtitle2, color = MaterialTheme.colors.onBackground)
         Spacer(Modifier.weight(1f))
-        ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = "文件夹", onClick = onAddFolder)
+        ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = t(Str.TreePillFolder), onClick = onAddFolder)
         Spacer(Modifier.width(2.dp))
-        ToolPill(icon = { Icon(DbIcons.Database, null, Modifier.size(13.dp)) }, label = "连接", onClick = onAddConnection)
+        ToolPill(icon = { Icon(DbIcons.Database, null, Modifier.size(13.dp)) }, label = t(Str.TreeMenuConnect), onClick = onAddConnection)
         Spacer(Modifier.width(2.dp))
         ToolPill(icon = { Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp)) }, label = null, onClick = onRefresh)
         Spacer(Modifier.width(2.dp))
@@ -699,13 +702,13 @@ private fun ArchiveMenu(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 onClick = { expanded = false; onExportProfiles() },
-            ) { Text("导出数据源（不含密码）…", fontSize = 13.sp) }
+            ) { Text(t(Str.TreeMenuExportNoPassword), fontSize = 13.sp) }
             DropdownMenuItem(
                 onClick = { expanded = false; onExportProfilesWithPasswords() },
-            ) { Text("导出数据源（含密码）…", fontSize = 13.sp) }
+            ) { Text(t(Str.TreeMenuExportWithPassword), fontSize = 13.sp) }
             DropdownMenuItem(
                 onClick = { expanded = false; onImportProfiles() },
-            ) { Text("导入数据源…", fontSize = 13.sp) }
+            ) { Text(t(Str.TreeMenuImport), fontSize = 13.sp) }
         }
     }
 }
@@ -749,7 +752,7 @@ private fun TreeSearchBar(
     onNavigate: (Int) -> Unit,
 ) {
     var scopeOpen by remember { mutableStateOf(false) }
-    val scopeLabel = scopeOptions.firstOrNull { it.first == scopeId }?.second ?: "全部"
+    val scopeLabel = scopeOptions.firstOrNull { it.first == scopeId }?.second ?: t(Str.TreeSearchScopeAll)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -815,7 +818,7 @@ private fun TreeSearchBar(
         Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
             if (query.isEmpty()) {
                 Text(
-                    "搜索表 / 视图 / 索引…",
+                    t(Str.TreeSearchPlaceholder),
                     fontSize = 12.sp,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
                     maxLines = 1,
@@ -846,14 +849,14 @@ private fun TreeSearchBar(
         }
         if (query.isNotEmpty()) {
             Text(
-                if (matchCount == 0) "无匹配" else "${activeIndex + 1}/$matchCount",
+                if (matchCount == 0) t(Str.TreeSearchNoMatch) else "${activeIndex + 1}/$matchCount",
                 fontSize = 10.5.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                 maxLines = 1,
                 modifier = Modifier.padding(end = 2.dp),
             )
             Icon(
-                Icons.Filled.Close, "清空搜索",
+                Icons.Filled.Close, t(Str.TreeSearchClear),
                 tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
                 modifier = Modifier.size(13.dp).clickable { onQueryChange("") },
             )
@@ -874,13 +877,13 @@ private fun NoMatchHint(query: String) {
             modifier = Modifier.size(26.dp),
         )
         Text(
-            "未找到匹配「$query」的对象",
+            t(Str.TreeSearchNoObject, query),
             style = MaterialTheme.typography.body2,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            "只搜索已加载的元数据：已连接数据源实时搜；未连接数据源仅在本地有缓存时参与，可能不是最新",
+            t(Str.TreeSearchHint),
             style = MaterialTheme.typography.caption,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
             modifier = Modifier.padding(top = 2.dp),
@@ -896,21 +899,21 @@ private fun EmptyTreeHint(onAddFolder: () -> Unit, onAddConnection: () -> Unit) 
     ) {
         Icon(DbIcons.Database, null, tint = MaterialTheme.colors.onSurface.copy(alpha = 0.3f), modifier = Modifier.size(32.dp))
         Text(
-            "还没有连接档案",
+            t(Str.TreeEmptyNoConnection),
             style = MaterialTheme.typography.body2,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            "先新建文件夹分组，再添加数据库连接",
+            t(Str.TreeEmptyHint),
             style = MaterialTheme.typography.caption,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
             modifier = Modifier.padding(top = 2.dp),
         )
         Row(modifier = Modifier.padding(top = 12.dp)) {
-            ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = "新建文件夹", onClick = onAddFolder)
+            ToolPill(icon = { Icon(DbIcons.Folder, null, Modifier.size(13.dp)) }, label = t(Str.FolderCreateTitle), onClick = onAddFolder)
             Spacer(Modifier.width(8.dp))
-            ToolPill(icon = { Icon(Icons.Filled.Add, null, Modifier.size(13.dp)) }, label = "新建连接", onClick = onAddConnection)
+            ToolPill(icon = { Icon(Icons.Filled.Add, null, Modifier.size(13.dp)) }, label = t(Str.TreePillNewConnection), onClick = onAddConnection)
         }
     }
 }
@@ -1032,7 +1035,7 @@ private fun TreeRowView(
                     val cachedHit = highlight.isNotEmpty() && row.connStatus != ConnUiStatus.CONNECTED
                     if (cachedHit) {
                         Text(
-                            "缓存",
+                            t(Str.TreeCache),
                             fontSize = 9.5.sp,
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
                             modifier = Modifier.padding(start = 6.dp),
@@ -1235,7 +1238,7 @@ private fun BoxScope.RootDropStrip(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            "移到根级（未分组）",
+            t(Str.TreeMenuMoveToRoot),
             fontSize = 11.5.sp,
             color = if (highlighted) MaterialTheme.colors.primary
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.65f),
@@ -1332,7 +1335,7 @@ private fun ExpandArrow(expanded: Boolean, onClick: () -> Unit) {
     ) {
         Icon(
             imageVector = if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = if (expanded) "收起" else "展开",
+            contentDescription = if (expanded) t(Str.TreeCollapse) else t(Str.TreeExpand),
             tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
             modifier = Modifier.size(16.dp),
         )
@@ -1343,7 +1346,7 @@ private fun ExpandArrow(expanded: Boolean, onClick: () -> Unit) {
 private fun keySuffix(obj: DbObjectMeta?): String? {
     if (obj == null || obj.kind != ObjectKind.KEY) return null
     val type = obj.detail ?: "?"
-    val ttl = obj.ttlSeconds?.let(::ttlLabel) ?: "永久"
+    val ttl = obj.ttlSeconds?.let(::ttlLabel) ?: I18n.t(Str.TreeTtlForever)
     return "$type · $ttl"
 }
 
@@ -1354,22 +1357,24 @@ private fun ttlLabel(seconds: Long): String = when {
     else -> "${seconds / 86400}d"
 }
 
-/** key 类型过滤选项（首项 = 全部）。 */
-private val KEY_TYPE_OPTIONS = listOf("全部", "string", "hash", "list", "set", "zset", "stream")
+/** key 类型过滤选项（首项 = 全部）。getter 每次重算，语言切换后重新取值。 */
+private val KEY_TYPE_OPTIONS: List<String>
+    get() = listOf(I18n.t(Str.TreeSearchScopeAll), "string", "hash", "list", "set", "zset", "stream")
 
 /** Redis 过滤条：DB 下拉 + 类型下拉 + key pattern 搜索（`SCAN MATCH`）。 */
 @Composable
 private fun FilterBar(row: TreeRowInfo, actions: RowActions) {
     val filter = row.filter ?: return
+    val allLabel = t(Str.TreeSearchScopeAll)
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FilterDropdown(label = "DB", value = filter.db, options = filter.dbOptions, onSelect = actions.onSelectDb)
             Spacer(Modifier.width(6.dp))
             FilterDropdown(
-                label = "类型",
-                value = filter.type ?: "全部",
+                label = t(Str.TreeKeyTypeLabel),
+                value = filter.type ?: allLabel,
                 options = KEY_TYPE_OPTIONS,
-                onSelect = { actions.onSelectKeyType(if (it == "全部") null else it) },
+                onSelect = { actions.onSelectKeyType(if (it == allLabel) null else it) },
             )
         }
         // "*" 是内部“无过滤”表示，UI 上以空 + 占位提示呈现
@@ -1404,7 +1409,7 @@ private fun FilterBar(row: TreeRowInfo, actions: RowActions) {
                     Box {
                         if (text.isEmpty()) {
                             Text(
-                                "key 模式，如 user:*",
+                                t(Str.TreeKeyPatternPlaceholder),
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.35f),
                                 maxLines = 1,
@@ -1416,7 +1421,7 @@ private fun FilterBar(row: TreeRowInfo, actions: RowActions) {
             )
             if (text.isNotEmpty()) {
                 Icon(
-                    Icons.Filled.Close, "清空",
+                    Icons.Filled.Close, t(Str.TreeClear),
                     tint = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
                     modifier = Modifier.size(13.dp).clickable {
                         text = ""

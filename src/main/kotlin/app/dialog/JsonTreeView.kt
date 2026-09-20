@@ -52,6 +52,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import i18n.I18n
+import i18n.Str
 
 /**
  * JSON 树的展开/收起状态（路径 → 是否展开），由对话框持有，便于工具栏放「全部展开/全部收起」。
@@ -153,7 +155,7 @@ private fun JsonTreeRow(
                     } else {
                         Icons.AutoMirrored.Filled.KeyboardArrowRight
                     },
-                    contentDescription = if (line.expanded) "收起" else "展开",
+                    contentDescription = if (line.expanded) I18n.t(Str.TreeCollapse) else I18n.t(Str.TreeExpand),
                     tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
                     modifier = Modifier.size(14.dp).align(Alignment.Center),
                 )

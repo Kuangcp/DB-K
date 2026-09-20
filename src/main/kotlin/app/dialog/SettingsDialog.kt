@@ -48,14 +48,24 @@ import androidx.compose.ui.window.rememberDialogState
 import app.build.Version
 import app.core.openDirectory
 import app.core.writeClipboardText
+import app.i18n.ProvideI18n
+import app.i18n.t
 import app.settings.EditorSettings
 import app.settings.Keymap
 import app.ui.appMaterialColors
 import app.ui.editorFontFamily
 import db.AppPaths
+import i18n.I18n
+import i18n.Lang
+import i18n.Str
 
-/** 设置窗口的完整快照：编辑器外观 + 快捷键。保存时一并落盘。 */
-data class SettingsSnapshot(val editor: EditorSettings, val keymap: Keymap)
+/** 设置窗口的完整快照：编辑器外观 + 快捷键 + 语言。保存时一并落盘。 */
+data class SettingsSnapshot(
+    val editor: EditorSettings,
+    val keymap: Keymap,
+    /** 语言偏好；`null` = 跟随系统。 */
+    val language: Lang? = null,
+)
 
 /**
  * 设置窗口（独立 [DialogWindow]，与主窗口同款主题）。
@@ -65,6 +75,7 @@ data class SettingsSnapshot(val editor: EditorSettings, val keymap: Keymap)
 fun SettingsDialog(
     visible: Boolean,
     isDark: Boolean,
+    language: Lang,
     initial: SettingsSnapshot,
     onDismiss: () -> Unit,
     onSave: (SettingsSnapshot) -> Unit,
@@ -72,13 +83,16 @@ fun SettingsDialog(
     if (!visible) return
     DialogWindow(
         onCloseRequest = onDismiss,
-        title = "设置",
+        title = t(Str.SettingsTitle),
         state = rememberDialogState(width = 760.dp, height = 520.dp),
     ) {
-        MaterialTheme(colors = appMaterialColors(isDark)) {
-            // 独立窗口是另一棵 composition：M2 MaterialTheme 不设 LocalContentColor，需同样兜底
-            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
-                SettingsBody(initial = initial, onCancel = onDismiss, onSave = onSave)
+        // DialogWindow 是独立 composition，不继承主窗口的 CompositionLocal → 自行提供语言
+        ProvideI18n(language) {
+            MaterialTheme(colors = appMaterialColors(isDark)) {
+                // 独立窗口是另一棵 composition：M2 MaterialTheme 不设 LocalContentColor，需同样兜底
+                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
+                    SettingsBody(initial = initial, onCancel = onDismiss, onSave = onSave)
+                }
             }
         }
     }
@@ -94,6 +108,7 @@ private fun SettingsBody(
     var fontFamily by remember { mutableStateOf(initial.editor.fontFamilyName) }
     var fontSize by remember { mutableFloatStateOf(initial.editor.fontSizeSp) }
     var keymap by remember { mutableStateOf(initial.keymap) }
+    var languagePref by remember { mutableStateOf(initial.language) }
 
     Column(
         modifier = Modifier
@@ -110,8 +125,8 @@ private fun SettingsBody(
                     .background(MaterialTheme.colors.surface)
                     .padding(vertical = 8.dp),
             ) {
-                SettingsNavRow(label = "通用设置", selected = section == 0) { section = 0 }
-                SettingsNavRow(label = "快捷键", selected = section == 1) { section = 1 }
+                SettingsNavRow(label = t(Str.SettingsSectionGeneral), selected = section == 0) { section = 0 }
+                SettingsNavRow(label = t(Str.SettingsSectionShortcuts), selected = section == 1) { section = 1 }
             }
             Divider(
                 modifier = Modifier.width(1.dp).fillMaxHeight(),
@@ -133,6 +148,8 @@ private fun SettingsBody(
                             onFontFamilyChange = { fontFamily = it },
                             fontSize = fontSize,
                             onFontSizeChange = { fontSize = it },
+                            languagePref = languagePref,
+                            onLanguageChange = { languagePref = it },
                         )
                         DiagnosticsSection()
                     }
@@ -149,14 +166,16 @@ private fun SettingsBody(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "版本：v${Version.NAME}-${Version.COMMIT}",
+                text = t(Str.SettingsVersion, Version.NAME, Version.COMMIT),
                 fontSize = 11.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
             )
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = onCancel) { Text("取消") }
-            TextButton(onClick = { onSave(SettingsSnapshot(EditorSettings.sanitized(fontFamily, fontSize), keymap)) }) {
-                Text("保存")
+            TextButton(onClick = onCancel) { Text(t(Str.CommonCancel)) }
+            TextButton(onClick = {
+                onSave(SettingsSnapshot(EditorSettings.sanitized(fontFamily, fontSize), keymap, languagePref))
+            }) {
+                Text(t(Str.CommonSave))
             }
         }
     }
@@ -187,9 +206,11 @@ private fun GeneralSection(
     onFontFamilyChange: (String) -> Unit,
     fontSize: Float,
     onFontSizeChange: (Float) -> Unit,
+    languagePref: Lang?,
+    onLanguageChange: (Lang?) -> Unit,
 ) {
     Text(
-        "编辑器外观",
+        t(Str.SettingsEditorAppearance),
         style = MaterialTheme.typography.subtitle2,
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
@@ -197,13 +218,13 @@ private fun GeneralSection(
         value = fontFamily,
         onValueChange = onFontFamilyChange,
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("编辑器字体") },
-        placeholder = { Text("留空 = 默认等宽字体；如 JetBrains Mono、Fira Code") },
+        label = { Text(t(Str.SettingsEditorFont)) },
+        placeholder = { Text(t(Str.SettingsEditorFontPlaceholder)) },
         singleLine = true,
         colors = settingsFieldColors(),
     )
     Text(
-        "编辑器字号（sp）：${"%.0f".format(fontSize)}",
+        t(Str.SettingsEditorFontSize, "%.0f".format(fontSize)),
         style = MaterialTheme.typography.body2,
         color = MaterialTheme.colors.onSurface,
     )
@@ -214,7 +235,7 @@ private fun GeneralSection(
         modifier = Modifier.fillMaxWidth(),
     )
     Text(
-        "预览",
+        t(Str.SettingsPreview),
         style = MaterialTheme.typography.subtitle2,
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
@@ -238,6 +259,44 @@ private fun GeneralSection(
             lineHeight = EditorSettings.lineHeightSp(fontSize).sp,
             color = MaterialTheme.colors.onSurface,
         )
+    }
+    Text(
+        t(Str.SettingsLanguage),
+        style = MaterialTheme.typography.subtitle2,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+    )
+    LanguageRow(current = languagePref, onChange = onLanguageChange)
+}
+
+/** 语言选择：跟随系统 / 简体中文 / English（选中项高亮，徽章样式与主题选择一致）。 */
+@Composable
+private fun LanguageRow(current: Lang?, onChange: (Lang?) -> Unit) {
+    val options: List<Pair<Lang?, String>> = listOf(
+        null to t(Str.SettingsLanguageSystem),
+        Lang.ZH to t(Str.SettingsLanguageZh),
+        Lang.EN to t(Str.SettingsLanguageEn),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (value, label) ->
+            val selected = value == current
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        if (selected) MaterialTheme.colors.primary.copy(alpha = 0.18f) else Color.Transparent,
+                    )
+                    .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                    .clickable { onChange(value) }
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    label,
+                    color = if (selected) MaterialTheme.colors.onSurface
+                    else MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+                    style = MaterialTheme.typography.body2,
+                )
+            }
+        }
     }
 }
 
@@ -264,12 +323,12 @@ private fun DiagnosticsSection() {
     var hint by remember { mutableStateOf<String?>(null) }
 
     Text(
-        "诊断",
+        t(Str.SettingsDiagnostics),
         style = MaterialTheme.typography.subtitle2,
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
     Text(
-        "日志目录",
+        t(Str.SettingsLogDir),
         style = MaterialTheme.typography.body2,
         color = MaterialTheme.colors.onSurface,
     )
@@ -281,8 +340,14 @@ private fun DiagnosticsSection() {
         modifier = Modifier.fillMaxWidth(),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = { openOrCopy(logDir, "日志目录") { hint = it } }) { Text("打开日志目录") }
-        TextButton(onClick = { openOrCopy(dataDir, "数据目录") { hint = it } }) { Text("打开数据目录") }
+        val logLabel = t(Str.SettingsLogDir)
+        val dataLabel = t(Str.SettingsDataDir)
+        TextButton(onClick = { openOrCopy(logDir, logLabel) { hint = it } }) {
+            Text(t(Str.SettingsOpenLogDir))
+        }
+        TextButton(onClick = { openOrCopy(dataDir, dataLabel) { hint = it } }) {
+            Text(t(Str.SettingsOpenDataDir))
+        }
     }
     hint?.let {
         Text(
@@ -300,6 +365,6 @@ private fun openOrCopy(dir: java.nio.file.Path, label: String, setHint: (String?
         setHint(null)
     } else {
         writeClipboardText(dir.toString())
-        setHint("当前环境无法自动打开$label，已复制路径到剪贴板")
+        setHint(I18n.t(Str.SettingsOpenFailed, label))
     }
 }

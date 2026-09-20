@@ -19,6 +19,8 @@ import redis.clients.jedis.params.ScanParams
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import i18n.I18n
+import i18n.Str
 
 /**
  * Redis 后端（`engine.DataSourceSession` 的 Redis 版，阻塞式 Jedis）。
@@ -171,7 +173,7 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
         // 元数据探测会切换连接所在 DB；无显式目标时固定回到连接默认 DB，避免“跑到最后一个探测的 DB”。
         selectFromContext(j, sessionContextSql ?: "SELECT ${dbIndex(profile.database)}")
         val tokens = RedisProtocol.tokenize(statement)
-        require(tokens.isNotEmpty()) { "空命令" }
+        require(tokens.isNotEmpty()) { I18n.t(Str.RedisEmptyCommand) }
         val started = System.currentTimeMillis()
         val reply = j.sendCommand(RawCommand(tokens[0]), *tokens.drop(1).toTypedArray())
         RedisProtocol.replyToResult(statement, reply, System.currentTimeMillis() - started)

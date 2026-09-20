@@ -57,11 +57,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ConnectionEditorRequest
+import app.i18n.t
 import app.state.SessionFactory
 import app.state.friendlySqlError
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
+import i18n.I18n
+import i18n.Str
 import jdbc.ExternalDrivers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -157,7 +160,7 @@ fun ConnectionEditorDialog(
             testing = false
             if (failure == null) {
                 testPassed = true
-                testMessage = "连接成功"
+                testMessage = I18n.t(Str.ConnTestOk)
             } else {
                 testPassed = false
                 testMessage = failure
@@ -167,7 +170,7 @@ fun ConnectionEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEdit) "编辑连接" else "新建连接") },
+        title = { Text(t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)) },
         text = {
             // 表单默认按内容撑高（独立弹窗，高度随内容自适应），把底部「测试连接」等一次展示完；
             // 上限按屏幕可用高度推算，只有屏幕真装不下时才滚动，并显示右侧滚动条。
@@ -180,10 +183,10 @@ fun ConnectionEditorDialog(
                 (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(280.dp)
             }
             FormBody(maxFormHeight) {
-                FormRow("名称") {
+                FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
                 }
-                FormRow("类型") {
+                FormRow(t(Str.TreeKeyTypeLabel)) {
                     DropdownField(
                         label = dbType.label,
                         options = DbType.entries.map { it.label },
@@ -201,19 +204,20 @@ fun ConnectionEditorDialog(
                     val ready = ExternalDrivers.isAvailable(dbType.driverClass)
                     Text(
                         if (ready) {
-                            "外部驱动已加载：${dbType.driverClass}"
+                            t(Str.ConnExternalDriverLoaded, dbType.driverClass)
                         } else {
-                            "外部驱动未加载：请将 ${dbType.label} 驱动 jar 放入 ${ExternalDrivers.driversDir()} 后重启"
+                            t(Str.ConnExternalDriverMissing, dbType.label, ExternalDrivers.driversDir())
                         },
                         style = MaterialTheme.typography.caption,
                         color = if (ready) MaterialTheme.colors.onSurface.copy(alpha = 0.55f) else Color(0xFFFFB300),
                         modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
                     )
                 }
-                FormRow("文件夹") {
+                val ungroupedLabel = t(Str.ConnUngrouped)
+                FormRow(t(Str.TreePillFolder)) {
                     val flatFolders = remember(folders) { flattenFolderTree(folders) }
-                    val options = remember(folders) {
-                        listOf("未分组") + flatFolders.map { (f, depth) ->
+                    val options = remember(folders, ungroupedLabel) {
+                        listOf(ungroupedLabel) + flatFolders.map { (f, depth) ->
                             buildString {
                                 repeat(depth) { append("    ") }
                                 append(f.name)
@@ -221,7 +225,7 @@ fun ConnectionEditorDialog(
                         }
                     }
                     DropdownField(
-                        label = folderId?.let { fid -> folders.firstOrNull { it.id == fid }?.name } ?: "未分组",
+                        label = folderId?.let { fid -> folders.firstOrNull { it.id == fid }?.name } ?: ungroupedLabel,
                         options = options,
                         onSelect = { idx ->
                             folderId = if (idx == 0) null else flatFolders[idx - 1].first.id
@@ -230,14 +234,14 @@ fun ConnectionEditorDialog(
                 }
                 if (!isEmbedded) {
                     PairRow(
-                        labelA = "主机",
+                        labelA = t(Str.FormHost),
                         fieldA = {
                             CompactField(
                                 value = host, onValueChange = { host = it },
                                 placeholder = "localhost",
                             )
                         },
-                        labelB = "端口",
+                        labelB = t(Str.FormPort),
                         fieldB = {
                             CompactField(
                                 value = portText,
@@ -247,20 +251,20 @@ fun ConnectionEditorDialog(
                         },
                     )
                 }
-                FormRow(if (isEmbedded) "文件路径" else if (isRedis) "DB 序号" else if (isEs) "默认索引（可空）" else "数据库") {
+                FormRow(if (isEmbedded) t(Str.FormFilePath) else if (isRedis) t(Str.FormDbIndex) else if (isEs) t(Str.FormDefaultIndex) else t(Str.FormDatabase)) {
                     CompactField(
                         value = database,
                         onValueChange = { database = it },
                         placeholder = when {
                             isEmbedded -> "/path/to/demo.db"
                             isRedis -> "0"
-                            isEs -> "my-index（可空）"
+                            isEs -> t(Str.ConnEsIndexPlaceholder)
                             else -> dbType.label.lowercase()
                         },
                     )
                 }
                 if (isRedis) {
-                    FormRow("Key 分隔符") {
+                    FormRow(t(Str.FormKeySeparator)) {
                         CompactField(
                             value = keySeparator,
                             onValueChange = { keySeparator = it },
@@ -268,7 +272,7 @@ fun ConnectionEditorDialog(
                         )
                     }
                     Text(
-                        "按分隔符把键渲染成层级目录（如 a:b:c → a / b / c）；留空 = 平铺显示全部键",
+                        t(Str.ConnKeySeparatorHint),
                         style = MaterialTheme.typography.caption,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                         modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
@@ -276,14 +280,14 @@ fun ConnectionEditorDialog(
                 }
                 if (!isEmbedded) {
                     PairRow(
-                        labelA = "用户名",
+                        labelA = t(Str.FormUser),
                         fieldA = {
                             CompactField(
                                 value = user, onValueChange = { user = it },
-                                placeholder = if (isEs) "elastic（可空）" else "root",
+                                placeholder = if (isEs) t(Str.ConnEsUserPlaceholder) else "root",
                             )
                         },
-                        labelB = if (isEs) "密码 / API Key" else "密码",
+                        labelB = if (isEs) t(Str.FormPasswordOrApiKey) else t(Str.FormPassword),
                         fieldB = {
                             CompactField(
                                 value = password, onValueChange = { password = it },
@@ -294,13 +298,13 @@ fun ConnectionEditorDialog(
                     )
                     if (isEs) {
                         Text(
-                            "用户名为空时，密码按 API Key 认证（Authorization: ApiKey）；附加参数支持 scheme=https、path=/es",
+                            t(Str.ConnEsAuthHint),
                             style = MaterialTheme.typography.caption,
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                             modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
                         )
                     }
-                    FormRow("附加参数") {
+                    FormRow(t(Str.FormExtraParams)) {
                         CompactField(
                             value = extra,
                             onValueChange = { extra = it },
@@ -311,8 +315,8 @@ fun ConnectionEditorDialog(
                 if (!isEmbedded && (database.isNotBlank() || isRedis || isEs)) {
                     Text(
                         when {
-                            isRedis -> "连接串：${build().urlPreview()}"
-                            isEs -> "连接地址：${build().urlPreview()}"
+                            isRedis -> t(Str.ConnUrlPreviewRedis, build().urlPreview())
+                            isEs -> t(Str.ConnUrlPreviewEs, build().urlPreview())
                             else -> "JDBC URL：${build().urlPreview()}"
                         },
                         style = MaterialTheme.typography.caption,
@@ -337,7 +341,7 @@ fun ConnectionEditorDialog(
                                 strokeWidth = 1.5.dp,
                             )
                         }
-                        Text("测试连接", fontSize = 12.5.sp)
+                        Text(t(Str.ConnTestButton), fontSize = 12.5.sp)
                     }
                     val statusColor = when {
                         testPassed == true -> Color(0xFF43A047)
@@ -345,9 +349,9 @@ fun ConnectionEditorDialog(
                         else -> MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
                     }
                     val statusText = when {
-                        testing -> "正在连接…"
+                        testing -> t(Str.ConnTesting)
                         testMessage.isNotEmpty() -> testMessage
-                        else -> "填入主机/端口/账号后点此验证"
+                        else -> t(Str.ConnTestHint)
                     }
                     Text(
                         statusText,
@@ -361,10 +365,10 @@ fun ConnectionEditorDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text("保存") }
+            TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
         },
     )
 }
@@ -514,7 +518,7 @@ private fun DropdownField(
             )
             Icon(
                 Icons.Filled.ArrowDropDown,
-                contentDescription = "选择",
+                contentDescription = t(Str.ConnSelect),
                 tint = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.size(20.dp),
             )
