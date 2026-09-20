@@ -42,7 +42,9 @@ src/main/kotlin/
 ├── app/            # 应用层：Compose UI 组合 + 状态（可 import 一切）
 │   ├── core/       #   Main.kt：Window + 全局快捷键 + 副作用动作（CsvExport / DesktopOpen / 日志）
 │   ├── state/      #   TreeState / ConnectionsState / ConsoleState / DialogState / ColumnCatalog 等
-│   ├── ui/         #   AppTheme、SqlWorkspace、SqlEditing（补全/高亮）、ResultEditPlan、自绘图标
+│   ├── ui/         #   AppTheme、SqlWorkspace（拆分见下）、SqlEditing（补全/高亮）、ResultEditPlan、自绘图标
+│   │               #   SqlWorkspace 已拆：ConsoleHeaderBar / ConsoleTabBar / SqlEditorPane /
+│   │               #   FindReplaceBar / CompletionPopup / ResultToolbar / ResultPane / ResultTable / ResultCells
 │   ├── dialog/     #   连接编辑、设置、单字段输入、查看器（SQL/单元格/DDL/提交预览）
 │   └── settings/   #   主题 / 窗口 / 树展开 / 编辑器字体 / Redis 浏览状态 等 properties 持久化
 ├── i18n/           # 国际化文案纯叶层：Lang / Str key / CatalogZh+En / I18n.t（只依赖 JDK）
