@@ -271,6 +271,26 @@ fun WindowScope.SqlWorkspace(
             findOpen = findReplaceOpen,
             onFormatSql = { formatRef.value?.invoke() },
             onOpenFindReplace = { findReplaceOpen = !findReplaceOpen },
+            // 数据源导航整行搬进标题栏（格式化 icon 左侧），不再单独占一行。
+            navContent = {
+                val p = profile
+                if (p != null) {
+                    ConnectionNavBar(
+                        profile = p,
+                        status = status,
+                        statusMessage = statusMessage,
+                        profiles = profiles,
+                        onSelectProfile = onSelectProfile,
+                        onDisconnect = onDisconnect,
+                        supportsTargetSwitch = supportsTargetSwitch,
+                        targetLabel = targetLabel,
+                        targetAllowDefault = targetAllowDefault,
+                        schemas = schemas,
+                        target = targetSchema,
+                        onSelectTarget = onSelectTarget,
+                    )
+                }
+            },
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         val profilesById = remember(profiles) { profiles.associateBy { it.id } }
@@ -285,23 +305,7 @@ fun WindowScope.SqlWorkspace(
             }
             return
         }
-        // 控制台主导：标签条固定显示全部数据源的控制台；已激活时上方展示该控制台绑定的数据源 + 执行目标。
-        if (profile != null) {
-            ConnectionNavBar(
-                profile = profile,
-                status = status,
-                statusMessage = statusMessage,
-                profiles = profiles,
-                onSelectProfile = onSelectProfile,
-                onDisconnect = onDisconnect,
-                supportsTargetSwitch = supportsTargetSwitch,
-                targetLabel = targetLabel,
-                targetAllowDefault = targetAllowDefault,
-                schemas = schemas,
-                target = targetSchema,
-                onSelectTarget = onSelectTarget,
-            )
-        }
+        // 控制台主导：标签条固定显示全部数据源的控制台；数据源/目标已在标题栏内展示。
         ConsoleTabBar(
             consoles = consoles,
             activeConsole = activeConsole,

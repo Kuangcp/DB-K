@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -65,6 +66,8 @@ internal fun WindowScope.HeaderBar(
     findOpen: Boolean = false,
     onFormatSql: () -> Unit = {},
     onOpenFindReplace: () -> Unit = {},
+    /** 标题栏内联的「数据源导航」内容（由调用方注入，渲染在格式化 icon 左侧）。 */
+    navContent: @Composable RowScope.() -> Unit = {},
 ) {
     val topBarIconTint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
     val isWindowMaximized = mainWindowState.placement == WindowPlacement.Maximized ||
@@ -82,6 +85,7 @@ internal fun WindowScope.HeaderBar(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
             ) {
+                navContent()
                 if (showEditorActions) {
                     IconButton(onClick = onFormatSql, modifier = Modifier.size(28.dp)) {
                         Icon(
@@ -174,9 +178,9 @@ internal fun WindowScope.HeaderBar(
     }
 }
 
-/** 绑定数据源导航行：展示当前控制台的数据源（点击可切到其它数据源），右侧是执行目标切换与断开。 */
+/** 标题栏内联的数据源导航：数据源切换 / 状态 / 执行目标 / 断开（整行控制在标题栏内，不再单独占一行）。 */
 @Composable
-internal fun ConnectionNavBar(
+internal fun RowScope.ConnectionNavBar(
     profile: ConnectionProfile,
     status: ConnUiStatus,
     statusMessage: String?,
@@ -197,84 +201,78 @@ internal fun ConnectionNavBar(
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(38.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .clickable(enabled = profiles.size > 1) { menuOpen = true }
+            .padding(horizontal = 6.dp, vertical = 4.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(RoundedCornerShape(5.dp))
-                .clickable(enabled = profiles.size > 1) { menuOpen = true }
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-        ) {
-            TypeBadge(profile.dbType)
-            Text(
-                profile.name,
-                style = MaterialTheme.typography.body2,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 7.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        TypeBadge(profile.dbType)
+        Text(
+            profile.name,
+            style = MaterialTheme.typography.body2,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(start = 7.dp).widthIn(max = 140.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (profiles.size > 1) {
+            Icon(
+                Icons.Filled.ArrowDropDown, t(Str.EditorSwitchSource),
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.size(18.dp),
             )
-            if (profiles.size > 1) {
-                Icon(
-                    Icons.Filled.ArrowDropDown, t(Str.EditorSwitchSource),
-                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                profiles.forEach { p ->
-                    DropdownMenuItem(onClick = {
-                        menuOpen = false
-                        if (p.id != profile.id) onSelectProfile(p.id)
-                    }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TypeBadge(p.dbType)
-                            Text(
-                                p.name,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(start = 8.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            profiles.forEach { p ->
+                DropdownMenuItem(onClick = {
+                    menuOpen = false
+                    if (p.id != profile.id) onSelectProfile(p.id)
+                }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TypeBadge(p.dbType)
+                        Text(
+                            p.name,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(start = 8.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
         }
-        Spacer(Modifier.width(8.dp))
-        StatusDot(status)
+    }
+    Spacer(Modifier.width(8.dp))
+    StatusDot(status)
+    Text(
+        statusLabel(status),
+        fontSize = 11.sp,
+        color = statusColor(status),
+        modifier = Modifier.padding(start = 4.dp),
+    )
+    if (status == ConnUiStatus.ERROR && statusMessage != null) {
         Text(
-            statusLabel(status),
+            statusMessage,
             fontSize = 11.sp,
-            color = statusColor(status),
-            modifier = Modifier.padding(start = 4.dp),
+            color = MaterialTheme.colors.error,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 8.dp).widthIn(max = 220.dp),
         )
-        if (status == ConnUiStatus.ERROR && statusMessage != null) {
-            Text(
-                statusMessage,
-                fontSize = 11.sp,
-                color = MaterialTheme.colors.error,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false),
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        if (supportsTargetSwitch) {
-            TargetSwitcher(
-                enabled = status == ConnUiStatus.CONNECTED && schemas != null,
-                loading = status == ConnUiStatus.CONNECTED && schemas == null,
-                title = targetLabel,
-                allowDefault = targetAllowDefault,
-                schemas = schemas.orEmpty(),
-                target = target,
-                onSelectTarget = onSelectTarget,
-            )
-        }
-        if (status == ConnUiStatus.CONNECTED) {
-            TextButton(onClick = onDisconnect) { Text(t(Str.EditorDisconnect), fontSize = 12.sp) }
-        }
+    }
+    if (supportsTargetSwitch) {
+        TargetSwitcher(
+            enabled = status == ConnUiStatus.CONNECTED && schemas != null,
+            loading = status == ConnUiStatus.CONNECTED && schemas == null,
+            title = targetLabel,
+            allowDefault = targetAllowDefault,
+            schemas = schemas.orEmpty(),
+            target = target,
+            onSelectTarget = onSelectTarget,
+        )
+    }
+    if (status == ConnUiStatus.CONNECTED) {
+        TextButton(onClick = onDisconnect) { Text(t(Str.EditorDisconnect), fontSize = 12.sp) }
     }
 }
 
