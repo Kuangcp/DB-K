@@ -65,13 +65,20 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
         ORDER BY o.oprname
     """.trimIndent()
 
-    /** 类型：只列用户可感知的自定义类型（复合/枚举/域/范围/多范围），排除内部数组镜像。 */
+    /**
+     * 类型：只列用户可感知的自定义类型（复合/枚举/域/范围/多范围），排除内部数组镜像。
+     * 同时排除 PG 为每张表/视图/物化视图/外部表/分区/序列自动创建的同名"行类型"：
+     * 这类复合类型的 `typrelid` 指向 `relkind IN ('r','p','f','v','m','S')` 的 pg_class 条目，
+     * 而真正 `CREATE TYPE ... AS (...)` 的独立复合类型其 relkind 为 `'c'`（域/枚举等 typrelid = 0）。
+     */
     private val typesSql = """
         SELECT DISTINCT t.typname
         FROM pg_catalog.pg_type t
         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        LEFT JOIN pg_catalog.pg_class c ON c.oid = t.typrelid
         WHERE n.nspname = ? AND t.typtype IN ('c','e','d','r','m')
             AND t.typname NOT LIKE '\_%'
+            AND (t.typrelid = 0 OR c.relkind = 'c')
         ORDER BY t.typname
     """.trimIndent()
 
@@ -122,8 +129,10 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
         SELECT 'typ', '', count(DISTINCT t.typname)::int
         FROM pg_catalog.pg_type t
         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        LEFT JOIN pg_catalog.pg_class c ON c.oid = t.typrelid
         WHERE n.nspname = ? AND t.typtype IN ('c','e','d','r','m')
             AND t.typname NOT LIKE '\_%'
+            AND (t.typrelid = 0 OR c.relkind = 'c')
         UNION ALL
         SELECT 'opc', '', count(DISTINCT c.opcname)::int
         FROM pg_catalog.pg_opclass c
