@@ -9,11 +9,14 @@ import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -49,6 +52,8 @@ fun ConsoleNameDialog(
 ) {
     var name by remember { mutableStateOf(initial) }
     val confirm = { onConfirm(name.trim()) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isCreate) "新建控制台" else "重命名控制台") },
@@ -67,6 +72,7 @@ fun ConsoleNameDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
+                        .focusRequester(focusRequester)
                         .onPreviewKeyEvent(submitOnEnter(name.isNotBlank(), confirm)),
                 )
             }
@@ -91,6 +97,8 @@ fun FolderNameDialog(
     val initial = (request as? FolderDialogRequest.Rename)?.folder?.name ?: ""
     var name by remember(request) { mutableStateOf(initial) }
     val confirm = { onConfirm(name.trim()) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(request) { focusRequester.requestFocus() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -109,6 +117,7 @@ fun FolderNameDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp)
+                        .focusRequester(focusRequester)
                         .onPreviewKeyEvent(submitOnEnter(name.isNotBlank(), confirm)),
                 )
             }
