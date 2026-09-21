@@ -118,6 +118,8 @@ class RowActions(
     val onCopyQuery: () -> Unit = {},
     /** CONNECTION 行：打开/激活该数据源的控制台（无控制台时直接建首个并打开）。 */
     val onOpenConsole: () -> Unit = {},
+    /** CONNECTION 行：双击 = 确保连接并打开控制台（进当前工作区）。 */
+    val onActivateProfile: () -> Unit = {},
     /** CONNECTION 行：把搜索范围限定为该数据源（右键「在此数据源中搜索」）。 */
     val onSearchInProfile: () -> Unit = {},
     /** CONNECTION 行：该数据源的已有控制台（右键「打开控制台」级联子菜单用）。 */
@@ -162,8 +164,8 @@ private fun treeScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
  * 左侧树：文件夹 → 连接 → 库(schema) → 对象组 → 表/视图/触发器。
  * 扁平化渲染：每行一个 [TreeRowInfo]，缩进按 depth。
  *
- * 交互约定：单击 = 选中；连接行未连接/连接失败时**双击 = 连接**（上层负责连接与懒加载库列表，
- * 连接后自动展开）；已连接后双击 = 展开/收起；可展开行双击同箭头走 onToggleExpand。
+ * 交互约定：单击 = 仅选中（不打开控制台）；双击连接行 = 连接（如需）+ 在当前工作区打开控制台；
+ * 双击可展开行 = 展开/收起；双击表/视图 = 预览。断开连接走右键菜单。
  * 右键按行类型给菜单（连接行右键菜单里的“连接/重新连接”是双击的兜底入口）。
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -369,6 +371,7 @@ fun DbTreeSidebar(
                                 onCopyName = { onCopyName(row) },
                                 onCopyQuery = { onCopyQuery(row) },
                                 onOpenConsole = { row.profile?.let(onOpenConsoleForProfile) },
+                                onActivateProfile = { row.profile?.let(onOpenConsoleForProfile) },
                                 onSearchInProfile = {
                                     val p = row.profile
                                     if (p != null) {
@@ -1019,9 +1022,8 @@ private fun TreeRowView(
             when {
                 // 单击「继续扫描」：拉下一页键
                 row.kind == TreeRowKind.LOAD_MORE -> actions.onLoadMore()
-                // 双击连接行：未连接/失败 → 连接（CONNECTING 忽略，避免重复触发）
-                double && row.kind == TreeRowKind.CONNECTION && row.connStatus != ConnUiStatus.CONNECTED ->
-                    if (row.connStatus == ConnUiStatus.CONNECTING) onSelect() else onToggle()
+                // 双击连接行：确保连接 + 在当前工作区打开控制台（断开只走右键菜单）
+                double && row.kind == TreeRowKind.CONNECTION -> actions.onActivateProfile()
                 // 双击表/视图/物化视图 → 预览；双击可展开行 → 展开/收起；其余对象无预览语义
                 double && row.kind == TreeRowKind.DB_OBJECT && row.dbObject?.kind?.isPreviewable() == true ->
                     actions.onPreviewTable()
