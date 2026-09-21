@@ -449,6 +449,8 @@ internal fun en(key: Str): String = when (key) {
     Str.CmdToggleResults -> "Show/hide result pane"
     Str.CmdTranspose -> "Transpose rows/columns"
     Str.CmdRefreshResult -> "Refresh result"
+    Str.CmdSwitchConsoleNext -> "Next console (most recently used)"
+    Str.CmdSwitchConsolePrev -> "Previous console (most recently used)"
     Str.CmdSaveConsole -> "Save console"
     Str.CmdFindReplace -> "Find & replace"
     Str.CmdComplete -> "Trigger completion"

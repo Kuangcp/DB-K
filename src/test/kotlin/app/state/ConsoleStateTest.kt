@@ -398,4 +398,109 @@ class ConsoleStateTest {
             assertTrue(state.editsOf(c.id).isEmpty)
         }
     }
+
+    @Test
+    fun `switchConsoleByMru cycles all open consoles in recency order`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c1 = state.createConsole(pid, "1")
+            val c2 = state.createConsole(pid, "2")
+            val c3 = state.createConsole(pid, "3")
+            // 每次 createConsole 都会 activate：MRU = c3, c2, c1
+            assertEquals(c3.id, state.activeConsoleId)
+
+            state.switchConsoleByMru(1)
+            assertEquals(c2.id, state.activeConsoleId)
+            state.switchConsoleByMru(1)
+            assertEquals(c1.id, state.activeConsoleId)
+            state.switchConsoleByMru(1) // 回绕到最近使用的 c3
+            assertEquals(c3.id, state.activeConsoleId)
+        }
+    }
+
+    @Test
+    fun `switchConsoleByMru reverse and single console no-op`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c1 = state.createConsole(pid, "1")
+            state.createConsole(pid, "2")
+            state.createConsole(pid, "3")
+            // MRU = c3, c2, c1；反向 → 快照最后一个 c1
+            state.switchConsoleByMru(-1)
+            assertEquals(c1.id, state.activeConsoleId)
+        }
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val only = state.createConsole(pid, "only")
+            assertNull(state.switchConsoleByMru(1))
+            assertEquals(only.id, state.activeConsoleId)
+        }
+    }
+
+    @Test
+    fun `endMruCycle restarts snapshot from current recency order`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            state.createConsole(pid, "1")
+            state.createConsole(pid, "2")
+            val c3 = state.createConsole(pid, "3")
+            state.switchConsoleByMru(1) // c3 -> c2
+            val c2 = state.openConsoles(pid).first { it.name == "2" }
+            assertEquals(c2.id, state.activeConsoleId)
+            state.endMruCycle() // 等价于松开 Ctrl
+            state.switchConsoleByMru(1) // 新会话：MRU = c2, c3, c1 → c3
+            assertEquals(c3.id, state.activeConsoleId)
+        }
+    }
+
+    @Test
+    fun `switchConsoleByMru skips closed consoles`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val c1 = state.createConsole(pid, "1")
+            val c2 = state.createConsole(pid, "2")
+            val c3 = state.createConsole(pid, "3")
+            state.closeConsole(c3.id)
+            repeat(4) {
+                state.switchConsoleByMru(1)
+                assertTrue(state.activeConsoleId == c1.id || state.activeConsoleId == c2.id)
+            }
+        }
+    }
+
+    @Test
+    fun `switchConsoleByMru cycles forward and backward with wraparound`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            state.createConsole(pid, "1")
+            val c2 = state.createConsole(pid, "2")
+            val c3 = state.createConsole(pid, "3")
+            // 创建即激活，MRU = c3, c2, c1
+            assertEquals(c3.id, state.activeConsoleId)
+            assertEquals(c2.id, state.switchConsoleByMru(1)?.id)
+            val c1 = state.openConsoles(pid).first { it.name == "1" }
+            assertEquals(c1.id, state.switchConsoleByMru(1)?.id)
+            assertEquals(c3.id, state.switchConsoleByMru(1)?.id) // 回绕
+            state.endMruCycle()
+            // 反向：新快照 MRU = c3, c1, c2 → c3 的上一个是 c2
+            assertEquals(c2.id, state.switchConsoleByMru(-1)?.id)
+        }
+    }
+
+    @Test
+    fun `switchConsoleByMru is a no-op with a single open console`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val only = state.createConsole(pid, "1")
+            assertNull(state.switchConsoleByMru(1))
+            assertEquals(only.id, state.activeConsoleId)
+        }
+    }
 }

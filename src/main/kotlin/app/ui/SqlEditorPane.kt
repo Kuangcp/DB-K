@@ -42,6 +42,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -115,6 +117,10 @@ internal fun EditorPane(
     /** N2：查找替换栏显隐（由 SqlWorkspace 控制）。 */
     findOpen: Boolean = false,
     onCloseFind: () -> Unit = {},
+    /** Ctrl+Tab / Ctrl+Shift+Tab：按 MRU 切换控制台（参数 ±1）。 */
+    onSwitchConsole: (Int) -> Unit = {},
+    /** 外部持有的焦点请求器（Ctrl+Tab 切换后交回焦点）。 */
+    focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     // 快捷键表：编辑器内的执行/补全用可配置键，其余为语义固定的编辑交互。
@@ -640,6 +646,7 @@ internal fun EditorPane(
                         .weight(1f)
                         .fillMaxHeight()
                         .padding(start = 2.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+                        .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                         .verticalScroll(scroll)
                         .onPreviewKeyEvent { e ->
                             if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -654,6 +661,17 @@ internal fun EditorPane(
                                 editing = true
                                 forceComplete = true
                                 dismissed = false
+                                return@onPreviewKeyEvent true
+                            }
+                            // Ctrl+Tab / Ctrl+Shift+Tab：按最近使用切控制台（消费，避免 Tab 走焦点遍历）
+                            if (keymap.matches(ShortcutCommand.SWITCH_CONSOLE_NEXT, e)) {
+                                editing = false // 顺带收起补全弹层
+                                onSwitchConsole(1)
+                                return@onPreviewKeyEvent true
+                            }
+                            if (keymap.matches(ShortcutCommand.SWITCH_CONSOLE_PREV, e)) {
+                                editing = false
+                                onSwitchConsole(-1)
                                 return@onPreviewKeyEvent true
                             }
                             if (popupOpen) {

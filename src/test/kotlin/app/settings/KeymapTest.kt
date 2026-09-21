@@ -65,7 +65,10 @@ class KeymapTest {
     @Test
     fun `configurable commands are exactly the business features`() {
         assertEquals(
-            listOf("execute", "formatSql", "viewDdl", "toggleResults", "transpose", "refreshResult"),
+            listOf(
+                "execute", "formatSql", "viewDdl", "toggleResults", "transpose", "refreshResult",
+                "switchConsoleNext", "switchConsolePrev",
+            ),
             ShortcutCommand.configurableCommands.map { it.id },
         )
         // 基础编辑键不进设置

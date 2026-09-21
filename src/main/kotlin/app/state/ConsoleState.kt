@@ -126,6 +126,13 @@ class ConsoleState(
     /** 会话内记住每个数据源最后激活的控制台（重启后默认选 updated_at 最新）。 */
     private val lastActivePerProfile = mutableMapOf<String, String>()
 
+    /** 全局最近使用顺序（最近在前，跨数据源）；纯瞬态，Ctrl+Tab 循环用。 */
+    private val mruOrder = mutableListOf<String>()
+
+    /** Ctrl+Tab 循环会话：首次按下取「已打开控制台」快照，松开 Ctrl 清空。 */
+    private var mruCycleIds: List<String>? = null
+    private var mruCycleIndex: Int = 0
+
     /** 编辑器缓冲区与文件加载标记。 */
     private val buffers = mutableMapOf<String, String>()
     private val loaded = mutableSetOf<String>()
@@ -530,6 +537,8 @@ class ConsoleState(
         }
         activeConsoleId = console.id
         lastActivePerProfile[console.connectionId] = console.id
+        mruOrder.remove(console.id)
+        mruOrder.add(0, console.id)
         if (console.id !in loaded) {
             buffers[console.id] = repository.readConsoleContent(console.id)
             loaded += console.id
@@ -569,6 +578,39 @@ class ConsoleState(
         return best
     }
 
+    /**
+     * Ctrl+Tab 循环切换：在「已打开控制台按最近使用排序」的快照上前进/后退（[delta] = ±1），回绕。
+     * 首次按下取快照，之后连续按都在同一快照上走，所以 3 个以上也能全走到；
+     * [endMruCycle] 在 Ctrl 松开时清快照（下次按下重新取）。
+     */
+    fun switchConsoleByMru(delta: Int): ConsoleRecord? {
+        val open = openConsolesByMru()
+        if (open.size <= 1) return null
+        val openIds = open.map { it.id }
+        var ids = mruCycleIds
+        if (ids == null || ids.any { it !in openIds }) {
+            ids = openIds
+            mruCycleIds = ids
+            mruCycleIndex = ids.indexOf(activeConsoleId).let { if (it < 0) 0 else it }
+        }
+        mruCycleIndex = ((mruCycleIndex + delta) % ids.size + ids.size) % ids.size
+        val target = open.firstOrNull { it.id == ids[mruCycleIndex] } ?: return null
+        activate(target)
+        return target
+    }
+
+    /** Ctrl 松开：结束 MRU 循环会话（下次按下重新取快照）。 */
+    fun endMruCycle() {
+        mruCycleIds = null
+    }
+
+    /** 已打开控制台按最近使用排序（最新在前）；从未激活过的按仓库顺序补到末尾。 */
+    private fun openConsolesByMru(): List<ConsoleRecord> {
+        val open = consolesByConnection.keys.flatMap { openConsoles(it) }
+        val byId = open.associateBy { it.id }
+        return mruOrder.mapNotNull { byId[it] } + open.filter { it.id !in mruOrder }
+    }
+
     // ---------- 控制台管理 ----------
 
     fun createConsole(profileId: String, name: String): ConsoleRecord {
@@ -591,6 +633,7 @@ class ConsoleState(
         if (rec.closed) return
         repository.setConsoleClosed(consoleId, true)
         setClosedFlag(consoleId, true)
+        mruOrder.remove(consoleId)
         if (activeConsoleId == consoleId) {
             flushNow(consoleId)
             flushCaretNow(consoleId)
@@ -665,6 +708,7 @@ class ConsoleState(
         runStartedAt.remove(consoleId)
         runTarget.remove(consoleId)
         lastStableSlots.remove(consoleId)
+        mruOrder.remove(consoleId)
         consolesByConnection[rec.connectionId] =
             consolesByConnection[rec.connectionId].orEmpty().filterNot { it.id == consoleId }
         if (activeConsoleId == consoleId) {
@@ -693,6 +737,7 @@ class ConsoleState(
             runStartedAt.remove(rec.id)
             runTarget.remove(rec.id)
             lastStableSlots.remove(rec.id)
+            mruOrder.remove(rec.id)
         }
         historyByProfile.remove(profileId)
         if (activeWasInProfile) {

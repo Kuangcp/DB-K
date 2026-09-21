@@ -100,6 +100,8 @@ enum class ShortcutKey(val token: String, val display: String) {
         get() = when (this) {
             in A..Z -> display[0].lowercaseChar()
             in DIGIT_0..DIGIT_9 -> display[0]
+            // X11 下 Ctrl+Tab 会额外派发 KEY_TYPED（keyCode 未定义），用 '\t' 兜底识别
+            TAB -> '\t'
             else -> null
         }
 
@@ -193,6 +195,8 @@ enum class ShortcutCommand(
     TOGGLE_RESULTS("toggleResults", Str.CmdToggleResults, true, ShortcutScope.WINDOW, listOf(chord(alt = true, key = ShortcutKey.D))),
     TRANSPOSE("transpose", Str.CmdTranspose, true, ShortcutScope.RESULT, listOf(chord(ctrl = true, key = ShortcutKey.T))),
     REFRESH_RESULT("refreshResult", Str.CmdRefreshResult, true, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.F5))),
+    SWITCH_CONSOLE_NEXT("switchConsoleNext", Str.CmdSwitchConsoleNext, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.TAB))),
+    SWITCH_CONSOLE_PREV("switchConsolePrev", Str.CmdSwitchConsolePrev, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, shift = true, key = ShortcutKey.TAB))),
 
     // ── 固定：基础编辑键（登记、消字面量，不进设置） ──
     SAVE_CONSOLE("saveConsole", Str.CmdSaveConsole, false, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.S))),

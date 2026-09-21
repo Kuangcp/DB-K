@@ -455,6 +455,8 @@ enum class Str {
     CmdToggleResults,
     CmdTranspose,
     CmdRefreshResult,
+    CmdSwitchConsoleNext,
+    CmdSwitchConsolePrev,
     CmdSaveConsole,
     CmdFindReplace,
     CmdComplete,

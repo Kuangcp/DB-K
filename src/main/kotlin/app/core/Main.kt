@@ -723,6 +723,8 @@ private fun WindowScope.AppBody(
     val completionDismiss = remember { CompletionDismissSignal() }
     // 窗口级 Ctrl 按下状态：供结果表格 Ctrl+双击=编辑（AWT dispatcher 维护，焦点无关）。
     var ctrlHeld by remember { mutableStateOf(false) }
+    // Ctrl+Tab 切换后请求把焦点交回编辑器（控制台节点按 consoleId 重建会丢焦点）。
+    var editorFocusTick by remember { mutableStateOf(0) }
     MaterialTheme(colors = appMaterialColors(isDark)) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
@@ -744,8 +746,17 @@ private fun WindowScope.AppBody(
                     // 只观察 Ctrl 状态（不吞事件）；结果表格用它判 Ctrl+双击=编辑。
                     if (e.keyCode == java.awt.event.KeyEvent.VK_CONTROL) {
                         ctrlHeld = e.id == java.awt.event.KeyEvent.KEY_PRESSED
+                        // Ctrl 松开 = 结束 Ctrl+Tab 的 MRU 循环会话（下次按下重新取快照）
+                        if (e.id == java.awt.event.KeyEvent.KEY_RELEASED) consoleState.endMruCycle()
                     }
-                    when (keymapState.value.matchAnyAwt(e)) {
+                    val matched = keymapState.value.matchAnyAwt(e)
+                    when (matched) {
+                        ShortcutCommand.SWITCH_CONSOLE_NEXT,
+                        ShortcutCommand.SWITCH_CONSOLE_PREV -> {
+                            // 切换本身由编辑器 Compose preview 处理（那里天然只在编辑器聚焦时触发）；
+                            // 这里只吞掉 X11 额外派发的 KEY_TYPED（'\t'），避免漏进编辑器。
+                            e.id == java.awt.event.KeyEvent.KEY_TYPED
+                        }
                         ShortcutCommand.TOGGLE_RESULTS -> {
                             // 只在首次按下时切换，忽略自动重复（KEY_RELEASED/KEY_TYPED 只吞不切）
                             if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
@@ -889,6 +900,12 @@ private fun WindowScope.AppBody(
                     }
                     SqlWorkspace(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
+                        onSwitchConsole = { delta ->
+                            consoleState.switchConsoleByMru(delta)
+                            // 节点重建丢焦点：交回编辑器，保证可连续切换
+                            editorFocusTick++
+                        },
+                        editorFocusTick = editorFocusTick,
                         profile = activeProfile,
                         status = connectionsState.statusOf(activeProfile?.id.orEmpty()),
                         statusMessage = connectionsState.statusMessageOf(activeProfile?.id.orEmpty()),

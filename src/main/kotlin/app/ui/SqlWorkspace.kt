@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -106,6 +107,10 @@ fun WindowScope.SqlWorkspace(
     onCaretChange: (String, Int, Int) -> Unit,
     /** Ctrl+S 主动保存（异步写盘；Main 取当前控制台）。 */
     onSaveNow: () -> Unit = {},
+    /** Ctrl+Tab / Ctrl+Shift+Tab：按 MRU 切换控制台（参数 ±1）。 */
+    onSwitchConsole: (Int) -> Unit = {},
+    /** 递增信号：请求把焦点交回编辑器（Ctrl+Tab 切换后；节点重建会丢焦点）。 */
+    editorFocusTick: Int = 0,
     run: ConsoleRunUi,
     /** 执行请求：参数为编辑器当前选中片段（去首尾空白）；null = 无有效选中。 */
     onRun: (String?) -> Unit,
@@ -181,6 +186,11 @@ fun WindowScope.SqlWorkspace(
 ) {
     // 当前快捷键表（业务命令可配置；基础编辑键固定）。读取一次，供根级 onPreviewKeyEvent 匹配。
     val keymap = LocalKeymap.current
+    // Ctrl+Tab 切换后把焦点交回编辑器：控制台节点按 consoleId 重建会丢焦点，不交回就无法连续切换。
+    val editorFocus = remember { FocusRequester() }
+    LaunchedEffect(editorFocusTick) {
+        if (editorFocusTick > 0) runCatching { editorFocus.requestFocus() }
+    }
     var showHistory by remember { mutableStateOf(false) }
     // 双击历史条目：弹窗查看完整 SQL（复用通用文本查看器，按 SQL 高亮）
     var historyView by remember { mutableStateOf<SqlHistoryRow?>(null) }
@@ -422,6 +432,8 @@ fun WindowScope.SqlWorkspace(
                             editorSettings = editorSettings,
                             findOpen = findReplaceOpen,
                             onCloseFind = { findReplaceOpen = false },
+                            onSwitchConsole = onSwitchConsole,
+                            focusRequester = editorFocus,
                             modifier = Modifier
                                 .weight(if (resultsVisible) 1f - resultFrac else 1f)
                                 .fillMaxWidth(),
