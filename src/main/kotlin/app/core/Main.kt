@@ -276,7 +276,8 @@ private fun AppRoot(onExit: () -> Unit) {
                     onDiscard = {
                         next.forEach { consoleState.discardDirty(it.id) }
                         dialogState.externalMissingExit = null
-                        performExit()
+                        // 不直接 performExit：继续原有「未提交结果修改」确认链，避免静默丢弃结果编辑
+                        proceedResultEdits()
                     },
                     onCancel = {
                         dialogState.externalMissingExit = null
