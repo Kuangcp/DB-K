@@ -84,6 +84,8 @@ data class RedisKeyMeta(
 class ConsoleState(
     private val repository: ConnectionsRepository,
     private val connectionsState: ConnectionsState,
+    /** 工作区状态（控制台的虚拟分组）：关闭=移出当前工作区，成员决定标签条。 */
+    val workspaces: WorkspaceState,
     private val scope: CoroutineScope,
     /** 慢操作调度器；测试注入虚拟时间调度器以确定性推进防抖/执行。 */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -123,12 +125,6 @@ class ConsoleState(
     /** 正在提交/刷新某控制台的结果（禁用按钮）。 */
     val resultBusy = mutableStateMapOf<String, Boolean>()
 
-    /** 会话内记住每个数据源最后激活的控制台（重启后默认选 updated_at 最新）。 */
-    private val lastActivePerProfile = mutableMapOf<String, String>()
-
-    /** 全局最近使用顺序（最近在前，跨数据源）；纯瞬态，Ctrl+Tab 循环用。 */
-    private val mruOrder = mutableListOf<String>()
-
     /** Ctrl+Tab 循环会话：首次按下取「已打开控制台」快照，松开 Ctrl 清空。 */
     private var mruCycleIds: List<String>? = null
     private var mruCycleIndex: Int = 0
@@ -159,28 +155,38 @@ class ConsoleState(
         return findConsole(id)
     }
 
-    private fun findConsole(consoleId: String): ConsoleRecord? =
-        consolesByConnection.values.asSequence()
-            .flatMap { it.asSequence() }
-            .firstOrNull { it.id == consoleId }
+    private fun findConsole(consoleId: String): ConsoleRecord? {
+        consolesByConnection.values.forEach { list ->
+            list.firstOrNull { it.id == consoleId }?.let { return it }
+        }
+        // 未缓存（如冷启动由工作区成员反查）：读档案后整表载入该数据源缓存，避免部分缓存。
+        val rec = repository.getConsole(consoleId) ?: return null
+        return profileConsoles(rec.connectionId).firstOrNull { it.id == consoleId }
+    }
 
     fun profileConsoles(profileId: String): List<ConsoleRecord> =
         consolesByConnection.getOrPut(profileId) { repository.listConsoles(profileId) }
 
-    /** 该数据源「已打开」（未关闭）的控制台——标签条只显示这些。 */
+    /** 当前工作区中该数据源的控制台（标签顺序）。 */
     fun openConsoles(profileId: String): List<ConsoleRecord> =
-        profileConsoles(profileId).filter { !it.closed }
+        allOpenConsoles(listOf(profileId))
 
-    /** 工作台级全部控制台（含已关闭；树右键「打开控制台」级联用）。 */
+    /** 工作台级全部控制台（含未入任何工作区的；树右键「打开控制台」级联用）。 */
     fun allConsoles(profileIds: List<String>): List<ConsoleRecord> {
         val out = ArrayList<ConsoleRecord>()
         profileIds.forEach { pid -> out += profileConsoles(pid) }
         return out
     }
 
-    /** 工作台级「已打开」控制台（按数据源顺序展平，跨数据源）——标签条用。 */
-    fun allOpenConsoles(profileIds: List<String>): List<ConsoleRecord> =
-        profileIds.flatMap { openConsoles(it) }
+    /** 当前工作区成员（按成员顺序，跨数据源）——标签条用。 */
+    fun allOpenConsoles(profileIds: List<String>): List<ConsoleRecord> {
+        val ws = workspaces.activeWorkspace() ?: return emptyList()
+        val allowed = profileIds.toHashSet()
+        return workspaces.memberIds(ws.id).asSequence()
+            .mapNotNull { findConsole(it) }
+            .filter { it.connectionId in allowed }
+            .toList()
+    }
 
     fun textOf(consoleId: String): String = buffers[consoleId] ?: ""
 
@@ -536,52 +542,56 @@ class ConsoleState(
             flushCaretNow(prev.id)
         }
         activeConsoleId = console.id
-        lastActivePerProfile[console.connectionId] = console.id
-        mruOrder.remove(console.id)
-        mruOrder.add(0, console.id)
+        workspaces.activeWorkspace()?.let { ws ->
+            workspaces.touch(ws.id, console.id)
+            workspaces.setLastActive(ws.id, console.id)
+        }
         if (console.id !in loaded) {
             buffers[console.id] = repository.readConsoleContent(console.id)
             loaded += console.id
         }
     }
 
-    /** 激活某数据源的控制台集合：优先已打开的；全被关闭则重开最近改动的；一个都没有则自动建「控制台 1」。 */
+    /**
+     * 打开某数据源的控制台（双击数据源 / 标题栏切换 / 右键「打开控制台」共用）：
+     * 1. 当前工作区内已有该源控制台 → 激活 MRU 最前的；
+     * 2. 否则取该源 `updated_at` 最大的控制台加入当前工作区并激活；
+     * 3. 该源一个都没有 → 新建（新建即入区）。
+     */
     fun activateForProfile(profileId: String): ConsoleRecord? {
-        val open = openConsoles(profileId)
-        val chosen = if (open.isNotEmpty()) {
-            val lastId = lastActivePerProfile[profileId]
-            open.firstOrNull { it.id == lastId }
-                ?: open.maxByOrNull { it.updatedAt }
-                ?: open.first()
-        } else {
-            // 全部已关闭：重开最近改动的那个（关闭只是隐藏，不丢内容）；从未建过则新建
-            val any = profileConsoles(profileId).maxByOrNull { it.updatedAt }
-            if (any != null) {
-                repository.setConsoleClosed(any.id, false)
-                setClosedFlag(any.id, false)
-                findConsole(any.id) ?: any
-            } else {
-                createConsole(profileId, I18n.t(Str.ConsoleDefaultName, 1))
-            }
+        val ws = workspaces.ensureActive()
+        val orderedInWs = workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
+            .filter { it.connectionId == profileId }
+        if (orderedInWs.isNotEmpty()) {
+            val chosen = orderedInWs.first()
+            activate(chosen)
+            return chosen
         }
+        val any = profileConsoles(profileId).maxByOrNull { it.updatedAt }
+        if (any != null) {
+            workspaces.addMember(ws.id, any.id)
+            activate(any)
+            return any
+        }
+        return createConsole(profileId, I18n.t(Str.ConsoleDefaultName, 1))
+    }
+
+    /** 启动回位：恢复当前工作区上次激活的控制台（否则该区 updated_at 最大者）。 */
+    fun activateMostRecent(profileIds: List<String>): ConsoleRecord? {
+        if (activeConsoleId != null) return activeConsole()
+        val ws = workspaces.activeWorkspace() ?: return null
+        val allowed = profileIds.toHashSet()
+        val members = workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
+            .filter { it.connectionId in allowed }
+        val last = workspaces.lastActiveConsoleOf(ws.id)?.let { id -> members.firstOrNull { it.id == id } }
+        val chosen = last ?: members.maxByOrNull { it.updatedAt } ?: return null
         activate(chosen)
         return chosen
     }
 
-    /** 启动回位：无激活控制台时回到最近改动的「已打开」控制台（跨数据源）；一个都没有则返回 null。 */
-    fun activateMostRecent(profileIds: List<String>): ConsoleRecord? {
-        if (activeConsoleId != null) return activeConsole()
-        val best = profileIds.asSequence()
-            .flatMap { openConsoles(it).asSequence() }
-            .maxByOrNull { it.updatedAt } ?: return null
-        activate(best)
-        return best
-    }
-
     /**
-     * Ctrl+Tab 循环切换：在「已打开控制台按最近使用排序」的快照上前进/后退（[delta] = ±1），回绕。
-     * 首次按下取快照，之后连续按都在同一快照上走，所以 3 个以上也能全走到；
-     * [endMruCycle] 在 Ctrl 松开时清快照（下次按下重新取）。
+     * Ctrl+Tab 循环切换：在当前工作区「已打开控制台按最近使用排序」的快照上前进/后退（[delta] = ±1），回绕。
+     * 首次按下取快照，之后连续按都在同一快照上走；[endMruCycle] 在 Ctrl 松开时清快照。
      */
     fun switchConsoleByMru(delta: Int): ConsoleRecord? {
         val open = openConsolesByMru()
@@ -604,11 +614,46 @@ class ConsoleState(
         mruCycleIds = null
     }
 
-    /** 已打开控制台按最近使用排序（最新在前）；从未激活过的按仓库顺序补到末尾。 */
+    /** 切换工作区后：flush 旧控制台，激活新工作区的上次激活控制台（否则 updated_at 最大者）。 */
+    fun onWorkspaceSwitched() {
+        val prev = activeConsole()
+        if (prev != null) {
+            flushNow(prev.id)
+            flushCaretNow(prev.id)
+        }
+        activeConsoleId = null
+        mruCycleIds = null
+        val ws = workspaces.activeWorkspace() ?: return
+        val members = workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
+        val last = workspaces.lastActiveConsoleOf(ws.id)?.let { id -> members.firstOrNull { it.id == id } }
+        (last ?: members.maxByOrNull { it.updatedAt })?.let { activate(it) }
+    }
+
+    /** 最后一个工作区被删除：进入零工作区引导态。 */
+    fun onAllWorkspacesGone() {
+        val prev = activeConsole()
+        if (prev != null) {
+            flushNow(prev.id)
+            flushCaretNow(prev.id)
+        }
+        activeConsoleId = null
+        mruCycleIds = null
+    }
+
+    /** 当前工作区里激活下一个控制台（优先同数据源）；没有则保持 null。 */
+    private fun activateNextInWorkspace(preferProfileId: String? = null): ConsoleRecord? {
+        val ws = workspaces.activeWorkspace() ?: return null
+        val ordered = workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
+        val next = preferProfileId?.let { pid -> ordered.firstOrNull { it.connectionId == pid } }
+            ?: ordered.firstOrNull()
+        if (next != null) activate(next)
+        return next
+    }
+
+    /** 当前工作区成员按最近使用排序（最新在前）；从未激活过的按标签顺序补到末尾。 */
     private fun openConsolesByMru(): List<ConsoleRecord> {
-        val open = consolesByConnection.keys.flatMap { openConsoles(it) }
-        val byId = open.associateBy { it.id }
-        return mruOrder.mapNotNull { byId[it] } + open.filter { it.id !in mruOrder }
+        val ws = workspaces.activeWorkspace() ?: return emptyList()
+        return workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
     }
 
     // ---------- 控制台管理 ----------
@@ -620,51 +665,35 @@ class ConsoleState(
         consolesByConnection[profileId] = existing + rec
         loaded += rec.id
         buffers[rec.id] = ""
+        val ws = workspaces.ensureActive()
+        workspaces.addMember(ws.id, rec.id)
         activate(rec)
         return rec
     }
 
     /**
-     * 关闭控制台：仅从标签条隐藏（保留元数据行与 .sql 文件，可从数据源右键重新打开）。
-     * 若关闭的是当前激活的控制台，则切到同源最后一个已打开控制台（无则停在引导态）。
+     * 关闭控制台 = 从当前工作区移出成员（正文/.sql 保留，其它工作区不受影响）。
+     * 若关的是当前激活 → 切到本工作区下一个；没有则引导态。
      */
     fun closeConsole(consoleId: String) {
-        val rec = findConsole(consoleId) ?: return
-        if (rec.closed) return
-        repository.setConsoleClosed(consoleId, true)
-        setClosedFlag(consoleId, true)
-        mruOrder.remove(consoleId)
+        val ws = workspaces.activeWorkspace() ?: return
+        if (!workspaces.contains(ws.id, consoleId)) return
+        workspaces.removeMember(ws.id, consoleId)
         if (activeConsoleId == consoleId) {
             flushNow(consoleId)
             flushCaretNow(consoleId)
             activeConsoleId = null
-            val list = openConsoles(rec.connectionId)
-            val lastId = lastActivePerProfile[rec.connectionId]
-            val next = list.firstOrNull { it.id == lastId }
-                ?: list.maxByOrNull { it.updatedAt }
-                ?: list.firstOrNull()
-            if (next != null) activate(next)
+            activateNextInWorkspace()
         }
     }
 
-    /** 重新打开已关闭的控制台并激活（关闭只隐藏，内容仍在）。已打开则直接激活。 */
+    /** 把已存在的控制台加入当前工作区并激活（已在其中则直接激活）。 */
     fun reopenConsole(consoleId: String): ConsoleRecord? {
         val rec = findConsole(consoleId) ?: return null
-        if (rec.closed) {
-            repository.setConsoleClosed(consoleId, false)
-            setClosedFlag(consoleId, false)
-        }
-        val updated = findConsole(consoleId) ?: rec
-        activate(updated)
-        return updated
-    }
-
-    /** 只更新缓存里的 closed 标记（不动 updated_at，不重读库）。 */
-    private fun setClosedFlag(consoleId: String, closed: Boolean) {
-        val entry = consolesByConnection.entries.firstOrNull { (_, list) -> list.any { it.id == consoleId } } ?: return
-        consolesByConnection[entry.key] = entry.value.map {
-            if (it.id == consoleId) it.copy(closed = closed) else it
-        }
+        val ws = workspaces.ensureActive()
+        if (!workspaces.contains(ws.id, consoleId)) workspaces.addMember(ws.id, consoleId)
+        activate(rec)
+        return rec
     }
 
     fun renameConsole(consoleId: String, newName: String) {
@@ -708,12 +737,12 @@ class ConsoleState(
         runStartedAt.remove(consoleId)
         runTarget.remove(consoleId)
         lastStableSlots.remove(consoleId)
-        mruOrder.remove(consoleId)
+        workspaces.removeConsoleEverywhere(consoleId)
         consolesByConnection[rec.connectionId] =
             consolesByConnection[rec.connectionId].orEmpty().filterNot { it.id == consoleId }
         if (activeConsoleId == consoleId) {
             activeConsoleId = null
-            activateForProfile(rec.connectionId)
+            activateNextInWorkspace(preferProfileId = rec.connectionId)
         }
     }
 
@@ -737,7 +766,7 @@ class ConsoleState(
             runStartedAt.remove(rec.id)
             runTarget.remove(rec.id)
             lastStableSlots.remove(rec.id)
-            mruOrder.remove(rec.id)
+            workspaces.removeConsoleEverywhere(rec.id)
         }
         historyByProfile.remove(profileId)
         if (activeWasInProfile) {

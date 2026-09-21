@@ -47,6 +47,7 @@ class ConsoleStateRunTest {
         val state = ConsoleState(
             repository = repo,
             connectionsState = cs,
+            workspaces = WorkspaceState(repo, loadActive = { null }, saveActive = {}),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
         )
         return cs to state

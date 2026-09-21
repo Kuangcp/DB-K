@@ -74,6 +74,7 @@ import app.state.ConnectionEditorRequest
 import app.state.ConnectionsState
 import app.state.ConsoleRenameRequest
 import app.state.ConsoleState
+import app.state.WorkspaceState
 import app.state.ConsoleRunUi
 import app.state.DialogState
 import app.state.ExportRequest
@@ -170,8 +171,9 @@ private fun AppRoot(onExit: () -> Unit) {
     val dialogState = remember { DialogState() }
     val toastState = remember { ToastState() }
     val scope = rememberCoroutineScope()
+    val workspaceState = remember { WorkspaceState(repository) }
     val consoleState = remember {
-        ConsoleState(repository, connectionsState, scope) { command ->
+        ConsoleState(repository, connectionsState, workspaceState, scope) { command ->
             // 危险命令（Redis FLUSHALL 等）：弹确认框，用户选择后继续/取消。
             suspendCancellableCoroutine { cont ->
                 dialogState.confirm = ConfirmRequest.DangerConfirm(command) { ok ->

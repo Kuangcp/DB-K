@@ -46,6 +46,7 @@ class ConsoleStateTest {
     private fun TestScope.newState(repo: ConnectionsRepository) = ConsoleState(
         repository = repo,
         connectionsState = ConnectionsState(MetaCache(dbPath), ColumnCache(dbPath)),
+        workspaces = WorkspaceState(repo, loadActive = { null }, saveActive = {}),
         scope = this,
         ioDispatcher = UnconfinedTestDispatcher(testScheduler),
     )
@@ -64,38 +65,35 @@ class ConsoleStateTest {
     }
 
     @Test
-    fun `closeConsole hides from open list and reopens from data source`() = runTest {
+    fun `close removes console from current workspace only`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())
             val state = newState(repo)
             val c1 = state.createConsole(pid, "控制台 1")
             val c2 = state.createConsole(pid, "控制台 2")
-            assertEquals(2, state.openConsoles(pid).size)
+            assertEquals(listOf(c1.id, c2.id), state.openConsoles(pid).map { it.id })
 
-            // 关闭当前激活的 c2 → 从标签条隐藏，切到同源另一已打开控制台
+            // 在另一个工作区也放入 c2
+            val w1 = state.workspaces.workspaces.first().id
+            val w2 = state.workspaces.createWorkspace("W2")
+            state.workspaces.setActive(w2.id)
+            state.reopenConsole(c2.id)
+            assertTrue(state.workspaces.contains(w2.id, c2.id))
+
+            // 回到默认工作区，关闭 c2：只影响当前工作区
+            state.workspaces.setActive(w1)
+            state.onWorkspaceSwitched()
             state.closeConsole(c2.id)
+            assertFalse(state.workspaces.contains(w1, c2.id))
+            assertTrue(state.workspaces.contains(w2.id, c2.id))
             assertEquals(listOf(c1.id), state.openConsoles(pid).map { it.id })
-            assertTrue(state.profileConsoles(pid).first { it.id == c2.id }.closed)
-            assertEquals(c1.id, state.activeConsoleId)
-            // 关闭只是隐藏：.sql 文件仍在
+            // 成员移除不删正文
             assertTrue(Files.isRegularFile(Path.of(c2.filePath)))
 
-            // 全部关闭 → 无激活控制台（引导态）
+            // 关闭最后一个 → 引导态
             state.closeConsole(c1.id)
             assertTrue(state.openConsoles(pid).isEmpty())
             assertNull(state.activeConsoleId)
-
-            // 双击数据源 → 重新打开最近改动的那个，不新建
-            val reopened = state.activateForProfile(pid)
-            assertNotNull(reopened)
-            assertEquals(1, state.openConsoles(pid).size)
-            assertEquals(2, state.profileConsoles(pid).size)
-
-            // 从数据源级联重新打开指定的已关闭控制台
-            state.closeConsole(reopened.id)
-            assertNotNull(state.reopenConsole(c2.id))
-            assertEquals(c2.id, state.activeConsoleId)
-            assertFalse(state.profileConsoles(pid).first { it.id == c2.id }.closed)
         }
     }
 
@@ -173,34 +171,41 @@ class ConsoleStateTest {
     }
 
     @Test
-    fun `activateForProfile prefers last active console`() = runTest {
+    fun `activateForProfile reuses mru console of the workspace`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())
             val state = newState(repo)
             val c1 = state.createConsole(pid, "c1")
             val c2 = state.createConsole(pid, "c2")
-            repo.renameConsole(c2.id, "c2-new") // c2 updated_at 更新
-            // 会话内最后激活的是 c2 → 优先它
+            // MRU 最近的是 c2（createConsole 都 activate）
             assertEquals(c2.id, state.activateForProfile(pid)!!.id)
-            // 切到 c1 后，last active 变为 c1
             state.activate(c1)
             assertEquals(c1.id, state.activateForProfile(pid)!!.id)
+
+            // 新工作区里没有任何该源控制台 → 取 updated_at 最大者加入
+            val w2 = state.workspaces.createWorkspace("W2")
+            state.workspaces.setActive(w2.id)
+            repo.renameConsole(c2.id, "c2-new") // c2 成为 updated_at 最大
+            val picked = state.activateForProfile(pid)!!
+            assertEquals(c2.id, picked.id)
+            assertTrue(state.workspaces.contains(w2.id, c2.id))
         }
     }
 
     @Test
-    fun `activateMostRecent picks max updatedAt across profiles`() = runTest {
+    fun `activateMostRecent restores last active of the active workspace`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())
-            // 直接在仓库建控制台，让 ConsoleState 无激活状态（activeConsoleId 为 null）
-            val c1 = repo.createConsole(pid, "c1")
-            repo.createConsole(pid, "c2")
-            repo.renameConsole(c1.id, "c1-renamed") // c1 变成最新改动
             val state = newState(repo)
-            val rec = state.activateMostRecent(listOf(pid))
+            val c1 = state.createConsole(pid, "c1")
+            state.createConsole(pid, "c2")
+            state.activate(c1)
+            // 新实例模拟重启（同一 repo）：加载工作区/存档后回到 c1
+            val restarted = newState(repo)
+            val rec = restarted.activateMostRecent(listOf(pid))
             assertNotNull(rec)
             assertEquals(c1.id, rec.id)
-            assertEquals(c1.id, state.activeConsoleId)
+            assertEquals(c1.id, restarted.activeConsoleId)
         }
     }
 
@@ -420,7 +425,7 @@ class ConsoleStateTest {
     }
 
     @Test
-    fun `switchConsoleByMru reverse and single console no-op`() = runTest {
+    fun `switchConsoleByMru reverse wraps to the last`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())
             val state = newState(repo)
@@ -430,13 +435,6 @@ class ConsoleStateTest {
             // MRU = c3, c2, c1；反向 → 快照最后一个 c1
             state.switchConsoleByMru(-1)
             assertEquals(c1.id, state.activeConsoleId)
-        }
-        repo().use { repo ->
-            val pid = repo.createConnection(profile())
-            val state = newState(repo)
-            val only = state.createConsole(pid, "only")
-            assertNull(state.switchConsoleByMru(1))
-            assertEquals(only.id, state.activeConsoleId)
         }
     }
 
@@ -458,18 +456,23 @@ class ConsoleStateTest {
     }
 
     @Test
-    fun `switchConsoleByMru skips closed consoles`() = runTest {
+    fun `mru switches only within the active workspace`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())
             val state = newState(repo)
-            val c1 = state.createConsole(pid, "1")
-            val c2 = state.createConsole(pid, "2")
+            state.createConsole(pid, "1")
+            state.createConsole(pid, "2")
             val c3 = state.createConsole(pid, "3")
-            state.closeConsole(c3.id)
-            repeat(4) {
-                state.switchConsoleByMru(1)
-                assertTrue(state.activeConsoleId == c1.id || state.activeConsoleId == c2.id)
-            }
+            // 新建工作区 W2 只含 c3 → 在该区无可切换
+            val w2 = state.workspaces.createWorkspace("W2")
+            state.workspaces.setActive(w2.id)
+            state.reopenConsole(c3.id)
+            assertNull(state.switchConsoleByMru(1))
+            // 回默认工作区（含三个）→ 正常循环
+            val w1 = state.workspaces.workspaces.first { it.id != w2.id }.id
+            state.workspaces.setActive(w1)
+            state.onWorkspaceSwitched()
+            assertNotNull(state.switchConsoleByMru(1))
         }
     }
 
