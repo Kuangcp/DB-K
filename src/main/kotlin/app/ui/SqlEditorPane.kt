@@ -90,7 +90,7 @@ import i18n.Str
  * BasicTextField 消费带 span 高亮的 TextFieldValue（`SQL/JSON：SyntaxHighlight.kt 手写扫描器`
  * 实时着色），自身 verticalScroll 滚动。行号/补全弹层共用同一份
  * TextMeasurer 排版结果，保证与编辑区逐行对齐（含自动换行）。
- * 文本/选区权威仍在上层 SqlWorkspace 持有的 tfv（受控），高亮是纯派生渲染。
+ * 文本/选区权威仍在上层 EditorArea 持有的 tfv（受控），高亮是纯派生渲染。
  *
  * 自动补全：caret 位于标识符词内（且不在字符串/注释中）时按前缀匹配 [completionIdentifiers]
  * + SQL 关键字；Enter/Tab 上屏、↑/↓ 选择、Esc 关闭，也可鼠标点击。弹层颜色取自主题
@@ -114,7 +114,7 @@ internal fun EditorPane(
     defaultSchema: SchemaMeta?,
     profile: ConnectionProfile?,
     editorSettings: EditorSettings,
-    /** N2：查找替换栏显隐（由 SqlWorkspace 控制）。 */
+    /** N2：查找替换栏显隐（由 EditorArea 控制）。 */
     findOpen: Boolean = false,
     onCloseFind: () -> Unit = {},
     /** Ctrl+Tab / Ctrl+Shift+Tab：按 MRU 切换控制台（参数 ±1）。 */

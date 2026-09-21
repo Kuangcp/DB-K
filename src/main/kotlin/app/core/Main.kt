@@ -92,7 +92,7 @@ import app.ui.LocalCompletionDismiss
 import app.ui.LocalCtrlHeld
 import app.ui.LocalKeymap
 import app.ui.ResultEdits
-import app.ui.SqlWorkspace
+import app.ui.EditorArea
 import app.ui.appMaterialColors
 import app.ui.matchAnyAwt
 import app.ui.sqlHasOrderBy
@@ -287,7 +287,7 @@ private fun WindowScope.AppBody(
     // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
     var resultsVisible by remember { mutableStateOf(true) }
 
-    // 待插入编辑器的文本（预览 / 历史 SQL）：在激活控制台光标/选区处追加，由 SqlWorkspace 消费后清空
+    // 待插入编辑器的文本（预览 / 历史 SQL）：在激活控制台光标/选区处追加，由 EditorArea 消费后清空
     var pendingInsert by remember { mutableStateOf<String?>(null) }
 
     /** 提交结果单元格修改（真正的写库动作；UI 侧先在 P7 预览弹窗确认）。 */
@@ -911,7 +911,7 @@ private fun WindowScope.AppBody(
                             consoleState.ensureEditPlan(c, p)
                         }
                     }
-                    SqlWorkspace(
+                    EditorArea(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         onSwitchConsole = { delta ->
                             consoleState.switchConsoleByMru(delta)

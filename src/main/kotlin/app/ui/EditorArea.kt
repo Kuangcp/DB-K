@@ -62,7 +62,7 @@ import tree.ConnUiStatus
  * 每个 tab 就是一个控制台（可来自不同数据源，各绑定自己的 .sql 文件）；纯展示组件，编排在 Main/ConsoleState。
  */
 @Composable
-fun WindowScope.SqlWorkspace(
+fun WindowScope.EditorArea(
     profile: ConnectionProfile?,
     status: ConnUiStatus,
     statusMessage: String?,
@@ -360,7 +360,7 @@ fun WindowScope.SqlWorkspace(
         // 切回（含重启）时恢复上次焦点所在行，而不是总跳到文末。
         val consoleId = activeConsole.id
         val savedCaret = caretOf(consoleId)
-        // 编辑器状态：每个控制台一个 TextFieldState，存在 SqlWorkspace 的 map 里（跨重组/切控制台存活）。
+        // 编辑器状态：每个控制台一个 TextFieldState，存在 EditorArea 的 map 里（跨重组/切控制台存活）。
         // TextFieldState 自带撤销栈（UndoState），因此切控制台后 undo/redo 仍按控制台各自保留。
         val state = editorStates.getOrPut(consoleId) {
             TextFieldState(
