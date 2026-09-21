@@ -55,7 +55,7 @@ fun main() {
         try {
             session.open()
         } catch (e: Exception) {
-            Logger.info("smokeEs SKIP: Elasticsearch 不可达（{}）—— {}", base, e.toString())
+            Logger.info("smokeEs SKIP: Elasticsearch unreachable ({}) - {}", base, e.toString())
             return
         }
         checks += "connect"

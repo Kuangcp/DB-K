@@ -345,7 +345,7 @@ private fun smokeDbStore(dir: Path) {
         check(repo.getConsole("cc-smoke")!!.filePath == "")
         repo.setConsoleTarget("cc-smoke", "main")
         check(repo.getConsole("cc-smoke")!!.target == "main") { "setConsoleTarget 应生效" }
-        Logger.info("[db-store] v4 consoles.target 迁移/读写 PASS", "PASS")
+        Logger.info("[db-store] v4 consoles.target migration/read-write PASS", "PASS")
 
         // v6 迁移后 consoles 带 caret_start/caret_end（旧行默认 0），写光标回环且不动 updated_at
         val caretBefore = repo.getConsole("cc-smoke")!!
@@ -360,7 +360,7 @@ private fun smokeDbStore(dir: Path) {
         check(repo.listConsoles("c-old").first { it.id == "cc-smoke" }.let { it.caretStart == 840 && it.caretEnd == 846 }) {
             "listConsoles 应带出 caret"
         }
-        Logger.info("[db-store] v6 consoles.caret 迁移/读写 PASS", "PASS")
+        Logger.info("[db-store] v6 consoles.caret migration/read-write PASS", "PASS")
 
         // P3 密码落盘加密：
         // a) 旧明文行在仓库初始化时被自动迁移为密文，读回仍为原文
@@ -393,10 +393,10 @@ private fun smokeDbStore(dir: Path) {
         check(list.size == 2) { "应读回 2 条新历史" }
         check(list.first().sqlText == "SELECT 3" && !list.first().ok && list.first().rowCount == 0)
         check(list.last().sqlText == "SELECT 2" && list.last().ok && list.last().rowCount == 42)
-        Logger.info("[db-store] v2→v3 迁移 + history insert/list PASS", "PASS")
+        Logger.info("[db-store] v2->v3 migration + history insert/list PASS", "PASS")
         repo.clearHistoryForProfile(pid)
         check(repo.listHistoryByProfile(pid).isEmpty())
-        Logger.info("[db-store] vault 加密/迁移 PASS", "PASS")
+        Logger.info("[db-store] vault encryption/migration PASS", "PASS")
         repo.clearHistoryForProfile(pid)
         check(repo.listHistoryByProfile(pid).isEmpty())
         Logger.info("[db-store] history clear PASS", "PASS")
@@ -429,7 +429,7 @@ private fun smokeDbStore(dir: Path) {
         }
         // URL 身份变了 → 指纹失配，视为未命中（不喂错库的数据）
         check(mc.load(cacheProfile.copy(host = "other-host")) == null) { "URL 变化应失配" }
-        Logger.info("[db-store] v5 meta_cache 迁移/读写 PASS", "PASS")
+        Logger.info("[db-store] v5 meta_cache migration/read-write PASS", "PASS")
 
         // v7 列缓存：按表增量读写、指纹失配、按 profile 清理
         val cc = db.ColumnCache(dbFile)
@@ -443,13 +443,13 @@ private fun smokeDbStore(dir: Path) {
         check(cc.load(cacheProfile.copy(host = "other-host"), ckey) == null) { "列缓存 URL 变化应失配" }
         cc.delete(cacheProfile.id)
         check(cc.load(cacheProfile, ckey) == null) { "列缓存应可按 profile 清理" }
-        Logger.info("[db-store] v7 column_cache 迁移/读写 PASS", "PASS")
+        Logger.info("[db-store] v7 column_cache migration/read-write PASS", "PASS")
 
         // 删除连接档案 → 级联清掉缓存行
         mc.save(cacheProfile, schemas, objects)
         repo.deleteConnection(pid)
         check(mc.load(cacheProfile) == null) { "删除档案后缓存行应被清理" }
-        Logger.info("[db-store] meta_cache 删除级联 PASS", "PASS")
+        Logger.info("[db-store] meta_cache delete cascade PASS", "PASS")
     }
     Files.deleteIfExists(dbFile)
 }

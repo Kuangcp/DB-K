@@ -85,8 +85,8 @@ object ExternalDrivers {
         loadedDirs += key
         if (!Files.isDirectory(dir)) {
             runCatching { Files.createDirectories(dir) }
-                .onFailure { Logger.warn(it, "创建外部驱动目录失败：{}", dir) }
-            Logger.info("外部驱动目录：{}（尚无 jar）", dir)
+                .onFailure { Logger.warn(it, "failed to create external driver directory: {}", dir) }
+            Logger.info("external driver directory: {} (no jars yet)", dir)
             return
         }
         val jars: List<Path> = runCatching {
@@ -95,9 +95,9 @@ object ExternalDrivers {
                     .sorted()
                     .collect(Collectors.toList())
             }
-        }.onFailure { Logger.warn(it, "扫描外部驱动目录失败：{}", dir) }.getOrDefault(emptyList())
+        }.onFailure { Logger.warn(it, "failed to scan external driver directory: {}", dir) }.getOrDefault(emptyList())
         if (jars.isEmpty()) {
-            Logger.info("外部驱动目录：{}（尚无 jar）", dir)
+            Logger.info("external driver directory: {} (no jars yet)", dir)
             return
         }
         val loader = URLClassLoader(jars.map { it.toUri().toURL() }.toTypedArray(), driverParent)
@@ -113,14 +113,14 @@ object ExternalDrivers {
             val cls = runCatching { Class.forName(name, false, loader) }.getOrNull() ?: return@forEach
             if (!Driver::class.java.isAssignableFrom(cls)) return@forEach
             val driver = runCatching { cls.getDeclaredConstructor().newInstance() as Driver }
-                .onFailure { Logger.warn(it, "实例化外部驱动失败：{}", name) }
+                .onFailure { Logger.warn(it, "failed to instantiate external driver: {}", name) }
                 .getOrNull() ?: return@forEach
             if (driversByClass.putIfAbsent(name.lowercase(), driver) == null) {
                 loaded++
-                Logger.info("已加载外部驱动：{}", name)
+                Logger.info("loaded external driver: {}", name)
             }
         }
-        Logger.info("外部驱动目录：{}，jar={} 个，新增驱动={} 个", dir, jars.size, loaded)
+        Logger.info("external driver directory: {}, jars={}, new drivers={}", dir, jars.size, loaded)
     }
 
     /** 读 jar 的 `META-INF/services/java.sql.Driver`（每行一个驱动类名，忽略注释）。 */
@@ -134,5 +134,5 @@ object ExternalDrivers {
                 }
             }.orEmpty()
         }
-    }.onFailure { Logger.warn(it, "读取驱动 service 声明失败：{}", jar) }.getOrDefault(emptyList())
+    }.onFailure { Logger.warn(it, "failed to read driver service entries: {}", jar) }.getOrDefault(emptyList())
 }

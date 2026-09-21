@@ -37,7 +37,7 @@ fun main() {
         try {
             session.open()
         } catch (e: JedisConnectionException) {
-            Logger.info("smokeRedis SKIP: Redis 不可达（{}:{}）—— {}", host, port, e.message)
+            Logger.info("smokeRedis SKIP: Redis unreachable ({}:{}) - {}", host, port, e.message)
             return
         }
         checks += "connect"

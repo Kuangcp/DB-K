@@ -37,7 +37,7 @@ object NativeMemory {
     /** 启动早期调用：压低 mmap/trim 阈值并限制 arena 数，避免峰值变成常驻。 */
     fun configure() {
         if (!isLinux) {
-            Logger.debug("native mem: 非 Linux（os.name={}），跳过 glibc 调优", System.getProperty("os.name"))
+            Logger.debug("native mem: not Linux (os.name={}), skipping glibc tuning", System.getProperty("os.name"))
             return
         }
         val ok = runCatching {

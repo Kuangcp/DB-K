@@ -27,7 +27,7 @@ object KeymapPrefs {
         if (!f.exists()) return Keymap.Default
         val props = runCatching {
             Properties().apply { f.inputStream().use { load(it) } }
-        }.onFailure { Logger.warn(it, "keymap.properties 读取失败，使用默认快捷键") }
+        }.onFailure { Logger.warn(it, "failed to read keymap.properties; using default shortcuts") }
             .getOrElse { return Keymap.Default }
 
         val overrides = mutableMapOf<ShortcutCommand, List<KeyChord>>()
@@ -39,7 +39,7 @@ object KeymapPrefs {
             }
             val chords = raw.split(',').mapNotNull { KeyChord.parse(it) }
             if (chords.isEmpty()) {
-                Logger.warn("keymap.properties: 命令 {} 的值「{}」无法解析，保留默认", command.id, raw)
+                Logger.warn("keymap.properties: cannot parse value \"{}\" for command {}; keeping default", command.id, raw)
                 continue
             }
             overrides[command] = chords
@@ -61,6 +61,6 @@ object KeymapPrefs {
             } else {
                 f.outputStream().use { props.store(it, "db-k keymap overrides (empty value = unbound)") }
             }
-        }.onFailure { Logger.warn(it, "keymap.properties 保存失败") }
+        }.onFailure { Logger.warn(it, "failed to save keymap.properties") }
     }
 }

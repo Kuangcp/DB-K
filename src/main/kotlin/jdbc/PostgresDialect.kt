@@ -259,7 +259,7 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
                     }
                 }
             }
-        }.onFailure { Logger.warn(it, "pg routines query failed (prokind 需 PG11+) for {}", schemaName) }
+        }.onFailure { Logger.warn(it, "pg routines query failed (prokind needs PG11+) for {}", schemaName) }
         return grouped.mapValues { (_, v) -> v.sortedBy { it.name } }
     }
 
