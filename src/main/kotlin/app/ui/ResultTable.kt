@@ -64,8 +64,41 @@ import i18n.Str
 import jdbc.CellValue
 import jdbc.QueryExecutor
 
-/** 每个单元格最窄 64dp / 最宽 320dp（字符数 → dp 估算，12sp monospace 约 0.6em/字符）。 */
-private fun estWidth(chars: Int): Int = (chars * 7 + 20).coerceIn(64, 320)
+/** 每个字符的估算宽度（dp）：ASCII/半角 ≈ 7dp，CJK/全角 ≈ 12dp（11~12sp 默认字体）。 */
+private fun charWidthDp(c: Char): Int = if (c.code >= 0x2E80) 12 else 7
+
+/** 文本渲染宽度的估算值（dp）；CJK 按双宽计，避免列名/数据被过早省略。 */
+internal fun textWidthDp(s: String): Int = s.sumOf { charWidthDp(it) }
+
+/** 单元格左右内边距合计（dp，见 DataCell 的 padding(horizontal = 8.dp)）。 */
+private const val CELL_H_PADDING_DP = 16
+
+/** 表头除列名外的固定占位：内边距(8+10) + 间距(4) + 漏斗图标(16)（dp）。 */
+internal const val HEADER_CHROME_DP = 38
+
+/** 表头列名完整展示的字符上限：≤ 该长度不省略，超过则截到该长度加省略号。 */
+internal const val HEADER_NAME_MAX_CHARS = 12
+
+/** 自动列宽下限 / 上限（dp）；上限避免超长内容把列撑成巨宽。 */
+private const val AUTO_COL_WIDTH_MIN = 64
+
+private const val AUTO_COL_WIDTH_MAX = 320
+
+/** 估算列宽时每格最多采样多少字符（已超过 [AUTO_COL_WIDTH_MAX] 所需，够用即可）。 */
+private const val WIDTH_SAMPLE_CHARS = 64
+
+/** NULL 占位文本（与 DataCell 默认 nullText 一致）。 */
+private const val NULL_CELL_TEXT = "(NULL)"
+
+/** 列名（含表头固定占位）所需的最小列宽；超过 [HEADER_NAME_MAX_CHARS] 省略为「前 N 字符…」。 */
+internal fun headerMinWidthDp(name: String): Int {
+    val shown = if (name.length > HEADER_NAME_MAX_CHARS) {
+        name.take(HEADER_NAME_MAX_CHARS) + "…"
+    } else {
+        name
+    }
+    return textWidthDp(shown) + HEADER_CHROME_DP
+}
 
 /** 手动拖动列宽的上下限（dp）。 */
 private const val MIN_COL_WIDTH = 40
@@ -159,13 +192,19 @@ internal fun ResultTable(
     val transposedRows = if (transposed) view.rows.size else 0
     val baseWidths = remember(result.sql, result.columns, transposed, transposedRows) {
         List(cols.size) { c ->
-            var w = cols[c].name.length
+            // 表头列名（≤12 字符完整展示）是列宽下限：否则短 CJK 列名会被省略成「当…」
+            var w = headerMinWidthDp(cols[c].name)
             val sample = minOf(view.rows.size, 300)
             for (r in 0 until sample) {
-                val len = view.rows[r][c]?.length ?: 5 // (NULL)
-                if (len > w) w = len
+                val v = view.rows[r][c]
+                val cw = if (v == null) {
+                    textWidthDp(NULL_CELL_TEXT) + CELL_H_PADDING_DP
+                } else {
+                    textWidthDp(v.take(WIDTH_SAMPLE_CHARS)) + CELL_H_PADDING_DP
+                }
+                if (cw > w) w = cw
             }
-            estWidth(w)
+            w.coerceIn(AUTO_COL_WIDTH_MIN, AUTO_COL_WIDTH_MAX)
         }
     }
     val widths = remember(result.sql, result.columns, transposed, transposedRows) {
