@@ -7,6 +7,7 @@ import app.core.export.ExportFormat
 import app.core.export.ExportOptions
 import db.ConnectionProfile
 import db.FolderRow
+import db.WorkspaceRecord
 import engine.model.SchemaMeta
 import i18n.Str
 
@@ -24,6 +25,12 @@ sealed interface FolderDialogRequest {
 
 /** 控制台重命名弹窗请求。 */
 data class ConsoleRenameRequest(val consoleId: String, val currentName: String)
+
+/** 工作区新建/重命名弹窗请求。 */
+sealed interface WorkspaceDialogRequest {
+    data object Create : WorkspaceDialogRequest
+    data class Rename(val workspace: WorkspaceRecord) : WorkspaceDialogRequest
+}
 
 /**
  * 结果提交前预览（P7）：展示将要执行的参数化 UPDATE（只读、不执行），确认后 [onConfirm]。
@@ -48,6 +55,9 @@ sealed interface ConfirmRequest {
     data class DeleteFolder(val id: String, val name: String, val movingConnections: Int, val childFolders: Int = 0) : ConfirmRequest
     data class DeleteConnection(val id: String, val name: String) : ConfirmRequest
     data class DeleteConsole(val id: String, val name: String, val connectionName: String) : ConfirmRequest
+
+    /** 删除工作区（仅解除成员关系，控制台与 .sql 保留）。 */
+    data class DeleteWorkspace(val id: String, val name: String) : ConfirmRequest
 
     /** 有未提交的结果修改时，刷新/重跑等动作会丢弃它们 → 确认；[onDiscard] 为确认后执行的动作。 */
     class DiscardResultEdits(val count: Int, val action: Str, val onDiscard: () -> Unit) : ConfirmRequest
@@ -97,6 +107,7 @@ class DialogState {
     var connectionEditor by mutableStateOf<ConnectionEditorRequest?>(null)
     var folderDialog by mutableStateOf<FolderDialogRequest?>(null)
     var consoleRename by mutableStateOf<ConsoleRenameRequest?>(null)
+    var workspaceDialog by mutableStateOf<WorkspaceDialogRequest?>(null)
     var tableDdl by mutableStateOf<TableDdlRequest?>(null)
     var commitPreview by mutableStateOf<CommitPreviewRequest?>(null)
     var confirm by mutableStateOf<ConfirmRequest?>(null)

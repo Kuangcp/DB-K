@@ -1295,6 +1295,18 @@ private fun DialogHost(
                         consoleState.onConnectionDeleted(request.id)
                     }
                     is ConfirmRequest.DeleteConsole -> consoleState.deleteConsole(request.id)
+                    is ConfirmRequest.DeleteWorkspace -> {
+                        val wasActive = consoleState.workspaces.deleteWorkspace(request.id)
+                        if (wasActive) {
+                            val next = consoleState.workspaces.workspaces.firstOrNull()
+                            if (next != null) {
+                                consoleState.workspaces.setActive(next.id)
+                                consoleState.onWorkspaceSwitched()
+                            } else {
+                                consoleState.onAllWorkspacesGone()
+                            }
+                        }
+                    }
                     is ConfirmRequest.DiscardResultEdits -> request.onDiscard()
                     is ConfirmRequest.DeleteRows -> request.onConfirm()
                     is ConfirmRequest.DangerConfirm -> request.onDecision(true)

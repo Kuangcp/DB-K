@@ -29,6 +29,7 @@ import app.i18n.tn
 import app.state.ConfirmRequest
 import app.state.ConsoleRenameRequest
 import app.state.FolderDialogRequest
+import app.state.WorkspaceDialogRequest
 import db.FolderRow
 import i18n.Str
 
@@ -133,6 +134,42 @@ fun FolderNameDialog(
     )
 }
 
+/** 工作区新建/重命名弹窗（与其它单字段弹窗一致：Enter 提交、空输入忽略）。 */
+@Composable
+fun WorkspaceNameDialog(
+    request: WorkspaceDialogRequest,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val isCreate = request is WorkspaceDialogRequest.Create
+    val initial = (request as? WorkspaceDialogRequest.Rename)?.workspace?.name ?: ""
+    var name by remember(request) { mutableStateOf(initial) }
+    val confirm = { onConfirm(name.trim()) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(request) { focusRequester.requestFocus() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(t(if (isCreate) Str.WorkspaceNewTitle else Str.WorkspaceRenameTitle)) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(t(Str.CommonName)) },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .onPreviewKeyEvent(submitOnEnter(name.isNotBlank(), confirm)),
+            )
+        },
+        confirmButton = {
+            TextButton(enabled = name.isNotBlank(), onClick = confirm) { Text(t(Str.CommonOk)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) } },
+    )
+}
+
 /** 通用危险操作确认弹窗。 */
 @Composable
 fun ConfirmDialog(
@@ -170,6 +207,9 @@ fun ConfirmDialog(
         is ConfirmRequest.DeleteConsole -> {
             t(Str.ConfirmDeleteConsoleTitle) to
                 t(Str.ConfirmDeleteConsoleMessage, request.name, request.connectionName)
+        }
+        is ConfirmRequest.DeleteWorkspace -> {
+            t(Str.WorkspaceDeleteTitle) to t(Str.WorkspaceDeleteConfirm, request.name)
         }
         is ConfirmRequest.DiscardResultEdits -> {
             t(Str.ConfirmDiscardTitle) to t(Str.ConfirmDiscardMessage, request.count, t(request.action))
