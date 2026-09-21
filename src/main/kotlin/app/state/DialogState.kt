@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import app.core.export.ExportFormat
 import app.core.export.ExportOptions
 import db.ConnectionProfile
+import db.ConsoleRecord
 import db.FolderRow
 import db.WorkspaceRecord
 import engine.model.SchemaMeta
@@ -103,6 +104,23 @@ data class ExportRequest(
     val onSubmit: (ExportFormat, ExportOptions, Boolean) -> Unit,
 )
 
+/** 批量打开外部文件时，为未关联数据源的文件选择数据源。 */
+data class PickProfileRequest(
+    val names: List<String>,
+    val profiles: List<ConnectionProfile>,
+    val defaultProfileId: String?,
+    val onSubmit: (String) -> Unit,
+)
+
+/** 退出时外部文件「已丢失且脏」的处理选择。 */
+data class ExternalMissingExitRequest(
+    val consoles: List<ConsoleRecord>,
+    val onRebuildAll: () -> Unit,
+    val onSaveAsEach: () -> Unit,
+    val onDiscard: () -> Unit,
+    val onCancel: () -> Unit,
+)
+
 class DialogState {
     var connectionEditor by mutableStateOf<ConnectionEditorRequest?>(null)
     var folderDialog by mutableStateOf<FolderDialogRequest?>(null)
@@ -121,4 +139,10 @@ class DialogState {
     var showThemeDialog by mutableStateOf(false)
     /** 结果导出弹窗（N8）。 */
     var export by mutableStateOf<ExportRequest?>(null)
+
+    /** 外部文件数据源选择框。 */
+    var pickProfile by mutableStateOf<PickProfileRequest?>(null)
+
+    /** 退出时外部文件缺失处理框。 */
+    var externalMissingExit by mutableStateOf<ExternalMissingExitRequest?>(null)
 }
