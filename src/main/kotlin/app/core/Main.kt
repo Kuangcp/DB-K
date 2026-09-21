@@ -1183,10 +1183,10 @@ private fun WindowScope.AppBody(
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },
                         resultsVisible = resultsVisible,
                         onToggleResults = { resultsVisible = !resultsVisible },
-                        isDark = !activeTheme.colors.isLight,
-                        onToggleTheme = {
-                            selectTheme(if (activeTheme.colors.isLight) "dark" else "light")
-                        },
+                        themes = themes,
+                        activeTheme = activeTheme,
+                        onSelectTheme = ::selectTheme,
+                        onManageThemes = { dialogState.showThemeDialog = true },
                         editorSettings = editorSettings,
                         onOpenSettings = { dialogState.showSettings = true },
                         mainWindowState = mainWindowState,

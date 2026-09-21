@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.window.WindowDraggableArea
+import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
@@ -25,6 +26,7 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -53,8 +55,10 @@ import tree.TypeBadge
 
 @Composable
 internal fun WindowScope.HeaderBar(
-    isDark: Boolean,
-    onToggleTheme: () -> Unit,
+    themes: List<ThemeSpec>,
+    activeTheme: ThemeSpec,
+    onSelectTheme: (String) -> Unit,
+    onManageThemes: () -> Unit,
     showHistoryButton: Boolean,
     historyOpen: Boolean,
     onToggleHistory: () -> Unit,
@@ -118,13 +122,43 @@ internal fun WindowScope.HeaderBar(
                         )
                     }
                 }
-                IconButton(onClick = onToggleTheme, modifier = Modifier.size(28.dp)) {
-                    Icon(
-                        imageVector = if (isDark) DbIcons.Sun else DbIcons.Moon,
-                        contentDescription = if (isDark) t(Str.EditorSwitchToLight) else t(Str.EditorSwitchToDark),
-                        tint = topBarIconTint,
-                        modifier = Modifier.size(17.dp),
-                    )
+                Box {
+                    var themeMenuOpen by remember { mutableStateOf(false) }
+                    IconButton(onClick = { themeMenuOpen = true }, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = DbIcons.Palette,
+                            contentDescription = t(Str.ThemeMenuTooltip),
+                            tint = topBarIconTint,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                    DropdownMenu(expanded = themeMenuOpen, onDismissRequest = { themeMenuOpen = false }) {
+                        themes.forEach { th ->
+                            val label = th.nameKey?.let { t(it) } ?: th.name
+                            DropdownMenuItem(onClick = { themeMenuOpen = false; onSelectTheme(th.id) }) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    null,
+                                    tint = if (th.id == activeTheme.id) MaterialTheme.colors.primary else Color.Transparent,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    label,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                            }
+                        }
+                        Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
+                        DropdownMenuItem(onClick = { themeMenuOpen = false; onManageThemes() }) {
+                            Text(
+                                t(Str.ThemeManage),
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                            )
+                        }
+                    }
                 }
                 IconButton(onClick = onOpenSettings, modifier = Modifier.size(28.dp)) {
                     Icon(

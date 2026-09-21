@@ -184,8 +184,10 @@ fun WindowScope.EditorArea(
     /** 结果区显隐（Alt+D 由 Main 窗口根层统一接管，这里只读它布局）。 */
     resultsVisible: Boolean,
     onToggleResults: () -> Unit,
-    isDark: Boolean,
-    onToggleTheme: () -> Unit,
+    themes: List<ThemeSpec>,
+    activeTheme: ThemeSpec,
+    onSelectTheme: (String) -> Unit,
+    onManageThemes: () -> Unit,
     /** 编辑器外观设置（字体族 / 字号）。 */
     editorSettings: EditorSettings,
     onOpenSettings: () -> Unit,
@@ -280,8 +282,10 @@ fun WindowScope.EditorArea(
             },
     ) {
         HeaderBar(
-            isDark = isDark,
-            onToggleTheme = onToggleTheme,
+            themes = themes,
+            activeTheme = activeTheme,
+            onSelectTheme = onSelectTheme,
+            onManageThemes = onManageThemes,
             showHistoryButton = profile != null && activeConsole != null,
             historyOpen = showHistory,
             onToggleHistory = { showHistory = !showHistory },
