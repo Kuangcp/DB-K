@@ -381,9 +381,9 @@ class ConnectionsRepository(
     fun deleteConnection(id: String) {
         conn.autoCommit = false
         try {
-            // 删除该连接全部控制台及绑定的 .sql 文件（行级 ON DELETE CASCADE 兜底）
+            // 删除该连接全部控制台及绑定的 .sql 文件（行级 ON DELETE CASCADE 兜底；外部文件不删）
             listConsoles(id).forEach { rec ->
-                if (rec.filePath.isNotBlank()) {
+                if (!rec.external && rec.filePath.isNotBlank()) {
                     runCatching { ConsoleFiles.delete(java.nio.file.Paths.get(rec.filePath)) }
                 }
             }
@@ -517,7 +517,7 @@ class ConnectionsRepository(
 
     fun listConsoles(connectionId: String): List<ConsoleRecord> {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
+            "SELECT id, connection_id, name, file_path, external, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
         ).use { ps ->
             ps.setString(1, connectionId)
             ps.executeQuery().use { rs ->
@@ -530,7 +530,7 @@ class ConnectionsRepository(
 
     fun getConsole(id: String): ConsoleRecord? {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE id = ?",
+            "SELECT id, connection_id, name, file_path, external, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs -> if (rs.next()) mapConsole(rs) else null }
@@ -563,6 +563,53 @@ class ConnectionsRepository(
         }
         ConsoleFiles.write(file, "")
         return rec
+    }
+
+    /** 按文件路径查控制台（唯一索引支撑）；外部文件的路径唯一性由此落实。 */
+    fun getConsoleByPath(path: String): ConsoleRecord? {
+        return conn.prepareStatement(
+            "SELECT id, connection_id, name, file_path, external, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE file_path = ?",
+        ).use { ps ->
+            ps.setString(1, path)
+            ps.executeQuery().use { rs -> if (rs.next()) mapConsole(rs) else null }
+        }
+    }
+
+    /** 新建外部文件控制台：只插元数据行，不建文件、不写空内容（文件由用户维护）。 */
+    fun createExternalConsole(connectionId: String, name: String, filePath: String): ConsoleRecord {
+        val id = newId()
+        val now = System.currentTimeMillis()
+        val rec = ConsoleRecord(
+            id = id, connectionId = connectionId, name = name,
+            filePath = filePath, external = true,
+            sortOrder = nextSortOrder("consoles"), updatedAt = now,
+        )
+        conn.prepareStatement(
+            """
+            INSERT INTO consoles(id, connection_id, name, file_path, external, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+            """.trimIndent(),
+        ).use { ps ->
+            ps.setString(1, id)
+            ps.setString(2, connectionId)
+            ps.setString(3, name)
+            ps.setString(4, filePath)
+            ps.setInt(5, rec.sortOrder)
+            ps.setLong(6, now)
+            ps.setLong(7, now)
+            ps.executeUpdate()
+        }
+        return rec
+    }
+
+    /** 「另存为…」：把外部控制台重绑到新路径（external 保持 1）。 */
+    fun rebindConsoleFile(id: String, newPath: String) {
+        conn.prepareStatement("UPDATE consoles SET file_path = ?, updated_at = ? WHERE id = ?").use { ps ->
+            ps.setString(1, newPath)
+            ps.setLong(2, System.currentTimeMillis())
+            ps.setString(3, id)
+            ps.executeUpdate()
+        }
     }
 
     fun renameConsole(id: String, newName: String) {
@@ -605,7 +652,7 @@ class ConnectionsRepository(
             ps.setString(1, id)
             ps.executeUpdate()
         }
-        if (rec.filePath.isNotBlank()) {
+        if (rec.filePath.isNotBlank() && !rec.external) {
             runCatching { ConsoleFiles.delete(java.nio.file.Paths.get(rec.filePath)) }
         }
     }
@@ -631,6 +678,7 @@ class ConnectionsRepository(
         connectionId = rs.getString("connection_id"),
         name = rs.getString("name"),
         filePath = rs.getString("file_path"),
+        external = rs.getInt("external") != 0,
         sortOrder = rs.getInt("sort_order"),
         updatedAt = rs.getLong("updated_at"),
         target = rs.getString("target") ?: "",

@@ -24,7 +24,7 @@ class AppDatabaseMigrationTest {
             c.createStatement().use { st ->
                 st.executeQuery("SELECT version FROM schema_migrations ORDER BY version").use { rs ->
                     val versions = buildList { while (rs.next()) add(rs.getInt(1)) }
-                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), versions)
+                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), versions)
                 }
             }
         }
@@ -112,7 +112,35 @@ class AppDatabaseMigrationTest {
                     rs.next()
                     assertEquals(":", rs.getString("key_separator"))
                 }
+                // v12 旧控制台默认 external=0
+                st.executeQuery("SELECT external FROM consoles WHERE id='cc1'").use { rs ->
+                    rs.next()
+                    assertEquals(0, rs.getInt("external"))
+                }
             }
+        }
+    }
+
+    @Test
+    fun `v12 file_path is unique`() {
+        val db = dir.resolve("v12.db")
+        raw(db).use { AppDatabase.migrate(it) }
+        raw(db).use { c ->
+            c.createStatement().use { st ->
+                st.execute(
+                    "INSERT INTO consoles(id, connection_id, name, file_path, created_at, updated_at) " +
+                        "VALUES ('a','c1','a','/tmp/x.sql',1,1)",
+                )
+            }
+            val dup = runCatching {
+                c.createStatement().use { st ->
+                    st.execute(
+                        "INSERT INTO consoles(id, connection_id, name, file_path, created_at, updated_at) " +
+                            "VALUES ('b','c1','b','/tmp/x.sql',1,1)",
+                    )
+                }
+            }
+            assertTrue(dup.isFailure, "file_path 唯一索引应拒绝重复路径")
         }
     }
 

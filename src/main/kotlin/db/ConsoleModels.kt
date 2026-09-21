@@ -11,6 +11,8 @@ data class ConsoleRecord(
     val connectionId: String,
     val name: String,
     val filePath: String,
+    /** true = 外部文件控制台：file_path 为用户指定路径，DB-K 不改名、不删除它。 */
+    val external: Boolean = false,
     val sortOrder: Int = 0,
     val updatedAt: Long = 0,
     val target: String = "",

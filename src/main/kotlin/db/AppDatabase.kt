@@ -12,7 +12,7 @@ import java.util.UUID
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 11
+    private const val CURRENT_VERSION = 12
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -74,6 +74,10 @@ object AppDatabase {
         if (!applied.contains(11)) {
             conn.createStatement().use { st -> migrateToV11(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (11)").use { it.executeUpdate() }
+        }
+        if (!applied.contains(12)) {
+            conn.createStatement().use { st -> migrateToV12(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (12)").use { it.executeUpdate() }
         }
     }
 
@@ -161,6 +165,16 @@ object AppDatabase {
      */
     private fun migrateToV11(st: Statement) {
         st.executeUpdate("ALTER TABLE consoles DROP COLUMN closed")
+    }
+
+    /**
+     * v12：外部文件控制台（拖入/选择的 .sql 当普通控制台用）。
+     * external=1 的文件由用户维护，DB-K 绝不删除；file_path 唯一索引落实「按路径全局唯一」。
+     */
+    private fun migrateToV12(st: Statement) {
+        st.executeUpdate("ALTER TABLE consoles ADD COLUMN external INTEGER NOT NULL DEFAULT 0")
+        // 部分索引：只约束非空路径（历史/测试库可能存在 file_path='' 的占位行）
+        st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_consoles_file_path ON consoles(file_path) WHERE file_path <> ''")
     }
 
     /**

@@ -370,4 +370,52 @@ class ConnectionsRepositoryTest {
             assertTrue(repo.listWorkspaceConsoleIds().values.all { c.id !in it })
         }
     }
+
+    @Test
+    fun `external console round-trips and never deletes its file`() {
+        open().use { repo ->
+            val pid = repo.createConnection(newProfile(id = "c1"))
+            val ext = dir.resolve("project").also { java.nio.file.Files.createDirectories(it) }.resolve("iter.sql")
+            java.nio.file.Files.writeString(ext, "SELECT 1")
+
+            val rec = repo.createExternalConsole(pid, "iter.sql", ext.toString())
+            assertTrue(rec.external)
+            assertEquals(rec.id, repo.getConsoleByPath(ext.toString())?.id)
+            assertEquals("SELECT 1", repo.readConsoleContent(rec.id))
+            assertTrue(java.nio.file.Files.isRegularFile(ext), "createExternalConsole 不应覆盖/删除已有文件")
+
+            repo.deleteConsole(rec.id)
+            assertTrue(java.nio.file.Files.isRegularFile(ext), "删除外部控制台不得删除文件")
+            assertNull(repo.getConsole(rec.id))
+        }
+    }
+
+    @Test
+    fun `deleteConnection keeps external files`() {
+        open().use { repo ->
+            val pid = repo.createConnection(newProfile(id = "c1"))
+            val managed = repo.createConsole(pid, "控制台 1")
+            val ext = dir.resolve("keep.sql")
+            java.nio.file.Files.writeString(ext, "SELECT 1")
+            repo.createExternalConsole(pid, "keep.sql", ext.toString())
+
+            repo.deleteConnection(pid)
+            assertFalse(java.nio.file.Files.exists(java.nio.file.Path.of(managed.filePath)), "普通控制台文件应删除")
+            assertTrue(java.nio.file.Files.isRegularFile(ext), "外部文件应保留")
+        }
+    }
+
+    @Test
+    fun `rebindConsoleFile points console at a new path`() {
+        open().use { repo ->
+            val pid = repo.createConnection(newProfile(id = "c1"))
+            val a = dir.resolve("a.sql"); val b = dir.resolve("b.sql")
+            java.nio.file.Files.writeString(a, "SELECT 1")
+            val rec = repo.createExternalConsole(pid, "a.sql", a.toString())
+
+            repo.rebindConsoleFile(rec.id, b.toString())
+            assertEquals(b.toString(), repo.getConsole(rec.id)!!.filePath)
+            assertTrue(repo.getConsole(rec.id)!!.external)
+        }
+    }
 }
