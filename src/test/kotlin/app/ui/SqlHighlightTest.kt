@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
  */
 class SqlHighlightTest {
 
-    private val pal = sqlSyntaxPalette(isDark = false)
+    private val pal = sqlSyntaxPalette(themeById("light")!!.colors)
     private val keywords = sqlHighlightKeywordSet()
 
     private fun highlight(text: String): AnnotatedString =
@@ -86,7 +86,7 @@ class SqlHighlightTest {
     @Test
     fun bothPalettesRenderWithoutError() {
         listOf(true, false).forEach { dark ->
-            val p = sqlSyntaxPalette(dark)
+            val p = sqlSyntaxPalette((if (dark) themeById("dark") else themeById("light"))!!.colors)
             val a = AnnotatedString(
                 "CREATE TABLE t (id INT DEFAULT 0); -- c",
                 spanStyles = sqlHighlightSpans("CREATE TABLE t (id INT DEFAULT 0); -- c", p, keywords),

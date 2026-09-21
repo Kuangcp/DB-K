@@ -39,10 +39,6 @@ internal fun jsonSyntaxPalette(colors: ThemeColors): JsonSyntaxPalette = JsonSyn
     punctuation = colors.punctuation,
 )
 
-// TODO(Task 4): 迁移调用点后删除过渡重载
-internal fun jsonSyntaxPalette(isDark: Boolean): JsonSyntaxPalette =
-    jsonSyntaxPalette((if (isDark) themeById("dark") else themeById("light"))!!.colors)
-
 /**
  * 廉价初筛：内容（去空白后）首尾是配对的 `{}` / `[]`，看起来像顶层 JSON 对象/数组。
  * 只用于决定要不要起线程解析，**合法性以 [parseJsonDocument] 为准**。

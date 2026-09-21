@@ -25,10 +25,6 @@ internal fun sqlSyntaxPalette(colors: ThemeColors): SqlSyntaxPalette = SqlSyntax
     punctuation = colors.punctuation,
 )
 
-// TODO(Task 4): 迁移调用点后删除过渡重载
-internal fun sqlSyntaxPalette(isDark: Boolean): SqlSyntaxPalette =
-    sqlSyntaxPalette((if (isDark) themeById("dark") else themeById("light"))!!.colors)
-
 /**
  * 高亮用关键字集合（大写，供 [sqlHighlightSpans] O(1) 比对；调用处 remember 一次即可）。
  *

@@ -54,6 +54,7 @@ import app.ui.decodeBase64Bytes
 import app.ui.humanSize
 import app.ui.imageFormatName
 import app.ui.jsonSyntaxPalette
+import app.ui.LocalThemeColors
 import app.ui.looksLikeJson
 import app.ui.md5Hex
 import app.ui.parseJsonDocument
@@ -222,11 +223,11 @@ private fun ViewerText(content: String, modifier: Modifier = Modifier) {
  */
 @Composable
 private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
-    val isDark = MaterialTheme.colors.isLight.not()
+    val themeColors = LocalThemeColors.current
     val keywords = remember { sqlHighlightKeywordSet() }
-    // isDark 作 key：主题切换时重算色板（与 EditorPane 一致）。
-    val annotated = remember(content, isDark, keywords) {
-        AnnotatedString(content, spanStyles = sqlHighlightSpans(content, sqlSyntaxPalette(isDark), keywords))
+    // themeColors 作 key：主题切换时重算色板（与 EditorPane 一致）。
+    val annotated = remember(content, themeColors, keywords) {
+        AnnotatedString(content, spanStyles = sqlHighlightSpans(content, sqlSyntaxPalette(themeColors), keywords))
     }
     ViewerFrame(modifier) {
         Text(
@@ -244,10 +245,10 @@ private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
  */
 @Composable
 private fun JsonCodeText(content: String, modifier: Modifier = Modifier) {
-    val isDark = MaterialTheme.colors.isLight.not()
-    // isDark 作 key：主题切换时重算色板（与 SqlCodeText 一致）。
-    val annotated = remember(content, isDark) {
-        AnnotatedString(content, spanStyles = jsonHighlightSpans(content, jsonSyntaxPalette(isDark)))
+    val themeColors = LocalThemeColors.current
+    // themeColors 作 key：主题切换时重算色板（与 SqlCodeText 一致）。
+    val annotated = remember(content, themeColors) {
+        AnnotatedString(content, spanStyles = jsonHighlightSpans(content, jsonSyntaxPalette(themeColors)))
     }
     ViewerFrame(modifier) {
         Text(

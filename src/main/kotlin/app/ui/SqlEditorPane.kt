@@ -125,7 +125,7 @@ internal fun EditorPane(
 ) {
     // 快捷键表：编辑器内的执行/补全用可配置键，其余为语义固定的编辑交互。
     val keymap = LocalKeymap.current
-    val isDark = MaterialTheme.colors.isLight.not()
+    val themeColors = LocalThemeColors.current
     val keywords = remember { sqlHighlightKeywordSet() }
     val content = state.text.toString()
     val sel = state.selection
@@ -157,10 +157,10 @@ internal fun EditorPane(
 
     // 语法高亮：手写扫描出 token 区间（无正则）——`(a|b)*` 型正则在长字符串字面量上会递归爆栈，
     // 见 `SyntaxHighlight.kt`。新 API 在 outputTransformation 里把 span 贴进 TextFieldBuffer。
-    val highlightSpans = remember(content, isDark, editorLanguage, keywords) {
+    val highlightSpans = remember(content, themeColors, editorLanguage, keywords) {
         when (editorLanguage) {
-            EditorLanguage.JSON -> jsonHighlightSpans(content, jsonSyntaxPalette(isDark))
-            else -> sqlHighlightSpans(content, sqlSyntaxPalette(isDark), keywords)
+            EditorLanguage.JSON -> jsonHighlightSpans(content, jsonSyntaxPalette(themeColors))
+            else -> sqlHighlightSpans(content, sqlSyntaxPalette(themeColors), keywords)
         }
     }
     val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
@@ -274,7 +274,7 @@ internal fun EditorPane(
         fontFamily = editorFontFamily(editorSettings.fontFamilyName),
         fontSize = editorSettings.fontSizeSp.sp,
         lineHeight = EditorSettings.lineHeightSp(editorSettings.fontSizeSp).sp,
-        color = MaterialTheme.colors.onSurface,
+        color = themeColors.editorForeground,
     )
     // 行号槽字号跟随编辑器字号（旧固定 11sp ≈ 13sp * 0.85）
     val gutterFontFamily = editorStyle.fontFamily
@@ -534,9 +534,9 @@ internal fun EditorPane(
     }
 
     // 行号配色（主题派生）
-    val gutterColor = MaterialTheme.colors.onSurface.copy(alpha = 0.35f)
-    val gutterCurColor = MaterialTheme.colors.onSurface.copy(alpha = 0.95f)
-    val gutterCurBg = MaterialTheme.colors.primary.copy(alpha = 0.16f)
+    val gutterColor = themeColors.editorForeground.copy(alpha = 0.35f)
+    val gutterCurColor = themeColors.editorForeground
+    val gutterCurBg = themeColors.primary.copy(alpha = 0.16f)
     val numStyle = TextStyle(fontFamily = gutterFontFamily, fontSize = gutterFontSize, color = gutterColor)
     val numCurStyle = TextStyle(
         fontFamily = gutterFontFamily, fontSize = gutterFontSize, color = gutterCurColor,
@@ -548,8 +548,8 @@ internal fun EditorPane(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colors.surface)
-                .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
+                .background(themeColors.editorBackground)
+                .border(1.dp, themeColors.onSurface.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
                 .onSizeChanged { boxW = it.width; boxH = it.height }
                 .pointerInput(Unit) {
                     // 旁路观察拖拽指针（Final pass：文本域已在本 pass 前处理完选区，仅读取不消费）
@@ -693,7 +693,7 @@ internal fun EditorPane(
                     textStyle = editorStyle,
                     keyboardOptions = KeyboardOptions.Default,
                     lineLimits = TextFieldLineLimits.MultiLine(1, Int.MAX_VALUE),
-                    cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                    cursorBrush = SolidColor(themeColors.editorForeground),
                     outputTransformation = outputTransformation,
                     decorator = object : TextFieldDecorator {
                         @Composable

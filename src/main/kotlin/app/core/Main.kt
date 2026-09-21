@@ -67,6 +67,7 @@ import app.settings.KeymapPrefs
 import app.settings.LanguagePrefs
 import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
+import app.settings.ThemesStore
 import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
 import app.state.CommitPreviewRequest
@@ -93,7 +94,10 @@ import app.ui.LocalCtrlHeld
 import app.ui.LocalKeymap
 import app.ui.ResultEdits
 import app.ui.EditorArea
-import app.ui.appMaterialColors
+import app.ui.LocalThemeColors
+import app.ui.builtInThemes
+import app.ui.defaultThemeId
+import app.ui.themeById
 import app.ui.matchAnyAwt
 import app.ui.sqlHasOrderBy
 import app.ui.tableAtCaret
@@ -275,7 +279,22 @@ private fun WindowScope.AppBody(
         consoleState.workspaces.setActive(id)
         consoleState.onWorkspaceSwitched()
     }
-    var isDark by remember { mutableStateOf(ThemePrefs.load() == "dark") }
+    val themesStore = remember { ThemesStore() }
+    var customThemes by remember { mutableStateOf(themesStore.load()) }
+    var activeThemeId by remember { mutableStateOf(ThemePrefs.load() ?: defaultThemeId) }
+    val themes = builtInThemes + customThemes
+    val activeTheme = themes.firstOrNull { it.id == activeThemeId } ?: themeById(defaultThemeId)!!
+
+    /** 切换主题：立即生效并持久化。 */
+    fun selectTheme(id: String) {
+        activeThemeId = id
+        ThemePrefs.save(id)
+    }
+
+    // activeThemeId 悬空（自定义被删 / themes.json 损坏）→ 回退默认并重写偏好
+    LaunchedEffect(themes) {
+        if (themes.none { it.id == activeThemeId }) selectTheme(defaultThemeId)
+    }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
     // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
@@ -733,11 +752,12 @@ private fun WindowScope.AppBody(
     var ctrlHeld by remember { mutableStateOf(false) }
     // Ctrl+Tab 切换后请求把焦点交回编辑器（控制台节点按 consoleId 重建会丢焦点）。
     var editorFocusTick by remember { mutableStateOf(0) }
-    MaterialTheme(colors = appMaterialColors(isDark)) {
+    MaterialTheme(colors = activeTheme.colors.toMaterialColors()) {
         // M2 MaterialTheme 不设置 LocalContentColor（默认黑）——所有裸 Text 默认色在
         // 深色主题下会不可见。统一兜底为 onSurface；组件内显式色仍优先。
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colors.onSurface,
+            LocalThemeColors provides activeTheme.colors,
             LocalLang provides effectiveLang,
             LocalKeymap provides keymap,
             LocalCompletionDismiss provides completionDismiss,
@@ -1162,10 +1182,9 @@ private fun WindowScope.AppBody(
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },
                         resultsVisible = resultsVisible,
                         onToggleResults = { resultsVisible = !resultsVisible },
-                        isDark = isDark,
+                        isDark = !activeTheme.colors.isLight,
                         onToggleTheme = {
-                            isDark = !isDark
-                            ThemePrefs.save(if (isDark) "dark" else "light")
+                            selectTheme(if (activeTheme.colors.isLight) "dark" else "light")
                         },
                         editorSettings = editorSettings,
                         onOpenSettings = { dialogState.showSettings = true },
@@ -1189,7 +1208,7 @@ private fun WindowScope.AppBody(
                 ToastHost(toastState)
                 SettingsDialog(
                     visible = dialogState.showSettings,
-                    isDark = isDark,
+                    theme = activeTheme,
                     language = effectiveLang,
                     initial = SettingsSnapshot(editorSettings, keymap, languagePref),
                     onDismiss = { dialogState.showSettings = false },

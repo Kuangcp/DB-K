@@ -47,6 +47,7 @@ import app.ui.flattenJsonTree
 import app.ui.jsonDefaultExpanded
 import app.ui.jsonInlinePreview
 import app.ui.jsonSyntaxPalette
+import app.ui.LocalThemeColors
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -92,8 +93,8 @@ class JsonTreeState {
  */
 @Composable
 fun JsonTreeView(root: JsonElement, state: JsonTreeState, modifier: Modifier = Modifier) {
-    val isDark = MaterialTheme.colors.isLight.not()
-    val pal = remember(isDark) { jsonSyntaxPalette(isDark) }
+    val themeColors = LocalThemeColors.current
+    val pal = remember(themeColors) { jsonSyntaxPalette(themeColors) }
     val muted = MaterialTheme.colors.onSurface.copy(alpha = 0.45f)
 
     // derivedStateOf 会在 state/overrides 变化时重算；remember 让内容不变时复用

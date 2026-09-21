@@ -141,7 +141,7 @@ class JsonSupportTest {
 
     // ---------- 原文高亮 ----------
 
-    private val pal = jsonSyntaxPalette(isDark = false)
+    private val pal = jsonSyntaxPalette(themeById("light")!!.colors)
 
     private fun highlight(text: String): AnnotatedString =
         AnnotatedString(text, spanStyles = jsonHighlightSpans(text, pal))

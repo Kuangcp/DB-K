@@ -52,7 +52,8 @@ import app.i18n.ProvideI18n
 import app.i18n.t
 import app.settings.EditorSettings
 import app.settings.Keymap
-import app.ui.appMaterialColors
+import app.ui.LocalThemeColors
+import app.ui.ThemeSpec
 import app.ui.editorFontFamily
 import db.AppPaths
 import i18n.I18n
@@ -74,7 +75,7 @@ data class SettingsSnapshot(
 @Composable
 fun SettingsDialog(
     visible: Boolean,
-    isDark: Boolean,
+    theme: ThemeSpec,
     language: Lang,
     initial: SettingsSnapshot,
     onDismiss: () -> Unit,
@@ -88,9 +89,12 @@ fun SettingsDialog(
     ) {
         // DialogWindow 是独立 composition，不继承主窗口的 CompositionLocal → 自行提供语言
         ProvideI18n(language) {
-            MaterialTheme(colors = appMaterialColors(isDark)) {
+            MaterialTheme(colors = theme.colors.toMaterialColors()) {
                 // 独立窗口是另一棵 composition：M2 MaterialTheme 不设 LocalContentColor，需同样兜底
-                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colors.onSurface) {
+                CompositionLocalProvider(
+                    LocalContentColor provides MaterialTheme.colors.onSurface,
+                    LocalThemeColors provides theme.colors,
+                ) {
                     SettingsBody(initial = initial, onCancel = onDismiss, onSave = onSave)
                 }
             }
