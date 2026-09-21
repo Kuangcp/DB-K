@@ -3,6 +3,7 @@ package db
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 
 /**
  * 控制台正文 = 一个 .sql 文件。读写为纯文件操作（小文件，同步足够），
@@ -17,9 +18,24 @@ object ConsoleFiles {
         }.getOrDefault("")
     }
 
+    /**
+     * 原子写：同目录临时文件 + ATOMIC_MOVE，避免外部工具/监听读到半截内容。
+     * 跨文件系统等无法原子移动时回落普通写。
+     */
     fun write(path: Path, text: String) {
         Files.createDirectories(path.parent)
-        Files.write(path, text.toByteArray(StandardCharsets.UTF_8))
+        val tmp = runCatching { Files.createTempFile(path.parent, ".${path.fileName}", ".tmp") }.getOrNull()
+        if (tmp == null) {
+            Files.write(path, text.toByteArray(StandardCharsets.UTF_8))
+            return
+        }
+        runCatching {
+            Files.write(tmp, text.toByteArray(StandardCharsets.UTF_8))
+            Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        }.onFailure {
+            runCatching { Files.deleteIfExists(tmp) }
+            Files.write(path, text.toByteArray(StandardCharsets.UTF_8))
+        }
     }
 
     fun delete(path: Path) {
