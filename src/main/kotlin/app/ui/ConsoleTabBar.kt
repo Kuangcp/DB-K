@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import app.i18n.t
 import db.ConsoleRecord
 import db.ConnectionProfile
+import db.WorkspaceRecord
 import i18n.Str
 import tree.TypeBadge
 
@@ -64,6 +65,14 @@ internal fun ConsoleTabBar(
     onRenameConsole: (ConsoleRecord) -> Unit,
     onDeleteConsole: (ConsoleRecord) -> Unit,
     onCloseConsole: (ConsoleRecord) -> Unit,
+    workspaces: List<WorkspaceRecord> = emptyList(),
+    activeWorkspace: WorkspaceRecord? = null,
+    workspaceCountOf: (String) -> Int = { 0 },
+    workspaceHasDirty: (String) -> Boolean = { false },
+    onSelectWorkspace: (String) -> Unit = {},
+    onCreateWorkspace: () -> Unit = {},
+    onRenameWorkspace: (WorkspaceRecord) -> Unit = {},
+    onDeleteWorkspace: (WorkspaceRecord) -> Unit = {},
 ) {
     var createMenuOpen by remember { mutableStateOf(false) }
     // 条内出现多个数据源时，标签额外显示所属数据源名，避免同类型两个库分不清
@@ -126,6 +135,17 @@ internal fun ConsoleTabBar(
                 }
             }
         }
+        Spacer(Modifier.width(6.dp))
+        WorkspaceSwitcher(
+            workspaces = workspaces,
+            active = activeWorkspace,
+            countOf = workspaceCountOf,
+            hasDirty = workspaceHasDirty,
+            onSelect = onSelectWorkspace,
+            onCreate = onCreateWorkspace,
+            onRename = onRenameWorkspace,
+            onDelete = onDeleteWorkspace,
+        )
     }
 }
 
