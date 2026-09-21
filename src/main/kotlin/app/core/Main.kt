@@ -275,7 +275,7 @@ private fun WindowScope.AppBody(
         consoleState.workspaces.setActive(id)
         consoleState.onWorkspaceSwitched()
     }
-    var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
+    var isDark by remember { mutableStateOf(ThemePrefs.load() == "dark") }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
     // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
@@ -1165,7 +1165,7 @@ private fun WindowScope.AppBody(
                         isDark = isDark,
                         onToggleTheme = {
                             isDark = !isDark
-                            ThemePrefs.save(isDark)
+                            ThemePrefs.save(if (isDark) "dark" else "light")
                         },
                         editorSettings = editorSettings,
                         onOpenSettings = { dialogState.showSettings = true },
