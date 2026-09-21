@@ -43,12 +43,25 @@ class ConsoleStateTest {
     )
 
     /** 用 TestScope 作为协程作用域、Unconfined 调度器作为 IO 调度器，保证防抖可确定性推进。 */
-    private fun TestScope.newState(repo: ConnectionsRepository) = ConsoleState(
+    private class FakeFileWatcher : FileWatcher {
+        val watched = mutableSetOf<Path>()
+        val unwatched = mutableSetOf<Path>()
+        var closed = false
+        override fun watch(path: Path) { watched.add(path) }
+        override fun unwatch(path: Path) { unwatched.add(path) }
+        override fun close() { closed = true }
+    }
+
+    private fun TestScope.newState(
+        repo: ConnectionsRepository,
+        watcher: FileWatcher = FakeFileWatcher(),
+    ) = ConsoleState(
         repository = repo,
         connectionsState = ConnectionsState(MetaCache(dbPath), ColumnCache(dbPath)),
         workspaces = WorkspaceState(repo, loadActive = { null }, saveActive = {}),
         scope = this,
         ioDispatcher = UnconfinedTestDispatcher(testScheduler),
+        fileWatcher = watcher,
     )
 
     @Test
@@ -505,6 +518,172 @@ class ConsoleStateTest {
             val only = state.createConsole(pid, "1")
             assertNull(state.switchConsoleByMru(1))
             assertEquals(only.id, state.activeConsoleId)
+        }
+    }
+
+    // ---------- 外部文件控制台 ----------
+
+    private fun extFile(name: String, text: String = "SELECT 1"): Path {
+        val p = dir.resolve(name)
+        Files.writeString(p, text)
+        return p
+    }
+
+    @Test
+    fun `openExternalFile creates reads watches and marks present`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val watcher = FakeFileWatcher()
+            val state = newState(repo, watcher)
+            val f = extFile("iter.sql", "SELECT 42")
+            val rec = state.openExternalFile(pid, f)
+            assertTrue(rec.external)
+            assertEquals("SELECT 42", state.textOf(rec.id))
+            assertNull(state.externalIssueOf(rec.id))
+            assertTrue(f.toAbsolutePath().normalize() in watcher.watched)
+        }
+    }
+
+    @Test
+    fun `openExternalFile reuses existing by normalized path`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = dir.resolve("sub").also { Files.createDirectories(it) }.resolve("iter.sql")
+            Files.writeString(f, "SELECT 1")
+            val first = state.openExternalFile(pid, f)
+            val second = state.openExternalFile(pid, f.toAbsolutePath().normalize())
+            assertEquals(first.id, second.id)
+            assertEquals(1, repo.listConsoles(pid).count { it.external })
+        }
+    }
+
+    @Test
+    fun `external change reloads clean buffer`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            Files.writeString(f, "SELECT 2")
+            state.handleExternalChange(f)
+            assertEquals("SELECT 2", state.textOf(rec.id))
+            assertEquals(1, state.textRevisionOf(rec.id))
+            assertNull(state.externalIssueOf(rec.id))
+        }
+    }
+
+    @Test
+    fun `external change on dirty buffer flags conflict and keeps local`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            state.setText(rec.id, "SELECT local")
+            Files.writeString(f, "SELECT 2")
+            state.handleExternalChange(f)
+            assertEquals(ExternalFileIssue.CONFLICT, state.externalIssueOf(rec.id))
+            assertEquals("SELECT local", state.textOf(rec.id))
+
+            state.reloadFromDisk(rec.id)
+            assertEquals("SELECT 2", state.textOf(rec.id))
+            assertFalse(state.isDirty(rec.id))
+            assertNull(state.externalIssueOf(rec.id))
+        }
+    }
+
+    @Test
+    fun `self write is ignored`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            state.setText(rec.id, "SELECT mine")
+            state.flushNow(rec.id)
+            val before = state.textRevisionOf(rec.id)
+            state.handleExternalChange(f)
+            assertEquals(before, state.textRevisionOf(rec.id), "自身写入不应触发重载")
+            assertEquals("SELECT mine", state.textOf(rec.id))
+        }
+    }
+
+    @Test
+    fun `external delete flags missing and pauses autosave`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            state.setText(rec.id, "SELECT local")
+            Files.delete(f)
+            state.handleExternalChange(f)
+            assertEquals(ExternalFileIssue.MISSING, state.externalIssueOf(rec.id))
+            state.flushNow(rec.id)
+            assertTrue(state.isDirty(rec.id), "缺文件时 flush 应保持脏、不写盘")
+            assertFalse(Files.exists(f), "缺文件时绝不擅自重建")
+            assertEquals(listOf(rec.id), state.missingDirtyExternal(listOf(pid)).map { it.id })
+        }
+    }
+
+    @Test
+    fun `recreate writes buffer back to original path`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            state.setText(rec.id, "SELECT local")
+            Files.delete(f)
+            state.handleExternalChange(f)
+            assertTrue(state.recreateExternalFile(rec.id))
+            assertEquals("SELECT local", Files.readString(f))
+            assertFalse(state.isDirty(rec.id))
+            assertNull(state.externalIssueOf(rec.id))
+        }
+    }
+
+    @Test
+    fun `rebind writes buffer to new path and updates record`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            val g = dir.resolve("b.sql")
+            assertTrue(state.rebindExternalFile(rec.id, g))
+            assertEquals(g.toAbsolutePath().normalize().toString(), repo.getConsole(rec.id)!!.filePath)
+            assertEquals("SELECT 1", Files.readString(g))
+        }
+    }
+
+    @Test
+    fun `discardDirty drops unsaved edits`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            state.setText(rec.id, "SELECT local")
+            state.discardDirty(rec.id)
+            assertFalse(state.isDirty(rec.id))
+            assertTrue(state.missingDirtyExternal(listOf(pid)).isEmpty())
+        }
+    }
+
+    @Test
+    fun `prune hides missing external console but keeps row`() = runTest {
+        repo().use { repo ->
+            val pid = repo.createConnection(profile())
+            val state = newState(repo)
+            val f = extFile("a.sql", "SELECT 1")
+            val rec = state.openExternalFile(pid, f)
+            Files.delete(f)
+            state.pruneMissingExternal(listOf(pid))
+            val ws = state.workspaces.activeWorkspace()!!
+            assertFalse(state.workspaces.contains(ws.id, rec.id))
+            assertNotNull(repo.getConsole(rec.id))
         }
     }
 }

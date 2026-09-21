@@ -11,6 +11,7 @@ import app.ui.ResultEdits
 import app.ui.buildEditPlan
 import app.ui.buildWriteOps
 import app.ui.sqlHasPaginationClause
+import db.ConsoleFiles
 import db.ConsoleRecord
 import db.ConnectionsRepository
 import db.SqlHistoryRow
@@ -19,6 +20,8 @@ import engine.model.QueryColumn
 import engine.model.QueryResult
 import i18n.I18n
 import i18n.Str
+import java.nio.file.Files
+import java.nio.file.Path
 import engine.model.SchemaMeta
 import jdbc.CellValue
 import jdbc.DialectRegistry
@@ -33,6 +36,9 @@ import kotlinx.coroutines.withContext
 import org.tinylog.Logger
 import redis.RedisProtocol
 import tree.ConnUiStatus
+
+/** 外部文件当前的问题态：冲突（磁盘变了且本地脏）/ 缺失（磁盘文件不存在）。 */
+enum class ExternalFileIssue { CONFLICT, MISSING }
 
 /**
  * SQL 控制台运行状态（M4）：一个数据源 → 多个命名控制台；每个控制台绑定一个 .sql 文件。
@@ -89,6 +95,8 @@ class ConsoleState(
     private val scope: CoroutineScope,
     /** 慢操作调度器；测试注入虚拟时间调度器以确定性推进防抖/执行。 */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** 监听器（默认真实实现；测试注入 fake）。 */
+    fileWatcher: FileWatcher? = null,
     /** 危险命令（Redis FLUSHALL 等）执行前的二次确认钩子；返回是否继续；null = 不拦截。 */
     private val confirmDangerous: (suspend (String) -> Boolean)? = null,
 ) {
@@ -109,6 +117,22 @@ class ConsoleState(
 
     /** consoleId -> 最近一次双击预览的 Redis 键元数据（结果视图 header 用）。 */
     val redisKeyMetas = mutableStateMapOf<String, RedisKeyMeta>()
+
+    /** 外部文件当前问题态（冲突/缺失）；无键 = 正常。 */
+    val externalIssues = mutableStateMapOf<String, ExternalFileIssue>()
+
+    /** 外部文件内容重载信号：EditorArea 据此把权威缓冲刷进 TextFieldState。 */
+    private val textRevisions = mutableStateMapOf<String, Int>()
+
+    /** 外部文件上次载入/写入的内容，用于忽略自身写入。 */
+    private val lastDiskContent = mutableMapOf<String, String>()
+
+    /** 规范化路径 → consoleId（监听反向表）。 */
+    private val pathToConsole = mutableMapOf<String, String>()
+
+    private val watcher: FileWatcher = fileWatcher ?: ExternalFileWatcher(onChange = { path ->
+        scope.launch { handleExternalChange(path) }
+    })
 
     /**
      * 结果网格未提交写操作（本地 overlay）：consoleId → 单元格改值 / 待插入行 / 待删除行。
@@ -197,6 +221,27 @@ class ConsoleState(
     fun setRedisKeyMeta(consoleId: String, meta: RedisKeyMeta) {
         redisKeyMetas[consoleId] = meta
     }
+
+    // ---------- 外部文件控制台：路径规范化 / 查询 / 问题态 ----------
+
+    /** 仓库唯一性用的规范化路径：存在时消解符号链接（toRealPath），否则绝对规范化。 */
+    private fun normalizePath(path: Path): String =
+        runCatching { path.toRealPath().toString() }
+            .getOrElse { path.toAbsolutePath().normalize().toString() }
+
+    /** 监听反向表用的键：绝对规范化（与 ExternalFileWatcher 回调路径同源）。 */
+    private fun absKey(path: Path): String = path.toAbsolutePath().normalize().toString()
+
+    private fun resolveConsoleId(path: Path): String? =
+        pathToConsole[absKey(path)]
+            ?: repository.getConsoleByPath(absKey(path))?.id
+            ?: repository.getConsoleByPath(normalizePath(path))?.id
+
+    fun consoleByPath(path: Path): ConsoleRecord? = repository.getConsoleByPath(normalizePath(path))
+
+    fun externalIssueOf(consoleId: String): ExternalFileIssue? = externalIssues[consoleId]
+
+    fun textRevisionOf(consoleId: String): Int = textRevisions[consoleId] ?: 0
 
     // ---------- 结果单元格编辑（本地 overlay → 提交写回） ----------
 
@@ -547,8 +592,17 @@ class ConsoleState(
             workspaces.setLastActive(ws.id, console.id)
         }
         if (console.id !in loaded) {
-            buffers[console.id] = repository.readConsoleContent(console.id)
+            val text = repository.readConsoleContent(console.id)
+            buffers[console.id] = text
             loaded += console.id
+            if (console.external) {
+                val p = Path.of(console.filePath)
+                lastDiskContent[console.id] = text
+                pathToConsole[absKey(p)] = console.id
+                watcher.watch(p)
+                if (Files.isRegularFile(p)) externalIssues.remove(console.id)
+                else externalIssues[console.id] = ExternalFileIssue.MISSING
+            }
         }
     }
 
@@ -672,6 +726,130 @@ class ConsoleState(
     }
 
     /**
+     * 打开一个外部 .sql 文件为控制台（选择框 / 拖拽入口）：按规范化路径复用已有记录，
+     * 未命中才新建（不覆盖文件内容）。加入当前工作区并激活、开始监听。
+     */
+    fun openExternalFile(profileId: String, path: Path): ConsoleRecord {
+        val normalized = normalizePath(path)
+        val existing = repository.getConsoleByPath(normalized)
+        val rec = if (existing != null) {
+            val list = profileConsoles(existing.connectionId)
+            if (list.none { it.id == existing.id }) {
+                consolesByConnection[existing.connectionId] = list + existing
+            }
+            existing
+        } else {
+            val created = repository.createExternalConsole(profileId, path.fileName.toString(), normalized)
+            consolesByConnection[profileId] = consolesByConnection[profileId].orEmpty() + created
+            created
+        }
+        val ws = workspaces.ensureActive()
+        if (!workspaces.contains(ws.id, rec.id)) workspaces.addMember(ws.id, rec.id)
+        activate(rec)
+        return rec
+    }
+
+    /** 监听回调（已在 UI 线程）：缺文件标记缺失；否则与上次磁盘内容比对，干净重载、脏则冲突。 */
+    fun handleExternalChange(path: Path) {
+        val consoleId = resolveConsoleId(path) ?: return
+        val p = Path.of(findConsole(consoleId)?.filePath ?: path.toString())
+        if (!Files.isRegularFile(p)) {
+            externalIssues[consoleId] = ExternalFileIssue.MISSING
+            return
+        }
+        val disk = ConsoleFiles.read(p)
+        if (disk == lastDiskContent[consoleId]) return
+        if (consoleId !in dirtyConsoleIds) {
+            buffers[consoleId] = disk
+            lastDiskContent[consoleId] = disk
+            externalIssues.remove(consoleId)
+            textRevisions[consoleId] = (textRevisions[consoleId] ?: 0) + 1
+        } else {
+            externalIssues[consoleId] = ExternalFileIssue.CONFLICT
+        }
+    }
+
+    /** 冲突：载入磁盘版本（丢弃本地、清脏、取消防抖任务）。 */
+    fun reloadFromDisk(consoleId: String) {
+        val rec = findConsole(consoleId) ?: return
+        saveJobs.remove(consoleId)?.cancel()
+        val disk = ConsoleFiles.read(Path.of(rec.filePath))
+        buffers[consoleId] = disk
+        lastDiskContent[consoleId] = disk
+        dirtyConsoleIds = dirtyConsoleIds - consoleId
+        externalIssues.remove(consoleId)
+        textRevisions[consoleId] = (textRevisions[consoleId] ?: 0) + 1
+    }
+
+    /** 冲突：保留我的（保持脏，下次落盘覆盖磁盘）。 */
+    fun keepLocal(consoleId: String) {
+        externalIssues.remove(consoleId)
+    }
+
+    /** 缺失：按原路径写回缓冲；父目录不存在返回 false。 */
+    fun recreateExternalFile(consoleId: String): Boolean {
+        val rec = findConsole(consoleId) ?: return false
+        val p = Path.of(rec.filePath)
+        if (p.parent == null || !Files.isDirectory(p.parent)) return false
+        val text = buffers[consoleId] ?: ""
+        return runCatching {
+            ConsoleFiles.write(p, text)
+            lastDiskContent[consoleId] = text
+            dirtyConsoleIds = dirtyConsoleIds - consoleId
+            externalIssues.remove(consoleId)
+        }.isSuccess
+    }
+
+    /** 「另存为…」：写缓冲到新路径并重绑控制台；新路径被其他控制台占用返回 false。 */
+    fun rebindExternalFile(consoleId: String, newPath: Path): Boolean {
+        val rec = findConsole(consoleId) ?: return false
+        val normalized = normalizePath(newPath)
+        if (repository.getConsoleByPath(normalized)?.id?.let { it != consoleId } == true) return false
+        val text = buffers[consoleId] ?: ""
+        val ok = runCatching { ConsoleFiles.write(Path.of(normalized), text) }.isSuccess
+        if (!ok) return false
+        repository.rebindConsoleFile(consoleId, normalized)
+        val oldPath = Path.of(rec.filePath)
+        watcher.unwatch(oldPath)
+        pathToConsole.remove(absKey(oldPath))
+        pathToConsole[absKey(Path.of(normalized))] = consoleId
+        watcher.watch(Path.of(normalized))
+        lastDiskContent[consoleId] = text
+        dirtyConsoleIds = dirtyConsoleIds - consoleId
+        externalIssues.remove(consoleId)
+        val entry = consolesByConnection.entries.firstOrNull { (_, l) -> l.any { it.id == consoleId } }
+        if (entry != null) {
+            consolesByConnection[entry.key] = entry.value.map {
+                if (it.id == consoleId) it.copy(filePath = normalized) else it
+            }
+        }
+        return true
+    }
+
+    /** 启动：文件已丢失的外部控制台从所有工作区移除成员（等价关闭），保留行与关联。 */
+    fun pruneMissingExternal(profileIds: List<String>) {
+        allConsoles(profileIds).filter { it.external && !Files.isRegularFile(Path.of(it.filePath)) }
+            .forEach { workspaces.removeConsoleEverywhere(it.id) }
+    }
+
+    /** 退出保护：external + missing + 脏的控制台。 */
+    fun missingDirtyExternal(profileIds: List<String>): List<ConsoleRecord> =
+        allConsoles(profileIds).filter {
+            it.external && it.id in dirtyConsoleIds && externalIssues[it.id] == ExternalFileIssue.MISSING
+        }
+
+    /** 放弃某控制台的未保存改动（退出时选择「放弃」用）。 */
+    fun discardDirty(consoleId: String) {
+        saveJobs.remove(consoleId)?.cancel()
+        dirtyConsoleIds = dirtyConsoleIds - consoleId
+        externalIssues.remove(consoleId)
+    }
+
+    fun closeExternalWatcher() {
+        watcher.close()
+    }
+
+    /**
      * 关闭控制台 = 从当前工作区移出成员（正文/.sql 保留，其它工作区不受影响）。
      * 若关的是当前激活 → 切到本工作区下一个；没有则引导态。
      */
@@ -737,6 +915,13 @@ class ConsoleState(
         runStartedAt.remove(consoleId)
         runTarget.remove(consoleId)
         lastStableSlots.remove(consoleId)
+        if (rec.external) {
+            watcher.unwatch(Path.of(rec.filePath))
+            pathToConsole.remove(absKey(Path.of(rec.filePath)))
+            externalIssues.remove(consoleId)
+            lastDiskContent.remove(consoleId)
+            textRevisions.remove(consoleId)
+        }
         workspaces.removeConsoleEverywhere(consoleId)
         consolesByConnection[rec.connectionId] =
             consolesByConnection[rec.connectionId].orEmpty().filterNot { it.id == consoleId }
@@ -766,6 +951,13 @@ class ConsoleState(
             runStartedAt.remove(rec.id)
             runTarget.remove(rec.id)
             lastStableSlots.remove(rec.id)
+            if (rec.external) {
+                watcher.unwatch(Path.of(rec.filePath))
+                pathToConsole.remove(absKey(Path.of(rec.filePath)))
+                externalIssues.remove(rec.id)
+                lastDiskContent.remove(rec.id)
+                textRevisions.remove(rec.id)
+            }
             workspaces.removeConsoleEverywhere(rec.id)
         }
         historyByProfile.remove(profileId)
@@ -794,7 +986,11 @@ class ConsoleState(
     fun flushNow(consoleId: String) {
         if (consoleId !in dirtyConsoleIds) return
         val text = buffers[consoleId] ?: return
+        val rec = findConsole(consoleId)
+        // 外部文件缺失：绝不擅自重建，保持脏（退出保护会在退出时处理）
+        if (rec?.external == true && externalIssues[consoleId] == ExternalFileIssue.MISSING) return
         runCatching { repository.writeConsoleContent(consoleId, text) }
+            .onSuccess { if (rec?.external == true) lastDiskContent[consoleId] = text }
             .onFailure { Logger.error(it, "console autosave failed {}", consoleId) }
         dirtyConsoleIds = dirtyConsoleIds - consoleId
     }
