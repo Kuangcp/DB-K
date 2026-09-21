@@ -12,6 +12,10 @@ internal fun en(key: Str): String = when (key) {
     Str.CommonName -> "Name"
     Str.CommonListSeparator -> ", "
 
+    // ── Themes ──
+    Str.ThemeNameDark -> "Dark"
+    Str.ThemeNameLight -> "Light"
+
     // ── Workspaces ──
     Str.WorkspaceDefaultName -> "Default"
     Str.WorkspaceNoWorkspace -> "No workspace"

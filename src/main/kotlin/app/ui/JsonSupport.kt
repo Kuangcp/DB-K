@@ -30,26 +30,18 @@ internal data class JsonSyntaxPalette(
     val punctuation: Color,  // { } [ ] , : 等结构符号
 )
 
+internal fun jsonSyntaxPalette(colors: ThemeColors): JsonSyntaxPalette = JsonSyntaxPalette(
+    key = colors.keyword,
+    string = colors.string,
+    number = colors.number,
+    boolean = colors.keyword,
+    nullLiteral = colors.keyword,
+    punctuation = colors.punctuation,
+)
+
+// TODO(Task 4): 迁移调用点后删除过渡重载
 internal fun jsonSyntaxPalette(isDark: Boolean): JsonSyntaxPalette =
-    if (isDark) {
-        JsonSyntaxPalette(
-            key = Color(0xFF9CDCFE),        // VSCode Dark+ 浅蓝（属性名）
-            string = Color(0xFFCE9178),     // 橙
-            number = Color(0xFFB5CEA8),     // 绿
-            boolean = Color(0xFF569CD6),    // 蓝
-            nullLiteral = Color(0xFF569CD6),
-            punctuation = Color(0xFFD4D4D4), // 浅灰
-        )
-    } else {
-        JsonSyntaxPalette(
-            key = Color(0xFF0451A5),        // VSCode Light 深蓝
-            string = Color(0xFFA31515),     // 暗红
-            number = Color(0xFF098658),     // 墨绿
-            boolean = Color(0xFF0000FF),    // 蓝
-            nullLiteral = Color(0xFF0000FF),
-            punctuation = Color(0xFF242424), // 近黑
-        )
-    }
+    jsonSyntaxPalette((if (isDark) themeById("dark") else themeById("light"))!!.colors)
 
 /**
  * 廉价初筛：内容（去空白后）首尾是配对的 `{}` / `[]`，看起来像顶层 JSON 对象/数组。

@@ -22,6 +22,10 @@ enum class Str {
     CommonName,
     CommonListSeparator,
 
+    // ── 主题 ──
+    ThemeNameDark,
+    ThemeNameLight,
+
     // ── 工作区（控制台虚拟分组） ──
     WorkspaceDefaultName,
     WorkspaceNoWorkspace,

@@ -185,7 +185,8 @@ class ConsoleStateTest {
             // 新工作区里没有任何该源控制台 → 取 updated_at 最大者加入
             val w2 = state.workspaces.createWorkspace("W2")
             state.workspaces.setActive(w2.id)
-            repo.renameConsole(c2.id, "c2-new") // c2 成为 updated_at 最大
+            // 走 ConsoleState.renameConsole：同步更新内存缓存（直接改 repo 会留下陈旧 updatedAt，导致同毫秒创建时排序不确定）
+            state.renameConsole(c2.id, "c2-new")
             val picked = state.activateForProfile(pid)!!
             assertEquals(c2.id, picked.id)
             assertTrue(state.workspaces.contains(w2.id, c2.id))

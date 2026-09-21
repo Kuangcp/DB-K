@@ -17,24 +17,17 @@ internal data class SqlSyntaxPalette(
     val punctuation: Color,  // ( ) , ; . 等符号（低饱和，微光）
 )
 
+internal fun sqlSyntaxPalette(colors: ThemeColors): SqlSyntaxPalette = SqlSyntaxPalette(
+    keyword = colors.keyword,
+    string = colors.string,
+    number = colors.number,
+    comment = colors.comment,
+    punctuation = colors.punctuation,
+)
+
+// TODO(Task 4): 迁移调用点后删除过渡重载
 internal fun sqlSyntaxPalette(isDark: Boolean): SqlSyntaxPalette =
-    if (isDark) {
-        SqlSyntaxPalette(
-            keyword = Color(0xFF569CD6),      // VSCode Dark+ 蓝
-            string = Color(0xFFCE9178),       // 橙
-            number = Color(0xFFB5CEA8),       // 绿
-            comment = Color(0xFF6A9955),      // 注释绿（压暗）
-            punctuation = Color(0xFFD4D4D4),  // 浅灰
-        )
-    } else {
-        SqlSyntaxPalette(
-            keyword = Color(0xFF0000FF),      // api-x 浅色关键字蓝
-            string = Color(0xFFA31515),       // 暗红
-            number = Color(0xFF098658),       // 墨绿
-            comment = Color(0xFF008000),      // 绿
-            punctuation = Color(0xFF242424),  // 近黑
-        )
-    }
+    sqlSyntaxPalette((if (isDark) themeById("dark") else themeById("light"))!!.colors)
 
 /**
  * 高亮用关键字集合（大写，供 [sqlHighlightSpans] O(1) 比对；调用处 remember 一次即可）。
