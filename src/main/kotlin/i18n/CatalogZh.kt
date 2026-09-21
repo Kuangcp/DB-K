@@ -12,6 +12,9 @@ internal fun zh(key: Str): String = when (key) {
     Str.CommonName -> "名称"
     Str.CommonListSeparator -> "，"
 
+    // ── 工作区 ──
+    Str.WorkspaceDefaultName -> "默认"
+
     // ── 设置窗口 ──
     Str.SettingsTitle -> "设置"
     Str.SettingsSectionGeneral -> "通用设置"

@@ -19,3 +19,17 @@ data class ConsoleRecord(
     val caretEnd: Int = 0,
     val closed: Boolean = false,
 )
+
+/**
+ * 工作区行：控制台的虚拟分组。
+ * [autoNamed] = 名字跟随语言（渲染时取 `Str.WorkspaceDefaultName`）；用户改名后为 false。
+ * [lastActiveConsoleId]：该工作区上次激活的控制台（重启回位）。
+ */
+data class WorkspaceRecord(
+    val id: String,
+    val name: String,
+    val autoNamed: Boolean = false,
+    val sortOrder: Int = 0,
+    val createdAt: Long = 0,
+    val lastActiveConsoleId: String? = null,
+)

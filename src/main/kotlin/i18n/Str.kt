@@ -22,6 +22,9 @@ enum class Str {
     CommonName,
     CommonListSeparator,
 
+    // ── 工作区（控制台虚拟分组） ──
+    WorkspaceDefaultName,
+
     // ── 设置窗口 ──
     SettingsTitle,
     SettingsSectionGeneral,

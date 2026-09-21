@@ -12,6 +12,9 @@ internal fun en(key: Str): String = when (key) {
     Str.CommonName -> "Name"
     Str.CommonListSeparator -> ", "
 
+    // ── Workspaces ──
+    Str.WorkspaceDefaultName -> "Default"
+
     // ── Settings window ──
     Str.SettingsTitle -> "Settings"
     Str.SettingsSectionGeneral -> "General"

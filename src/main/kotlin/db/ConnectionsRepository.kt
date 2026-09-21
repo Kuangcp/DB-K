@@ -651,6 +651,106 @@ class ConnectionsRepository(
         closed = rs.getInt("closed") != 0,
     )
 
+    // ---------- workspaces（控制台的虚拟分组） ----------
+
+    fun listWorkspaces(): List<WorkspaceRecord> =
+        conn.createStatement().use { st ->
+            st.executeQuery(
+                "SELECT id, name, auto_named, sort_order, created_at, last_active_console_id " +
+                    "FROM workspaces ORDER BY sort_order, created_at",
+            ).use { rs -> buildList { while (rs.next()) add(mapWorkspace(rs)) } }
+        }
+
+    fun createWorkspace(name: String, autoNamed: Boolean): WorkspaceRecord {
+        val id = newId()
+        val now = System.currentTimeMillis()
+        val order = nextSortOrder("workspaces")
+        conn.prepareStatement(
+            "INSERT INTO workspaces(id, name, auto_named, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+        ).use { ps ->
+            ps.setString(1, id)
+            ps.setString(2, name)
+            ps.setInt(3, if (autoNamed) 1 else 0)
+            ps.setInt(4, order)
+            ps.setLong(5, now)
+            ps.executeUpdate()
+        }
+        return WorkspaceRecord(id = id, name = name, autoNamed = autoNamed, sortOrder = order, createdAt = now)
+    }
+
+    /** 重命名并清除 auto_named（此后名字不再跟随语言）。 */
+    fun renameWorkspace(id: String, newName: String) {
+        conn.prepareStatement("UPDATE workspaces SET name = ?, auto_named = 0 WHERE id = ?").use { ps ->
+            ps.setString(1, newName)
+            ps.setString(2, id)
+            ps.executeUpdate()
+        }
+    }
+
+    fun deleteWorkspace(id: String) {
+        conn.prepareStatement("DELETE FROM workspaces WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeUpdate()
+        }
+    }
+
+    fun setWorkspaceLastActiveConsole(id: String, consoleId: String?) {
+        conn.prepareStatement("UPDATE workspaces SET last_active_console_id = ? WHERE id = ?").use { ps ->
+            if (consoleId == null) ps.setNull(1, java.sql.Types.VARCHAR) else ps.setString(1, consoleId)
+            ps.setString(2, id)
+            ps.executeUpdate()
+        }
+    }
+
+    /** 全部成员关系：workspaceId → 有序列 consoleId（标签顺序）。 */
+    fun listWorkspaceConsoleIds(): Map<String, List<String>> =
+        conn.createStatement().use { st ->
+            st.executeQuery(
+                "SELECT workspace_id, console_id FROM workspace_consoles ORDER BY workspace_id, sort_order, added_at",
+            ).use { rs ->
+                val out = LinkedHashMap<String, MutableList<String>>()
+                while (rs.next()) out.getOrPut(rs.getString(1)) { mutableListOf() }.add(rs.getString(2))
+                out
+            }
+        }
+
+    /** 加入工作区（幂等）：返回 true = 本次真正新增。 */
+    fun addConsoleToWorkspace(workspaceId: String, consoleId: String): Boolean {
+        val order = conn.prepareStatement(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM workspace_consoles WHERE workspace_id = ?",
+        ).use { ps ->
+            ps.setString(1, workspaceId)
+            ps.executeQuery().use { rs -> rs.next(); rs.getInt(1) }
+        }
+        return conn.prepareStatement(
+            "INSERT OR IGNORE INTO workspace_consoles(workspace_id, console_id, sort_order, added_at) " +
+                "VALUES (?, ?, ?, ?)",
+        ).use { ps ->
+            ps.setString(1, workspaceId)
+            ps.setString(2, consoleId)
+            ps.setInt(3, order)
+            ps.setLong(4, System.currentTimeMillis())
+            ps.executeUpdate() > 0
+        }
+    }
+
+    fun removeConsoleFromWorkspace(workspaceId: String, consoleId: String) {
+        conn.prepareStatement("DELETE FROM workspace_consoles WHERE workspace_id = ? AND console_id = ?").use { ps ->
+            ps.setString(1, workspaceId)
+            ps.setString(2, consoleId)
+            ps.executeUpdate()
+        }
+    }
+
+    private fun mapWorkspace(rs: java.sql.ResultSet): WorkspaceRecord = WorkspaceRecord(
+        id = rs.getString("id"),
+        name = rs.getString("name"),
+        autoNamed = rs.getInt("auto_named") != 0,
+        sortOrder = rs.getInt("sort_order"),
+        createdAt = rs.getLong("created_at"),
+        lastActiveConsoleId = rs.getString("last_active_console_id"),
+    )
+
     // ---------- sql_history（执行历史） ----------
 
     private val HISTORY_LIMIT = 200

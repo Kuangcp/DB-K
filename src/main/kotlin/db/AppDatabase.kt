@@ -1,7 +1,10 @@
 package db
 
+import i18n.I18n
+import i18n.Str
 import java.sql.Connection
 import java.sql.Statement
+import java.util.UUID
 
 /**
  * 应用元数据 SQLite 迁移。版本化迁移机制照搬 api-x：
@@ -9,7 +12,7 @@ import java.sql.Statement
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 9
+    private const val CURRENT_VERSION = 10
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -64,6 +67,10 @@ object AppDatabase {
             conn.createStatement().use { st -> migrateToV9(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (9)").use { it.executeUpdate() }
         }
+        if (!applied.contains(10)) {
+            conn.createStatement().use { st -> migrateToV10(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (10)").use { it.executeUpdate() }
+        }
     }
 
     /**
@@ -90,6 +97,59 @@ object AppDatabase {
      */
     private fun migrateToV9(st: Statement) {
         st.executeUpdate("ALTER TABLE connections ADD COLUMN key_separator TEXT NOT NULL DEFAULT ':'")
+    }
+
+    /**
+     * v10：工作区（控制台的虚拟分组）。
+     * `workspace_consoles` 的成员关系即「是否显示在该工作区标签条」；主键去重；
+     * 删工作区/删控制台/删连接（→ 删控制台）时由 FK 级联清理。
+     * 回填：把存量「未关闭」控制台划入一个 auto_named 的默认工作区（标签顺序保持）；
+     * 没有任何未关闭控制台（全新用户）则不建工作区（零工作区合法）。
+     */
+    private fun migrateToV10(st: Statement) {
+        st.executeUpdate(
+            """
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                auto_named INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                last_active_console_id TEXT NULL
+            )
+            """.trimIndent(),
+        )
+        st.executeUpdate(
+            """
+            CREATE TABLE IF NOT EXISTS workspace_consoles (
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                console_id TEXT NOT NULL REFERENCES consoles(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                added_at INTEGER NOT NULL,
+                PRIMARY KEY (workspace_id, console_id)
+            )
+            """.trimIndent(),
+        )
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_ws_consoles_console ON workspace_consoles(console_id)")
+
+        val openIds = st.executeQuery(
+            "SELECT id FROM consoles WHERE closed = 0 ORDER BY connection_id, sort_order, created_at",
+        ).use { rs -> buildList { while (rs.next()) add(rs.getString(1)) } }
+        if (openIds.isEmpty()) return
+
+        val wsId = UUID.randomUUID().toString().replace("-", "").take(24)
+        val now = System.currentTimeMillis()
+        val defaultName = I18n.t(Str.WorkspaceDefaultName).replace("'", "''")
+        st.executeUpdate(
+            "INSERT INTO workspaces(id, name, auto_named, sort_order, created_at) " +
+                "VALUES ('$wsId', '$defaultName', 1, 0, $now)",
+        )
+        openIds.forEachIndexed { i, cid ->
+            st.executeUpdate(
+                "INSERT INTO workspace_consoles(workspace_id, console_id, sort_order, added_at) " +
+                    "VALUES ('$wsId', '$cid', $i, $now)",
+            )
+        }
     }
 
     /**

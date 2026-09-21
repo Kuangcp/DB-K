@@ -319,4 +319,55 @@ class ConnectionsRepositoryTest {
             assertEquals(child.id, repo.getConnection("c1")!!.folderId)
         }
     }
+
+    @Test
+    fun `workspace crud and membership`() {
+        open().use { repo ->
+            val pid = repo.createConnection(newProfile())
+            val c1 = repo.createConsole(pid, "c1")
+            val c2 = repo.createConsole(pid, "c2")
+
+            val w1 = repo.createWorkspace("W1", autoNamed = false)
+            val w2 = repo.createWorkspace("Default", autoNamed = true)
+            assertEquals(listOf(w1.id, w2.id), repo.listWorkspaces().map { it.id })
+            assertTrue(repo.listWorkspaces()[1].autoNamed)
+
+            // 幂等：重复加入返回 false 且不重复
+            assertTrue(repo.addConsoleToWorkspace(w1.id, c1.id))
+            assertFalse(repo.addConsoleToWorkspace(w1.id, c1.id))
+            assertTrue(repo.addConsoleToWorkspace(w1.id, c2.id))
+            assertTrue(repo.addConsoleToWorkspace(w2.id, c1.id))
+            assertEquals(listOf(c1.id, c2.id), repo.listWorkspaceConsoleIds()[w1.id])
+
+            // 同一控制台可在两个工作区
+            assertEquals(setOf(w1.id, w2.id), repo.listWorkspaceConsoleIds().filterValues { c1.id in it }.keys)
+
+            repo.removeConsoleFromWorkspace(w1.id, c1.id)
+            assertEquals(listOf(c2.id), repo.listWorkspaceConsoleIds()[w1.id])
+
+            repo.renameWorkspace(w2.id, "Renamed")
+            assertFalse(repo.listWorkspaces().first { it.id == w2.id }.autoNamed)
+
+            repo.setWorkspaceLastActiveConsole(w1.id, c2.id)
+            assertEquals(c2.id, repo.listWorkspaces().first { it.id == w1.id }.lastActiveConsoleId)
+
+            repo.deleteWorkspace(w1.id)
+            assertEquals(listOf(w2.id), repo.listWorkspaces().map { it.id })
+            assertNull(repo.listWorkspaceConsoleIds()[w1.id])
+        }
+    }
+
+    @Test
+    fun `deleting a console cascades out of all workspaces`() {
+        open().use { repo ->
+            val pid = repo.createConnection(newProfile())
+            val c = repo.createConsole(pid, "c")
+            val w1 = repo.createWorkspace("W1", false)
+            val w2 = repo.createWorkspace("W2", false)
+            repo.addConsoleToWorkspace(w1.id, c.id)
+            repo.addConsoleToWorkspace(w2.id, c.id)
+            repo.deleteConsole(c.id)
+            assertTrue(repo.listWorkspaceConsoleIds().values.all { c.id !in it })
+        }
+    }
 }
