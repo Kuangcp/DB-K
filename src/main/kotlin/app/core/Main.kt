@@ -5,6 +5,7 @@
 package app.core
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -24,6 +25,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.DragData
+import androidx.compose.ui.draganddrop.dragData
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +54,8 @@ import app.core.export.ExportFormat
 import app.core.export.ExportOptions
 import app.core.export.ResultExport
 import app.core.export.defaultQuoteIdent
+import app.dialog.PickProfileDialog
+import app.dialog.ExternalMissingExitDialog
 import app.dialog.CommitPreviewDialog
 import app.dialog.ConfirmDialog
 import app.dialog.ConnectionEditorDialog
@@ -73,6 +80,8 @@ import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
 import app.state.CommitPreviewRequest
 import app.state.ConfirmRequest
+import app.state.ExternalMissingExitRequest
+import app.state.PickProfileRequest
 import app.state.WorkspaceDialogRequest
 import app.state.ConnectionEditorRequest
 import app.state.ConnectionsState
@@ -196,6 +205,7 @@ private fun AppRoot(onExit: () -> Unit) {
     DisposableEffect(Unit) {
         onDispose {
             consoleState.flushAllSync()
+            consoleState.closeExternalWatcher()
             connectionsState.disposeAll()
             repository.close()
         }
@@ -224,14 +234,58 @@ private fun AppRoot(onExit: () -> Unit) {
         onExit()
     }
 
-    // 自定义标题栏的关闭按钮与系统窗口关闭走同一条路径（含未提交修改确认）。
+    // 自定义标题栏的关闭按钮与系统窗口关闭走同一条路径。
+    // 先处理「外部文件缺失且脏」（A2），再走原有未提交结果修改确认。
     val requestClose: () -> Unit = {
-        val pending = consoleState.totalEditCount()
-        if (pending > 0) {
-            dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionExitApp) { performExit() }
-        } else {
-            performExit()
+        val profileIds = repository.listConnections().map { it.id }
+        fun proceedResultEdits() {
+            val pending = consoleState.totalEditCount()
+            if (pending > 0) {
+                dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionExitApp) { performExit() }
+            } else {
+                performExit()
+            }
         }
+        fun proceedExit() {
+            val next = consoleState.missingDirtyExternal(profileIds)
+            if (next.isEmpty()) {
+                dialogState.externalMissingExit = null
+                proceedResultEdits()
+            } else {
+                dialogState.externalMissingExit = ExternalMissingExitRequest(
+                    consoles = next,
+                    onRebuildAll = {
+                        next.forEach { consoleState.recreateExternalFile(it.id) }
+                        dialogState.externalMissingExit = null
+                        proceedExit()
+                    },
+                    onSaveAsEach = {
+                        var allHandled = true
+                        next.forEach { c ->
+                            val fd = FileDialog(null as java.awt.Frame?, I18n.t(Str.ExternalSaveAsTitle), FileDialog.SAVE)
+                            fd.file = File(c.filePath).name
+                            fd.isVisible = true
+                            val name = fd.file ?: run { allHandled = false; return@forEach }
+                            if (!consoleState.rebindExternalFile(c.id, File(fd.directory, name).toPath())) allHandled = false
+                        }
+                        if (allHandled) {
+                            dialogState.externalMissingExit = null
+                            proceedExit()
+                        }
+                    },
+                    onDiscard = {
+                        next.forEach { consoleState.discardDirty(it.id) }
+                        dialogState.externalMissingExit = null
+                        performExit()
+                    },
+                    onCancel = {
+                        dialogState.externalMissingExit = null
+                        dialogState.confirm = null
+                    },
+                )
+            }
+        }
+        if (consoleState.missingDirtyExternal(profileIds).isEmpty()) proceedResultEdits() else proceedExit()
     }
 
     Window(
@@ -261,6 +315,7 @@ private fun AppRoot(onExit: () -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun WindowScope.AppBody(
     repository: ConnectionsRepository,
@@ -470,6 +525,8 @@ private fun WindowScope.AppBody(
     // 控制台主导：启动即回到最近改动的控制台（跨数据源，不必先点树）；无控制台时保持引导态
     LaunchedEffect(Unit) {
         consoleState.workspaces.ensureLoaded()
+        // 外部文件已丢失的控制台启动即自动隐藏（等价关闭控制台，保留行与关联）
+        consoleState.pruneMissingExternal(profiles.map { it.id })
         if (consoleState.activeConsoleId == null && profiles.isNotEmpty()) {
             consoleState.activateMostRecent(profiles.map { it.id })
         }
@@ -649,6 +706,65 @@ private fun WindowScope.AppBody(
         toastState.show(I18n.t(Str.MainConsoleCreated, name, p.name))
     }
 
+    // ---------- 外部 SQL 文件控制台（拖入 / 选择打开） ----------
+
+    /** 把一批文件开成外部控制台：有 path→数据源 记忆直接用，未解析的合并成一次数据源选择。 */
+    fun openSqlFiles(files: List<File>) {
+        files.filter { !it.extension.equals("sql", ignoreCase = true) }
+            .forEach { toastState.show(I18n.t(Str.ExternalIgnoredNonSql, it.name)) }
+        val sqlFiles = files.filter { it.extension.equals("sql", ignoreCase = true) }
+        if (sqlFiles.isEmpty()) return
+        val resolved = mutableListOf<Pair<File, String>>()
+        val unresolved = mutableListOf<File>()
+        sqlFiles.forEach { f ->
+            val existing = consoleState.consoleByPath(f.toPath())
+            if (existing != null) resolved += f to existing.connectionId else unresolved += f
+        }
+        fun openAll(unresolvedProfileId: String?) {
+            resolved.forEach { (f, pid) -> consoleState.openExternalFile(pid, f.toPath()) }
+            unresolved.forEach { f ->
+                val pid = unresolvedProfileId ?: activeProfile?.id ?: return@forEach
+                consoleState.openExternalFile(pid, f.toPath())
+            }
+            (resolved.map { it.first.name } + unresolved.map { it.name })
+                .forEach { toastState.show(I18n.t(Str.ExternalOpenedToast, it)) }
+        }
+        if (unresolved.isEmpty()) {
+            openAll(null)
+        } else {
+            dialogState.pickProfile = PickProfileRequest(
+                names = unresolved.map { it.name },
+                profiles = profiles,
+                defaultProfileId = activeProfile?.id,
+            ) { pid ->
+                dialogState.pickProfile = null
+                openAll(pid)
+            }
+        }
+    }
+
+    fun openSqlFileDialog() {
+        val fd = FileDialog(null as java.awt.Frame?, I18n.t(Str.ExternalOpenSqlFile), FileDialog.LOAD)
+        fd.file = "*.sql"
+        fd.isVisible = true
+        val name = fd.file ?: return
+        openSqlFiles(listOf(File(fd.directory, name)))
+    }
+
+    /** 「另存为…」：把控制台缓冲写到新路径并重绑。 */
+    fun saveExternalAs(c: ConsoleRecord) {
+        val fd = FileDialog(null as java.awt.Frame?, I18n.t(Str.ExternalSaveAsTitle), FileDialog.SAVE)
+        fd.file = File(c.filePath).name
+        fd.isVisible = true
+        val name = fd.file ?: return
+        val target = File(fd.directory, name).toPath()
+        if (consoleState.rebindExternalFile(c.id, target)) {
+            toastState.show(I18n.t(Str.ExternalSavedAsToast, target.toString()))
+        } else {
+            toastState.show(I18n.t(Str.ExternalRebindConflict, target.toString()))
+        }
+    }
+
     // ---------- P5 连接档案导出 / 导入（AES 口令加密；不自动连接，导入后刷新树） ----------
 
     /** 真正入库 + toast（[skipConnectionIds] 为同名冲突中选择跳过的导入连接 id）。 */
@@ -814,10 +930,26 @@ private fun WindowScope.AppBody(
                 kfm.addKeyEventDispatcher(dispatcher)
                 onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
             }
+            val openSqlFilesRef = rememberUpdatedState<(List<File>) -> Unit>({ openSqlFiles(it) })
+            val fileDropTarget = remember {
+                object : DragAndDropTarget {
+                    override fun onDrop(event: DragAndDropEvent): Boolean {
+                        val list = event.dragData() as? DragData.FilesList ?: return false
+                        val files = list.readFiles().map { File(it) }
+                        if (files.isEmpty()) return false
+                        openSqlFilesRef.value(files)
+                        return true
+                    }
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colors.background)
+                    .dragAndDropTarget(
+                        shouldStartDragAndDrop = { it.dragData() is DragData.FilesList },
+                        target = fileDropTarget,
+                    )
                     .pointerInput(Unit) {
                         // 补全弹层是编辑器内 overlay，收不到别处（树/结果区/工具栏）的点击。
                         // Final pass 旁路观察（只读不消费）：弹层已在 Initial pass 标记命中，
@@ -1019,6 +1151,18 @@ private fun WindowScope.AppBody(
                                 )
                             }
                         },
+                        onSaveAsExternal = { activeConsole?.let { saveExternalAs(it) } },
+                        onCopyExternalPath = { activeConsole?.let { writeClipboardText(it.filePath) } },
+                        externalIssues = consoleState.externalIssues,
+                        onOpenSqlFile = { openSqlFileDialog() },
+                        onCopyFilePath = { c -> writeClipboardText(c.filePath) },
+                        onRevealFile = { c ->
+                            val dir = File(c.filePath).parentFile?.toPath()
+                            if (dir == null || !app.core.openDirectory(dir)) {
+                                toastState.show(I18n.t(Str.ExternalCopyPath) + ": " + c.filePath)
+                            }
+                        },
+                        onReloadConsoleFromDisk = { c -> consoleState.reloadFromDisk(c.id) },
                         onTextChange = { id, t ->
                             consoleState.setText(id, t)
                             lastEditorActivity.set(System.currentTimeMillis())
@@ -1362,6 +1506,12 @@ private fun DialogHost(
             onDismiss = { dialogState.export = null },
             onConfirm = { format, options, fullStream -> request.onSubmit(format, options, fullStream) },
         )
+    }
+    dialogState.pickProfile?.let { request ->
+        PickProfileDialog(request = request, onDismiss = { dialogState.pickProfile = null })
+    }
+    dialogState.externalMissingExit?.let { request ->
+        ExternalMissingExitDialog(request = request, onDismiss = { request.onCancel() })
     }
     dialogState.confirm?.let { request ->
         ConfirmDialog(

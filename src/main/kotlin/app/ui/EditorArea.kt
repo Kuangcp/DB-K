@@ -214,6 +214,11 @@ fun WindowScope.EditorArea(
     onRecreateExternal: () -> Unit = {},
     onSaveAsExternal: () -> Unit = {},
     onCopyExternalPath: () -> Unit = {},
+    externalIssues: Map<String, ExternalFileIssue> = emptyMap(),
+    onOpenSqlFile: () -> Unit = {},
+    onCopyFilePath: (ConsoleRecord) -> Unit = {},
+    onRevealFile: (ConsoleRecord) -> Unit = {},
+    onReloadConsoleFromDisk: (ConsoleRecord) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 当前快捷键表（业务命令可配置；基础编辑键固定）。读取一次，供根级 onPreviewKeyEvent 匹配。
@@ -369,6 +374,11 @@ fun WindowScope.EditorArea(
             onCreateWorkspace = onCreateWorkspace,
             onRenameWorkspace = onRenameWorkspace,
             onDeleteWorkspace = onDeleteWorkspace,
+            externalIssues = externalIssues,
+            onOpenSqlFile = onOpenSqlFile,
+            onCopyFilePath = onCopyFilePath,
+            onRevealFile = onRevealFile,
+            onReloadFromDisk = onReloadConsoleFromDisk,
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         if (activeConsole == null) {

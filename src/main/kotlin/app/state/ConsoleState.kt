@@ -621,7 +621,8 @@ class ConsoleState(
             activate(chosen)
             return chosen
         }
-        val any = profileConsoles(profileId).maxByOrNull { it.updatedAt }
+        // updated_at 是毫秒级：“最近改动”取最大；同毫秒并列时用 sort_order（后建的更大）做确定性 tie-break
+        val any = profileConsoles(profileId).maxWithOrNull(compareBy({ it.updatedAt }, { it.sortOrder }))
         if (any != null) {
             workspaces.addMember(ws.id, any.id)
             activate(any)
@@ -638,7 +639,7 @@ class ConsoleState(
         val members = workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
             .filter { it.connectionId in allowed }
         val last = workspaces.lastActiveConsoleOf(ws.id)?.let { id -> members.firstOrNull { it.id == id } }
-        val chosen = last ?: members.maxByOrNull { it.updatedAt } ?: return null
+        val chosen = last ?: members.maxWithOrNull(compareBy({ it.updatedAt }, { it.sortOrder })) ?: return null
         activate(chosen)
         return chosen
     }
@@ -680,7 +681,7 @@ class ConsoleState(
         val ws = workspaces.activeWorkspace() ?: return
         val members = workspaces.orderedMembers(ws.id).mapNotNull { findConsole(it) }
         val last = workspaces.lastActiveConsoleOf(ws.id)?.let { id -> members.firstOrNull { it.id == id } }
-        (last ?: members.maxByOrNull { it.updatedAt })?.let { activate(it) }
+        (last ?: members.maxWithOrNull(compareBy({ it.updatedAt }, { it.sortOrder })))?.let { activate(it) }
     }
 
     /** 最后一个工作区被删除：进入零工作区引导态。 */
