@@ -24,6 +24,16 @@ enum class Str {
 
     // ── 工作区（控制台虚拟分组） ──
     WorkspaceDefaultName,
+    WorkspaceNoWorkspace,
+    WorkspaceMenuTooltip,
+    WorkspaceNew,
+    WorkspaceNewTitle,
+    WorkspaceRenameTitle,
+    WorkspaceDeleteTitle,
+    WorkspaceDeleteConfirm,
+    WorkspaceWithCount,
+    StarterNoWorkspaceHint,
+    MainWorkspaceCreated,
 
     // ── 设置窗口 ──
     SettingsTitle,

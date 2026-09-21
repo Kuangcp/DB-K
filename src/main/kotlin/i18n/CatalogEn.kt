@@ -14,6 +14,16 @@ internal fun en(key: Str): String = when (key) {
 
     // ── Workspaces ──
     Str.WorkspaceDefaultName -> "Default"
+    Str.WorkspaceNoWorkspace -> "No workspace"
+    Str.WorkspaceMenuTooltip -> "Workspaces"
+    Str.WorkspaceNew -> "New workspace…"
+    Str.WorkspaceNewTitle -> "New workspace"
+    Str.WorkspaceRenameTitle -> "Rename workspace"
+    Str.WorkspaceDeleteTitle -> "Delete workspace"
+    Str.WorkspaceDeleteConfirm -> "Delete workspace \"{0}\"? Its consoles are kept and can be reopened from the data source context menu."
+    Str.WorkspaceWithCount -> "{0} · {1}"
+    Str.StarterNoWorkspaceHint -> "Opening or creating a console will automatically create a \"Default\" workspace."
+    Str.MainWorkspaceCreated -> "Workspace \"{0}\" created"
 
     // ── Settings window ──
     Str.SettingsTitle -> "Settings"

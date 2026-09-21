@@ -14,6 +14,16 @@ internal fun zh(key: Str): String = when (key) {
 
     // ── 工作区 ──
     Str.WorkspaceDefaultName -> "默认"
+    Str.WorkspaceNoWorkspace -> "无工作区"
+    Str.WorkspaceMenuTooltip -> "工作区"
+    Str.WorkspaceNew -> "新建工作区…"
+    Str.WorkspaceNewTitle -> "新建工作区"
+    Str.WorkspaceRenameTitle -> "重命名工作区"
+    Str.WorkspaceDeleteTitle -> "删除工作区"
+    Str.WorkspaceDeleteConfirm -> "删除工作区「{0}」？其中的控制台会保留，可从数据源右键重新打开。"
+    Str.WorkspaceWithCount -> "{0} · {1}"
+    Str.StarterNoWorkspaceHint -> "打开或新建控制台会自动创建一个「默认」工作区。"
+    Str.MainWorkspaceCreated -> "已创建工作区「{0}」"
 
     // ── 设置窗口 ──
     Str.SettingsTitle -> "设置"
