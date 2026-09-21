@@ -1005,6 +1005,20 @@ private fun WindowScope.AppBody(
                         },
                         editorText = activeConsole?.let { consoleState.textOf(it.id) }.orEmpty(),
                         editorDirty = activeConsole?.let { consoleState.isDirty(it.id) } == true,
+                        textRevision = activeConsole?.let { consoleState.textRevisionOf(it.id) } ?: 0,
+                        externalIssue = activeConsole?.let { consoleState.externalIssueOf(it.id) },
+                        externalPath = activeConsole?.takeIf { it.external }?.filePath,
+                        onReloadFromDisk = { activeConsole?.let { consoleState.reloadFromDisk(it.id) } },
+                        onKeepLocal = { activeConsole?.let { consoleState.keepLocal(it.id) } },
+                        onRecreateExternal = {
+                            activeConsole?.let {
+                                val ok = consoleState.recreateExternalFile(it.id)
+                                toastState.show(
+                                    if (ok) I18n.t(Str.ExternalRecreatedToast, it.filePath)
+                                    else I18n.t(Str.ExternalSaveFailed, it.filePath),
+                                )
+                            }
+                        },
                         onTextChange = { id, t ->
                             consoleState.setText(id, t)
                             lastEditorActivity.set(System.currentTimeMillis())

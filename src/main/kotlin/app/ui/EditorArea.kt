@@ -2,15 +2,18 @@ package app.ui
 
 import kotlinx.coroutines.flow.drop
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.Divider
 import androidx.compose.material.MaterialTheme
@@ -25,7 +28,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -33,11 +38,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.WindowScope
 import androidx.compose.ui.window.WindowState
 import app.state.ColumnCatalog
 import app.state.ConsoleRunUi
+import app.state.ExternalFileIssue
 import app.state.RedisKeyMeta
 import app.settings.EditorSettings
 import app.settings.ShortcutCommand
@@ -195,6 +203,17 @@ fun WindowScope.EditorArea(
     mainWindowState: WindowState,
     /** 自定义标题栏关闭按钮回调（与系统窗口关闭同一条路径）。 */
     onWindowCloseRequest: () -> Unit,
+    /** 外部文件被重载的信号（变化时把权威缓冲刷进 TextFieldState）。 */
+    textRevision: Int = 0,
+    /** 当前控制台的外部文件问题态（冲突/缺失）。 */
+    externalIssue: ExternalFileIssue? = null,
+    /** 当前控制台外部文件路径（横幅显示用；非外部为 null）。 */
+    externalPath: String? = null,
+    onReloadFromDisk: () -> Unit = {},
+    onKeepLocal: () -> Unit = {},
+    onRecreateExternal: () -> Unit = {},
+    onSaveAsExternal: () -> Unit = {},
+    onCopyExternalPath: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 当前快捷键表（业务命令可配置；基础编辑键固定）。读取一次，供根级 onPreviewKeyEvent 匹配。
@@ -375,6 +394,18 @@ fun WindowScope.EditorArea(
                 ),
             )
         }
+        // 外部重载 / 隐藏后重开：把 ConsoleState 的权威缓冲刷进本控制台的 TextFieldState。
+        // 正常输入时两者相等，不触发；只在确有差异时写入，避免与输入会话打架。
+        LaunchedEffect(consoleId, textRevision) {
+            val authoritative = editorText
+            if (state.text.toString() != authoritative) {
+                val caret = state.selection.start.coerceIn(0, authoritative.length)
+                state.edit {
+                    replace(0, length, authoritative)
+                    selection = TextRange(caret)
+                }
+            }
+        }
         // 文本/选区变化 → ConsoleState（脏标记 + 防抖落库 + 光标记忆）。drop(1) 跳过 collect 时的初值。
         LaunchedEffect(consoleId) {
             snapshotFlow { state.text.toString() }
@@ -433,6 +464,17 @@ fun WindowScope.EditorArea(
                     .onSizeChanged { paneH = it.height },
             ) {
                 Column(modifier = Modifier.fillMaxSize().padding(top = 4.dp, bottom = 4.dp)) {
+                    if (externalIssue != null) {
+                        ExternalFileBanner(
+                            issue = externalIssue,
+                            path = externalPath,
+                            onReloadFromDisk = onReloadFromDisk,
+                            onKeepLocal = onKeepLocal,
+                            onRecreate = onRecreateExternal,
+                            onSaveAs = onSaveAsExternal,
+                            onCopyPath = onCopyExternalPath,
+                        )
+                    }
                     // 编辑器吃满剩余高，结果区按 resultFrac 分配；中间只隔一根 5dp 可拖细线，不留空隙。
                     // 执行动作/状态/多语句 tabs 全部收在结果区顶部一条 28dp 工具条里（无结果时不显示）。
                     // 每个控制台一个独立的编辑器节点（key(consoleId)）：旧节点输入会话随切换销毁，
@@ -582,4 +624,66 @@ private fun selectedSqlOf(text: String, sel: TextRange): String? {
     val to = maxOf(sel.start, sel.end)
     val sub = text.substring(from, to)
     return sub.trim().takeIf { it.isNotEmpty() }
+}
+
+/**
+ * 外部文件问题横幅（非阻塞）：冲突给「载入磁盘版本 / 保留我的」；缺失给重建/另存/关闭。
+ * 语义黄只做背景色块，文字仍走主题色。
+ */
+@Composable
+private fun ExternalFileBanner(
+    issue: ExternalFileIssue,
+    path: String?,
+    onReloadFromDisk: () -> Unit,
+    onKeepLocal: () -> Unit,
+    onRecreate: () -> Unit,
+    onSaveAs: () -> Unit,
+    onCopyPath: () -> Unit,
+) {
+    val warn = Color(0xFFFFB300) // 语义色：警告
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(warn.copy(alpha = 0.14f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(
+            when (issue) {
+                ExternalFileIssue.CONFLICT -> t(Str.ExternalConflictBanner)
+                ExternalFileIssue.MISSING -> t(Str.ExternalMissingBanner, path.orEmpty())
+            },
+            fontSize = 12.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        when (issue) {
+            ExternalFileIssue.CONFLICT -> {
+                BannerAction(t(Str.ExternalConflictReload), onReloadFromDisk)
+                BannerAction(t(Str.ExternalConflictKeep), onKeepLocal)
+            }
+            ExternalFileIssue.MISSING -> {
+                BannerAction(t(Str.ExternalRecreateFile), onRecreate)
+                BannerAction(t(Str.ExternalSaveAs), onSaveAs)
+                BannerAction(t(Str.ExternalCopyPath), onCopyPath)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BannerAction(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        fontSize = 12.sp,
+        color = MaterialTheme.colors.primary,
+        modifier = Modifier
+            .padding(start = 6.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
