@@ -60,6 +60,7 @@ import app.dialog.FolderNameDialog
 import app.dialog.ImportConflictDialog
 import app.dialog.PassphraseDialog
 import app.dialog.SettingsDialog
+import app.dialog.ThemeDialog
 import app.dialog.SettingsSnapshot
 import app.i18n.LocalLang
 import app.settings.EditorPrefs
@@ -1223,6 +1224,17 @@ private fun WindowScope.AppBody(
                         LanguagePrefs.save(snapshot.language)
                         dialogState.showSettings = false
                     },
+                    onManageThemes = { dialogState.showThemeDialog = true },
+                )
+                ThemeDialog(
+                    visible = dialogState.showThemeDialog,
+                    language = effectiveLang,
+                    themes = themes,
+                    activeTheme = activeTheme,
+                    store = themesStore,
+                    onSelectTheme = ::selectTheme,
+                    onCustomThemesChange = { customThemes = it },
+                    onDismiss = { dialogState.showThemeDialog = false },
                 )
             }
         }

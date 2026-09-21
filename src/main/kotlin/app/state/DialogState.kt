@@ -117,6 +117,8 @@ class DialogState {
     var importConflicts by mutableStateOf<ImportConflictRequest?>(null)
     /** 设置窗口显隐。 */
     var showSettings by mutableStateOf(false)
+    /** 主题管理对话框显隐。 */
+    var showThemeDialog by mutableStateOf(false)
     /** 结果导出弹窗（N8）。 */
     var export by mutableStateOf<ExportRequest?>(null)
 }

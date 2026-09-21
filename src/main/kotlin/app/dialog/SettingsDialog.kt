@@ -80,6 +80,7 @@ fun SettingsDialog(
     initial: SettingsSnapshot,
     onDismiss: () -> Unit,
     onSave: (SettingsSnapshot) -> Unit,
+    onManageThemes: () -> Unit = {},
 ) {
     if (!visible) return
     DialogWindow(
@@ -95,7 +96,7 @@ fun SettingsDialog(
                     LocalContentColor provides MaterialTheme.colors.onSurface,
                     LocalThemeColors provides theme.colors,
                 ) {
-                    SettingsBody(initial = initial, onCancel = onDismiss, onSave = onSave)
+                    SettingsBody(initial = initial, onCancel = onDismiss, onSave = onSave, onManageThemes = onManageThemes)
                 }
             }
         }
@@ -107,6 +108,7 @@ private fun SettingsBody(
     initial: SettingsSnapshot,
     onCancel: () -> Unit,
     onSave: (SettingsSnapshot) -> Unit,
+    onManageThemes: () -> Unit,
 ) {
     var section by remember { mutableIntStateOf(0) }
     var fontFamily by remember { mutableStateOf(initial.editor.fontFamilyName) }
@@ -154,6 +156,7 @@ private fun SettingsBody(
                             onFontSizeChange = { fontSize = it },
                             languagePref = languagePref,
                             onLanguageChange = { languagePref = it },
+                            onManageThemes = onManageThemes,
                         )
                         DiagnosticsSection()
                     }
@@ -212,6 +215,7 @@ private fun GeneralSection(
     onFontSizeChange: (Float) -> Unit,
     languagePref: Lang?,
     onLanguageChange: (Lang?) -> Unit,
+    onManageThemes: () -> Unit,
 ) {
     Text(
         t(Str.SettingsEditorAppearance),
@@ -270,6 +274,8 @@ private fun GeneralSection(
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
     LanguageRow(current = languagePref, onChange = onLanguageChange)
+
+    TextButton(onClick = onManageThemes) { Text(t(Str.ThemeManage)) }
 }
 
 /** 语言选择：跟随系统 / 简体中文 / English（选中项高亮，徽章样式与主题选择一致）。 */
