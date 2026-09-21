@@ -46,6 +46,7 @@ import app.i18n.t
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.SqlHistoryRow
+import db.WorkspaceRecord
 import engine.EditorLanguage
 import engine.Protocol
 import engine.model.SchemaMeta
@@ -76,6 +77,16 @@ fun WindowScope.SqlWorkspace(
     onDeleteConsole: (ConsoleRecord) -> Unit,
     /** 关闭控制台标签（仅隐藏，保留 .sql；可从数据源右键重新打开）。 */
     onCloseConsole: (ConsoleRecord) -> Unit = {},
+    /** 工作区列表（切换器下拉）。 */
+    workspaces: List<WorkspaceRecord> = emptyList(),
+    /** 当前激活工作区（null = 零工作区）。 */
+    activeWorkspace: WorkspaceRecord? = null,
+    workspaceCountOf: (String) -> Int = { 0 },
+    workspaceHasDirty: (String) -> Boolean = { false },
+    onSelectWorkspace: (String) -> Unit = {},
+    onCreateWorkspace: () -> Unit = {},
+    onRenameWorkspace: (WorkspaceRecord) -> Unit = {},
+    onDeleteWorkspace: (WorkspaceRecord) -> Unit = {},
     /** 未落盘改动控制台 id 集合（标签 ●）。 */
     dirtyConsoleIds: Set<String>,
     /** consoleId → 未提交结果修改数（标签上提示）。 */
@@ -327,12 +338,21 @@ fun WindowScope.SqlWorkspace(
             onRenameConsole = onRenameConsole,
             onDeleteConsole = onDeleteConsole,
             onCloseConsole = onCloseConsole,
+            workspaces = workspaces,
+            activeWorkspace = activeWorkspace,
+            workspaceCountOf = workspaceCountOf,
+            workspaceHasDirty = workspaceHasDirty,
+            onSelectWorkspace = onSelectWorkspace,
+            onCreateWorkspace = onCreateWorkspace,
+            onRenameWorkspace = onRenameWorkspace,
+            onDeleteWorkspace = onDeleteWorkspace,
         )
         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
         if (activeConsole == null) {
             StarterPane(
                 profiles = profiles,
                 onCreateConsoleAt = onCreateConsoleAt,
+                hasWorkspace = activeWorkspace != null,
             )
             return
         }

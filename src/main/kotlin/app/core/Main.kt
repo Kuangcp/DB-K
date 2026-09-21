@@ -53,6 +53,7 @@ import app.dialog.CommitPreviewDialog
 import app.dialog.ConfirmDialog
 import app.dialog.ConnectionEditorDialog
 import app.dialog.ConsoleNameDialog
+import app.dialog.WorkspaceNameDialog
 import app.dialog.DdlDialog
 import app.dialog.ExportDialog
 import app.dialog.FolderNameDialog
@@ -70,6 +71,7 @@ import app.settings.TreeExpandPrefs
 import app.settings.WindowPrefs
 import app.state.CommitPreviewRequest
 import app.state.ConfirmRequest
+import app.state.WorkspaceDialogRequest
 import app.state.ConnectionEditorRequest
 import app.state.ConnectionsState
 import app.state.ConsoleRenameRequest
@@ -99,6 +101,7 @@ import db.AppPaths
 import db.ConnectionProfile
 import db.ConnectionsRepository
 import db.ConsoleRecord
+import db.WorkspaceRecord
 import db.ProfileTransfer
 import engine.EditorLanguage
 import engine.Protocol
@@ -265,6 +268,13 @@ private fun WindowScope.AppBody(
     onWindowCloseRequest: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+
+    /** 切换工作区：激活目标工作区并恢复其上次激活的控制台（标签条随之换组）。 */
+    fun switchWorkspace(id: String) {
+        if (consoleState.workspaces.activeWorkspaceId == id) return
+        consoleState.workspaces.setActive(id)
+        consoleState.onWorkspaceSwitched()
+    }
     var isDark by remember { mutableStateOf(ThemePrefs.load() ?: false) }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
@@ -421,14 +431,9 @@ private fun WindowScope.AppBody(
         }
     }
 
-    /** 树里选中某行：同步切换工作台数据源（保持“点哪用哪”）。 */
+    /** 树里选中某行：只记录选中（单击不再打开/切换控制台；打开走双击或右键）。 */
     fun selectRow(rowKey: String?) {
         treeState.select(rowKey)
-        val profileId = rowProfileId(rowKey) ?: return
-        val active = consoleState.activeConsole()
-        if (active?.connectionId != profileId) {
-            consoleState.activateForProfile(profileId)
-        }
     }
 
     fun disconnectProfile(p: ConnectionProfile) {
@@ -444,6 +449,7 @@ private fun WindowScope.AppBody(
 
     // 控制台主导：启动即回到最近改动的控制台（跨数据源，不必先点树）；无控制台时保持引导态
     LaunchedEffect(Unit) {
+        consoleState.workspaces.ensureLoaded()
         if (consoleState.activeConsoleId == null && profiles.isNotEmpty()) {
             consoleState.activateMostRecent(profiles.map { it.id })
         }
@@ -859,7 +865,12 @@ private fun WindowScope.AppBody(
                         onEditConnection = { p -> dialogState.connectionEditor = ConnectionEditorRequest.Edit(p) },
                         onDeleteConnection = { p -> dialogState.confirm = ConfirmRequest.DeleteConnection(p.id, p.name) },
                         onRefresh = { treeState.refresh() },
-                        onOpenConsoleForProfile = { p -> consoleState.activateForProfile(p.id) },
+                        onOpenConsoleForProfile = { p ->
+                            scope.launch {
+                                connectionsState.ensureConnectionReady(p)
+                                consoleState.activateForProfile(p.id)
+                            }
+                        },
                         consolesForProfile = { pid -> consoleState.profileConsoles(pid) },
                         activeConsoleId = activeConsole?.id,
                         onOpenConsoleRecord = { c -> consoleState.reopenConsole(c.id) },
@@ -917,6 +928,19 @@ private fun WindowScope.AppBody(
                         activeConsole = activeConsole,
                         onSelectConsole = { c -> consoleState.activate(c) },
                         onCloseConsole = { c -> consoleState.closeConsole(c.id) },
+                        workspaces = consoleState.workspaces.workspaces,
+                        activeWorkspace = consoleState.workspaces.activeWorkspace(),
+                        workspaceCountOf = { wsId -> consoleState.workspaces.memberIds(wsId).size },
+                        workspaceHasDirty = { wsId ->
+                            consoleState.workspaces.memberIds(wsId).any { it in consoleState.dirtyConsoleIds }
+                        },
+                        onSelectWorkspace = ::switchWorkspace,
+                        onCreateWorkspace = { dialogState.workspaceDialog = WorkspaceDialogRequest.Create },
+                        onRenameWorkspace = { ws -> dialogState.workspaceDialog = WorkspaceDialogRequest.Rename(ws) },
+                        onDeleteWorkspace = { ws ->
+                            val name = if (ws.autoNamed) I18n.t(Str.WorkspaceDefaultName) else ws.name
+                            dialogState.confirm = ConfirmRequest.DeleteWorkspace(ws.id, name)
+                        },
                         onCreateConsoleAt = { pid ->
                             profiles.firstOrNull { it.id == pid }?.let(createConsoleFor)
                         },
@@ -1160,6 +1184,7 @@ private fun WindowScope.AppBody(
                         writeClipboardText(text)
                         toastState.show(label)
                     },
+                    toastState = toastState,
                 )
                 ToastHost(toastState)
                 SettingsDialog(
@@ -1185,14 +1210,6 @@ private fun WindowScope.AppBody(
     }
 }
 
-/** 行 key → profileId（c:/s:/p: 前缀）。 */
-private fun rowProfileId(rowKey: String?): String? {
-    val key = rowKey ?: return null
-    val prefix = key.substringBefore(':')
-    if (prefix !in setOf("c", "s", "p")) return null
-    return key.split(':').getOrNull(1)
-}
-
 /** 连接编辑 / 控制台 / 文件夹 / 删除确认等弹窗编排。 */
 @Composable
 private fun DialogHost(
@@ -1202,6 +1219,7 @@ private fun DialogHost(
     consoleState: ConsoleState,
     profiles: List<ConnectionProfile>,
     onCopyText: (String, String) -> Unit = { _, _ -> },
+    toastState: ToastState,
 ) {
     dialogState.tableDdl?.let { request ->
         DdlDialog(
@@ -1238,6 +1256,27 @@ private fun DialogHost(
             onConfirm = { name ->
                 consoleState.renameConsole(request.consoleId, name)
                 dialogState.consoleRename = null
+            },
+        )
+    }
+    dialogState.workspaceDialog?.let { request ->
+        WorkspaceNameDialog(
+            request = request,
+            onDismiss = { dialogState.workspaceDialog = null },
+            onConfirm = { name ->
+                dialogState.workspaceDialog = null
+                when (request) {
+                    is WorkspaceDialogRequest.Create -> {
+                        val created = consoleState.workspaces.createWorkspace(name)
+                        consoleState.workspaces.setActive(created.id)
+                        consoleState.onWorkspaceSwitched()
+                        val label =
+                            if (created.autoNamed) I18n.t(Str.WorkspaceDefaultName) else created.name
+                        toastState.show(I18n.t(Str.MainWorkspaceCreated, label))
+                    }
+                    is WorkspaceDialogRequest.Rename ->
+                        consoleState.workspaces.renameWorkspace(request.workspace.id, name)
+                }
             },
         )
     }

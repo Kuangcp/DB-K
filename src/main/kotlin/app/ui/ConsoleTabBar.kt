@@ -225,6 +225,7 @@ private fun ConsoleChip(
 internal fun StarterPane(
     profiles: List<ConnectionProfile>,
     onCreateConsoleAt: (String) -> Unit,
+    hasWorkspace: Boolean = true,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 26.dp),
@@ -242,6 +243,14 @@ internal fun StarterPane(
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
             textAlign = TextAlign.Center,
         )
+        if (!hasWorkspace) {
+            Text(
+                t(Str.StarterNoWorkspaceHint),
+                fontSize = 12.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                textAlign = TextAlign.Center,
+            )
+        }
         if (profiles.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
             profiles.forEach { p ->
