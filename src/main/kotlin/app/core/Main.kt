@@ -936,7 +936,7 @@ private fun WindowScope.AppBody(
                 object : DragAndDropTarget {
                     override fun onDrop(event: DragAndDropEvent): Boolean {
                         val list = event.dragData() as? DragData.FilesList ?: return false
-                        val files = list.readFiles().map { File(it) }
+                        val files = list.readFiles().mapNotNull { dragUriToFile(it) }
                         if (files.isEmpty()) return false
                         openSqlFilesRef.value(files)
                         return true
