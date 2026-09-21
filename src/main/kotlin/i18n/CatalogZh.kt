@@ -40,6 +40,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.ThemeColorNumber -> "数字"
     Str.ThemeColorComment -> "注释"
     Str.ThemeColorPunctuation -> "符号"
+    Str.ThemeColorFunction -> "函数"
     Str.ThemeColorInvalid -> "颜色格式应为 #RRGGBB"
     Str.ThemeSaved -> "已保存主题「{0}」"
 

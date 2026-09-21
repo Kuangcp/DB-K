@@ -50,6 +50,7 @@ enum class Str {
     ThemeColorNumber,
     ThemeColorComment,
     ThemeColorPunctuation,
+    ThemeColorFunction,
     ThemeColorInvalid,
     ThemeSaved,
 

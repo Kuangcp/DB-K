@@ -22,7 +22,7 @@ private fun span(start: Int, end: Int, color: Color) =
 
 private fun isWordChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
 
-/** SQL 高亮区间：字符串 / 注释 / 数字 / 关键字 / 标点，其余不着色。 */
+/** SQL 高亮区间：字符串 / 注释 / 数字 / 关键字 / 函数名 / 标点，其余不着色。 */
 internal fun sqlHighlightSpans(
     text: String,
     pal: SqlSyntaxPalette,
@@ -72,13 +72,17 @@ internal fun sqlHighlightSpans(
                 }
                 out += span(start, i, pal.number)
             }
-            // 标识符：整词比对关键字（等价于 \b(?:kw)\b，且不会命中更长标识符的一部分）
+            // 标识符：关键字整词比对；非关键字且（跳过空白后）紧随 `(` 视为函数名
             isWordChar(c) -> {
                 val start = i
                 i++
                 while (i < n && isWordChar(text[i])) i++
                 if (keywords.contains(text.substring(start, i).uppercase())) {
                     out += span(start, i, pal.keyword)
+                } else {
+                    var j = i
+                    while (j < n && text[j].isWhitespace()) j++
+                    if (j < n && text[j] == '(') out += span(start, i, pal.function)
                 }
             }
             c == '(' || c == ')' || c == ',' || c == ';' || c == '.' -> {

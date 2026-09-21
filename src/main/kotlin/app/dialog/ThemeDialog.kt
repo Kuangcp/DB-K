@@ -73,6 +73,7 @@ private val COLOR_FIELDS: List<Pair<String, Str>> = listOf(
     "number" to Str.ThemeColorNumber,
     "comment" to Str.ThemeColorComment,
     "punctuation" to Str.ThemeColorPunctuation,
+    "function" to Str.ThemeColorFunction,
 )
 
 private fun hexOf(c: ThemeColors): Map<String, String> = mapOf(
@@ -87,6 +88,7 @@ private fun hexOf(c: ThemeColors): Map<String, String> = mapOf(
     "number" to ThemeColors.toHex(c.number),
     "comment" to ThemeColors.toHex(c.comment),
     "punctuation" to ThemeColors.toHex(c.punctuation),
+    "function" to ThemeColors.toHex(c.function),
 )
 
 /** 全部字段合法才返回色板；任一非法/缺失返回 null。 */
@@ -104,6 +106,7 @@ private fun colorsOf(hex: Map<String, String>): ThemeColors? {
         number = c("number") ?: return null,
         comment = c("comment") ?: return null,
         punctuation = c("punctuation") ?: return null,
+        function = c("function") ?: return null,
     )
 }
 
@@ -364,7 +367,7 @@ private fun ColorFieldGroup(
 @Composable
 private fun ThemePreview(colors: ThemeColors) {
     val keywords = remember { sqlHighlightKeywordSet() }
-    val sample = "SELECT id, name FROM users WHERE active = true; -- preview"
+    val sample = "SELECT id, avg(price) FROM sales WHERE active = true; -- preview"
     val annotated = remember(colors, keywords) {
         AnnotatedString(sample, spanStyles = sqlHighlightSpans(sample, sqlSyntaxPalette(colors), keywords))
     }

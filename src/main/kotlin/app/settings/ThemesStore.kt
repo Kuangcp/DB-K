@@ -60,6 +60,7 @@ class ThemesStore(
                     number = color(dto, "number", base.colors.number),
                     comment = color(dto, "comment", base.colors.comment),
                     punctuation = color(dto, "punctuation", base.colors.punctuation),
+                    function = color(dto, "function", base.colors.function),
                 ),
             )
         }
@@ -84,6 +85,7 @@ class ThemesStore(
                         "number" to ThemeColors.toHex(t.colors.number),
                         "comment" to ThemeColors.toHex(t.colors.comment),
                         "punctuation" to ThemeColors.toHex(t.colors.punctuation),
+                        "function" to ThemeColors.toHex(t.colors.function),
                     ),
                 )
             },

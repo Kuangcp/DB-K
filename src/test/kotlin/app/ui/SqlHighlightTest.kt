@@ -84,6 +84,31 @@ class SqlHighlightTest {
     }
 
     @Test
+    fun highlightsFunctionNameImmediatelyBeforeParen() {
+        val a = highlight("avg(x)")
+        assertEquals(pal.function, colorAt(a, 0), "avg 应取 function 色")
+    }
+
+    @Test
+    fun highlightsFunctionNameWithWhitespaceBeforeParen() {
+        val a = highlight("count\t(\n1)")
+        assertEquals(pal.function, colorAt(a, 0), "count 与 ( 之间有空白仍应取 function 色")
+    }
+
+    @Test
+    fun keywordBeforeParenStaysKeywordNotFunction() {
+        val a = highlight("IN (1)")
+        assertEquals(pal.keyword, colorAt(a, 0), "IN 是关键字，不应被当函数")
+        assertNotEquals(pal.function, colorAt(a, 0))
+    }
+
+    @Test
+    fun identifierNotBeforeParenIsNotFunction() {
+        val a = highlight("t.col")
+        assertNotEquals(pal.function, colorAt(a, 0))
+    }
+
+    @Test
     fun bothPalettesRenderWithoutError() {
         listOf(true, false).forEach { dark ->
             val p = sqlSyntaxPalette((if (dark) themeById("dark") else themeById("light"))!!.colors)

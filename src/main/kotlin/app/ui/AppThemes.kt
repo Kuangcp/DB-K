@@ -25,6 +25,7 @@ data class ThemeColors(
     val number: Color,
     val comment: Color,
     val punctuation: Color,
+    val function: Color,
 ) {
     /** 背景亮度决定明暗：驱动 Material isLight 与语法色板。 */
     val isLight: Boolean get() = background.luminance() > 0.5f
@@ -108,7 +109,7 @@ private val DarkTheme = ThemeSpec(
         onSurface = Color(0xFFFFFFFF), primary = Color(0xFF90CAF9),
         editorBackground = Color(0xFF32353B), editorForeground = Color(0xFFFFFFFF),
         keyword = Color(0xFF569CD6), string = Color(0xFFCE9178), number = Color(0xFFB5CEA8),
-        comment = Color(0xFF6A9955), punctuation = Color(0xFFD4D4D4),
+        comment = Color(0xFF6A9955), punctuation = Color(0xFFD4D4D4), function = Color(0xFFDCDCAA),
     ),
 )
 
@@ -119,7 +120,7 @@ private val LightTheme = ThemeSpec(
         onSurface = Color(0xFF1F2328), primary = Color(0xFF1976D2),
         editorBackground = Color(0xFFFFFFFF), editorForeground = Color(0xFF1F2328),
         keyword = Color(0xFF0000FF), string = Color(0xFFA31515), number = Color(0xFF098658),
-        comment = Color(0xFF008000), punctuation = Color(0xFF242424),
+        comment = Color(0xFF008000), punctuation = Color(0xFF242424), function = Color(0xFF795E26),
     ),
 )
 
@@ -130,7 +131,7 @@ private val MonokaiTheme = ThemeSpec(
         onSurface = Color(0xFFF8F8F2), primary = Color(0xFFA6E22E),
         editorBackground = Color(0xFF272822), editorForeground = Color(0xFFF8F8F2),
         keyword = Color(0xFFF92672), string = Color(0xFFE6DB74), number = Color(0xFFAE81FF),
-        comment = Color(0xFF75715E), punctuation = Color(0xFFF8F8F2),
+        comment = Color(0xFF75715E), punctuation = Color(0xFFF8F8F2), function = Color(0xFFA6E22E),
     ),
 )
 
@@ -141,7 +142,7 @@ private val DraculaTheme = ThemeSpec(
         onSurface = Color(0xFFF8F8F2), primary = Color(0xFFBD93F9),
         editorBackground = Color(0xFF282A36), editorForeground = Color(0xFFF8F8F2),
         keyword = Color(0xFFFF79C6), string = Color(0xFFF1FA8C), number = Color(0xFFBD93F9),
-        comment = Color(0xFF6272A4), punctuation = Color(0xFFF8F8F2),
+        comment = Color(0xFF6272A4), punctuation = Color(0xFFF8F8F2), function = Color(0xFF50FA7B),
     ),
 )
 
@@ -152,7 +153,7 @@ private val SublimeTheme = ThemeSpec(
         onSurface = Color(0xFFD8DEE9), primary = Color(0xFF6699CC),
         editorBackground = Color(0xFF343D46), editorForeground = Color(0xFFD8DEE9),
         keyword = Color(0xFFC594C5), string = Color(0xFF99C794), number = Color(0xFFF99157),
-        comment = Color(0xFF65737E), punctuation = Color(0xFFD8DEE9),
+        comment = Color(0xFF65737E), punctuation = Color(0xFFD8DEE9), function = Color(0xFF6699CC),
     ),
 )
 

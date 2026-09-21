@@ -98,6 +98,7 @@ class AppThemesTest {
         assertEquals(c.number, sql.number)
         assertEquals(c.comment, sql.comment)
         assertEquals(c.punctuation, sql.punctuation)
+        assertEquals(c.function, sql.function)
 
         val json = jsonSyntaxPalette(c)
         assertEquals(c.string, json.string)
@@ -106,5 +107,14 @@ class AppThemesTest {
         assertEquals(c.keyword, json.boolean)
         assertEquals(c.keyword, json.nullLiteral)
         assertEquals(c.punctuation, json.punctuation)
+    }
+
+    @Test
+    fun `builtin function colors are real scheme colors`() {
+        assertEquals(Color(0xFFDCDCAA), themeById("dark")!!.colors.function)
+        assertEquals(Color(0xFF795E26), themeById("light")!!.colors.function)
+        assertEquals(Color(0xFFA6E22E), themeById("monokai")!!.colors.function)
+        assertEquals(Color(0xFF50FA7B), themeById("dracula")!!.colors.function)
+        assertEquals(Color(0xFF6699CC), themeById("sublime")!!.colors.function)
     }
 }

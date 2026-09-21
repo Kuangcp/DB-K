@@ -40,6 +40,7 @@ internal fun en(key: Str): String = when (key) {
     Str.ThemeColorNumber -> "Number"
     Str.ThemeColorComment -> "Comment"
     Str.ThemeColorPunctuation -> "Punctuation"
+    Str.ThemeColorFunction -> "Function"
     Str.ThemeColorInvalid -> "Expected #RRGGBB"
     Str.ThemeSaved -> "Saved theme “{0}”"
 

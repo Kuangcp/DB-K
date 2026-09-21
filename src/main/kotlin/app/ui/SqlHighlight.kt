@@ -15,6 +15,7 @@ internal data class SqlSyntaxPalette(
     val number: Color,       // 数字字面量
     val comment: Color,      // -- 行注释 与 /* */ 块注释
     val punctuation: Color,  // ( ) , ; . 等符号（低饱和，微光）
+    val function: Color,     // 函数名（标识符后紧跟 `(`，中间可含空白）
 )
 
 internal fun sqlSyntaxPalette(colors: ThemeColors): SqlSyntaxPalette = SqlSyntaxPalette(
@@ -23,6 +24,7 @@ internal fun sqlSyntaxPalette(colors: ThemeColors): SqlSyntaxPalette = SqlSyntax
     number = colors.number,
     comment = colors.comment,
     punctuation = colors.punctuation,
+    function = colors.function,
 )
 
 /**

@@ -36,6 +36,11 @@ class ThemeStoreTest {
         assertTrue(loaded.all { !it.builtIn })
         assertEquals("#1E1F22", ThemeColors.toHex(loaded[1].colors.background))
         assertEquals("dracula", loaded[1].baseId)
+        // function 项一并往返
+        assertEquals(
+            ThemeColors.toHex(themeById("dracula")!!.colors.function),
+            ThemeColors.toHex(loaded[1].colors.function),
+        )
     }
 
     @Test
@@ -63,6 +68,9 @@ class ThemeStoreTest {
         assertEquals(themeById("dracula")!!.colors.background, loaded[0].colors.background)
         assertEquals(ThemeColors.parse("#010203"), loaded[1].colors.background)
         assertEquals(themeById("light")!!.colors.keyword, loaded[1].colors.keyword)
+        // 旧档缺 function 项 → 回退 baseId 主题的函数色
+        assertEquals(themeById("dracula")!!.colors.function, loaded[0].colors.function)
+        assertEquals(themeById("light")!!.colors.function, loaded[1].colors.function)
     }
 
     @Test
