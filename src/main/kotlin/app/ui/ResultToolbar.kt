@@ -89,11 +89,16 @@ internal fun ResultToolbar(
         } else {
             Spacer(Modifier.weight(1f))
         }
-        // 状态：执行中 / 列×行·耗时（错误时结果区已居中红字，不重复）
+        // 状态：执行中 / 单语句状态点 + 列×行·耗时（错误详情在结果区居中红字，这里只给状态点）
+        val statusDot = singleResultStatus(run)
         if (run.executing) {
             CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
             Text(t(Str.EditorRunning), fontSize = 11.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f))
         } else if (run.error == null && result != null) {
+            if (statusDot != null) {
+                ResultStatusDot(statusDot)
+                Spacer(Modifier.width(5.dp))
+            }
             Text(
                 if (editCount > 0) "${metaText(result, transposed)} · ${t(Str.ResultUncommitted, editCount)}"
                 else metaText(result, transposed),
@@ -102,6 +107,9 @@ internal fun ResultToolbar(
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                 maxLines = 1,
             )
+        } else if (statusDot == false) {
+            // 单语句失败：只给红点（结果区已展示错误详情）
+            ResultStatusDot(false)
         }
         Spacer(Modifier.width(4.dp))
         // 动作：纯图标 + 悬停 tooltip
@@ -182,6 +190,23 @@ internal fun ResultToolbar(
             )
         }
     }
+}
+
+/**
+ * 单语句结果状态点：true=成功绿、false=失败红、null=不显示。
+ * 仅单语句、非执行中、有结果或错误时显示；多语句由左侧芯片自带状态点，不重复。
+ */
+internal fun singleResultStatus(run: ConsoleRunUi): Boolean? {
+    if (run.executing) return null
+    if (run.outcomes.size > 1) return null
+    run.error?.let { return false }
+    return if (run.result != null) true else null
+}
+
+/** 单语句状态点：6dp 圆，语义色成功绿 / 失败红（只做色点，不承载文字）。 */
+@Composable
+private fun ResultStatusDot(ok: Boolean) {
+    Box(Modifier.size(6.dp).clip(CircleShape).background(if (ok) Color(0xFF43A047) else Color(0xFFE53935)))
 }
 
 /** 多语句结果切换芯片：状态点 + 结果序号 + 行数/失败标记。 */
