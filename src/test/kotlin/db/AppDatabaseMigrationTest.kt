@@ -24,7 +24,7 @@ class AppDatabaseMigrationTest {
             c.createStatement().use { st ->
                 st.executeQuery("SELECT version FROM schema_migrations ORDER BY version").use { rs ->
                     val versions = buildList { while (rs.next()) add(rs.getInt(1)) }
-                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), versions)
+                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), versions)
                 }
             }
         }
@@ -97,10 +97,15 @@ class AppDatabaseMigrationTest {
                     rs.next()
                     assertEquals(0, rs.getInt(1))
                 }
-                // v8 旧控制台默认 closed=0（未关闭）
-                st.executeQuery("SELECT closed FROM consoles WHERE id='cc1'").use { rs ->
+                // v11 已丢弃 consoles.closed 列
+                st.executeQuery("PRAGMA table_info(consoles)").use { rs ->
+                    val cols = buildList { while (rs.next()) add(rs.getString("name")) }
+                    assertFalse("closed" in cols, "closed 列应已丢弃: $cols")
+                }
+                // v10 回填：legacy 的 cc1（closed 默认 0）进入一个 auto_named 工作区
+                st.executeQuery("SELECT COUNT(*) FROM workspace_consoles WHERE console_id='cc1'").use { rs ->
                     rs.next()
-                    assertEquals(0, rs.getInt("closed"))
+                    assertEquals(1, rs.getInt(1))
                 }
                 // v9 旧连接默认 key_separator=':'
                 st.executeQuery("SELECT key_separator FROM connections WHERE id='c1'").use { rs ->

@@ -517,7 +517,7 @@ class ConnectionsRepository(
 
     fun listConsoles(connectionId: String): List<ConsoleRecord> {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end, closed FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
+            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE connection_id = ? ORDER BY sort_order, created_at",
         ).use { ps ->
             ps.setString(1, connectionId)
             ps.executeQuery().use { rs ->
@@ -530,7 +530,7 @@ class ConnectionsRepository(
 
     fun getConsole(id: String): ConsoleRecord? {
         return conn.prepareStatement(
-            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end, closed FROM consoles WHERE id = ?",
+            "SELECT id, connection_id, name, file_path, sort_order, updated_at, target, caret_start, caret_end FROM consoles WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs -> if (rs.next()) mapConsole(rs) else null }
@@ -598,18 +598,6 @@ class ConnectionsRepository(
         }
     }
 
-    /**
-     * 标记控制台关闭/重新打开（仅改可见性，保留元数据行与 .sql 文件）。
-     * 刻意不碰 updated_at（与光标同理），避免污染“最近改动的控制台”启发式。
-     */
-    fun setConsoleClosed(id: String, closed: Boolean) {
-        conn.prepareStatement("UPDATE consoles SET closed = ? WHERE id = ?").use { ps ->
-            ps.setInt(1, if (closed) 1 else 0)
-            ps.setString(2, id)
-            ps.executeUpdate()
-        }
-    }
-
     /** 删除控制台：删行 + 删其 .sql 文件。 */
     fun deleteConsole(id: String) {
         val rec = getConsole(id) ?: return
@@ -648,7 +636,6 @@ class ConnectionsRepository(
         target = rs.getString("target") ?: "",
         caretStart = rs.getInt("caret_start"),
         caretEnd = rs.getInt("caret_end"),
-        closed = rs.getInt("closed") != 0,
     )
 
     // ---------- workspaces（控制台的虚拟分组） ----------

@@ -12,7 +12,7 @@ import java.util.UUID
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 10
+    private const val CURRENT_VERSION = 11
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -70,6 +70,10 @@ object AppDatabase {
         if (!applied.contains(10)) {
             conn.createStatement().use { st -> migrateToV10(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (10)").use { it.executeUpdate() }
+        }
+        if (!applied.contains(11)) {
+            conn.createStatement().use { st -> migrateToV11(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (11)").use { it.executeUpdate() }
         }
     }
 
@@ -150,6 +154,13 @@ object AppDatabase {
                     "VALUES ('$wsId', '$cid', $i, $now)",
             )
         }
+    }
+
+    /**
+     * v11：工作区接管「关闭」语义后，consoles.closed 退役。
+     */
+    private fun migrateToV11(st: Statement) {
+        st.executeUpdate("ALTER TABLE consoles DROP COLUMN closed")
     }
 
     /**
