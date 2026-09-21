@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.i18n.t
+import app.state.ExternalFileIssue
 import db.ConsoleRecord
 import db.ConnectionProfile
 import db.WorkspaceRecord
@@ -65,6 +67,11 @@ internal fun ConsoleTabBar(
     onRenameConsole: (ConsoleRecord) -> Unit,
     onDeleteConsole: (ConsoleRecord) -> Unit,
     onCloseConsole: (ConsoleRecord) -> Unit,
+    externalIssues: Map<String, ExternalFileIssue> = emptyMap(),
+    onOpenSqlFile: () -> Unit = {},
+    onCopyFilePath: (ConsoleRecord) -> Unit = {},
+    onRevealFile: (ConsoleRecord) -> Unit = {},
+    onReloadFromDisk: (ConsoleRecord) -> Unit = {},
     workspaces: List<WorkspaceRecord> = emptyList(),
     activeWorkspace: WorkspaceRecord? = null,
     workspaceCountOf: (String) -> Int = { 0 },
@@ -93,10 +100,14 @@ internal fun ConsoleTabBar(
                     active = c.id == activeConsole?.id,
                     dirty = c.id in dirtyConsoleIds,
                     pendingEdits = pendingEditCounts[c.id] ?: 0,
+                    issue = externalIssues[c.id],
                     onSelect = { onSelectConsole(c) },
                     onRename = { onRenameConsole(c) },
                     onDelete = { onDeleteConsole(c) },
                     onClose = { onCloseConsole(c) },
+                    onCopyFilePath = { onCopyFilePath(c) },
+                    onRevealFile = { onRevealFile(c) },
+                    onReloadFromDisk = { onReloadFromDisk(c) },
                 )
                 Spacer(Modifier.width(5.dp))
             }
@@ -115,6 +126,10 @@ internal fun ConsoleTabBar(
                 )
             }
             DropdownMenu(expanded = createMenuOpen, onDismissRequest = { createMenuOpen = false }) {
+                DropdownMenuItem(onClick = { createMenuOpen = false; onOpenSqlFile() }) {
+                    Text(t(Str.ExternalOpenSqlFile), fontSize = 13.sp, color = MaterialTheme.colors.onSurface)
+                }
+                Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f))
                 profilesById.values.forEach { p ->
                     DropdownMenuItem(onClick = {
                         createMenuOpen = false
@@ -157,16 +172,25 @@ private fun ConsoleChip(
     active: Boolean,
     dirty: Boolean,
     pendingEdits: Int,
+    issue: ExternalFileIssue?,
     onSelect: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
+    onCopyFilePath: () -> Unit,
+    onRevealFile: () -> Unit,
+    onReloadFromDisk: () -> Unit,
 ) {
-    val menu = listOf(
-        ContextMenuItem(t(Str.ConsoleRenameTitle)) { onRename() },
-        ContextMenuItem(t(Str.EditorCloseConsole)) { onClose() },
-        ContextMenuItem(t(Str.ConfirmDeleteConsoleTitle)) { onDelete() },
-    )
+    val menu = buildList {
+        add(ContextMenuItem(t(Str.ConsoleRenameTitle)) { onRename() })
+        if (console.external) {
+            add(ContextMenuItem(t(Str.ExternalCopyPath)) { onCopyFilePath() })
+            add(ContextMenuItem(t(Str.ExternalReveal)) { onRevealFile() })
+            add(ContextMenuItem(t(Str.ExternalReloadDisk)) { onReloadFromDisk() })
+        }
+        add(ContextMenuItem(t(Str.EditorCloseConsole)) { onClose() })
+        add(ContextMenuItem(t(Str.ConfirmDeleteConsoleTitle)) { onDelete() })
+    }
     ContextMenuArea(items = { menu }) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -199,6 +223,29 @@ private fun ConsoleChip(
                     fontSize = 9.sp,
                     modifier = Modifier.padding(end = 3.dp),
                 )
+            }
+            if (console.external) {
+                Icon(
+                    DbIcons.Link,
+                    contentDescription = t(Str.ExternalLinkTip, console.filePath),
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.size(12.dp).padding(end = 3.dp),
+                )
+            }
+            when (issue) {
+                ExternalFileIssue.MISSING -> Text(
+                    "!",
+                    color = Color(0xFFFFB300),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(end = 3.dp),
+                )
+                ExternalFileIssue.CONFLICT -> Text(
+                    "◆",
+                    color = Color(0xFFFFB300),
+                    fontSize = 8.sp,
+                    modifier = Modifier.padding(end = 3.dp),
+                )
+                null -> Unit
             }
             if (showSourceTag && profile != null) {
                 Text(
