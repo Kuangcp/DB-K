@@ -77,6 +77,19 @@ class AppThemesTest {
     }
 
     @Test
+    fun `mergeThemes dedups builtins mixed into custom list`() {
+        val custom = ThemeSpec(
+            id = "mine", name = "Mine", builtIn = false, baseId = "monokai",
+            colors = themeById("monokai")!!.colors,
+        )
+        // 模拟 bug：自定义列表里混入了内置与重复的自定义
+        val merged = mergeThemes(listOf(builtInThemes.first(), custom, custom))
+        assertEquals(6, merged.size)
+        assertEquals(6, merged.map { it.id }.toSet().size)
+        assertEquals("mine", merged.last().id)
+    }
+
+    @Test
     fun `syntax palettes map from theme colors`() {
         val c = themeById("monokai")!!.colors
         val sql = sqlSyntaxPalette(c)

@@ -96,8 +96,8 @@ import app.ui.LocalKeymap
 import app.ui.ResultEdits
 import app.ui.EditorArea
 import app.ui.LocalThemeColors
-import app.ui.builtInThemes
 import app.ui.defaultThemeId
+import app.ui.mergeThemes
 import app.ui.themeById
 import app.ui.matchAnyAwt
 import app.ui.sqlHasOrderBy
@@ -283,7 +283,7 @@ private fun WindowScope.AppBody(
     val themesStore = remember { ThemesStore() }
     var customThemes by remember { mutableStateOf(themesStore.load()) }
     var activeThemeId by remember { mutableStateOf(ThemePrefs.load() ?: defaultThemeId) }
-    val themes = builtInThemes + customThemes
+    val themes = mergeThemes(customThemes)
     val activeTheme = themes.firstOrNull { it.id == activeThemeId } ?: themeById(defaultThemeId)!!
 
     /** 切换主题：立即生效并持久化。 */

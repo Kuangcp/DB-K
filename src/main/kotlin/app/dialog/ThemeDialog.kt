@@ -171,8 +171,10 @@ private fun ThemeDialogBody(
     var status by remember { mutableStateOf<String?>(null) }
 
     fun persist(list: List<ThemeSpec>) {
-        store.save(list)
-        onCustomThemesChange(list)
+        // 回调的契约是「自定义主题列表变更」：内置主题永不出现在其中（否则 Main 会重复拼接内置）。
+        val custom = list.filterNot { it.builtIn }
+        store.save(custom)
+        onCustomThemesChange(custom)
     }
 
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colors.background).padding(14.dp)) {

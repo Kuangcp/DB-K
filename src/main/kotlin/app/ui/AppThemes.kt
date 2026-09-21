@@ -162,5 +162,11 @@ const val defaultThemeId: String = "light"
 
 fun themeById(id: String): ThemeSpec? = builtInThemes.firstOrNull { it.id == id }
 
+/** 合并内置与自定义主题并去重（防御自定义列表混入内置/重复项，避免下拉里出现两份内置）。 */
+fun mergeThemes(customThemes: List<ThemeSpec>): List<ThemeSpec> {
+    val seen = HashSet<String>()
+    return (builtInThemes + customThemes).filter { seen.add(it.id) }
+}
+
 /** 当前主题色板；默认 Light（未被 Main 覆盖时也能安全取用）。 */
 val LocalThemeColors = staticCompositionLocalOf { LightTheme.colors }
