@@ -2,6 +2,7 @@ package app.ui
 
 import androidx.compose.foundation.ScrollbarStyle
 import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollbarAdapter
 import kotlinx.coroutines.flow.drop
 import androidx.compose.foundation.background
@@ -81,6 +82,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.awt.event.KeyEvent as AwtKeyEvent
 import app.state.ColumnCatalog
+import app.state.RunStatus
+import app.state.StatementProgress
+import app.state.aggregateLineMarkers
 import app.settings.EditorSettings
 import app.settings.ShortcutCommand
 import app.i18n.t
@@ -125,6 +129,10 @@ internal fun EditorPane(
     onCloseFind: () -> Unit = {},
     /** Ctrl+Tab / Ctrl+Shift+Tab：按 MRU 切换控制台（参数 ±1）。 */
     onSwitchConsole: (Int) -> Unit = {},
+    /** 本批执行的逐语句进度（gutter 行状态标记；与结果区 tab 同源）。 */
+    progress: List<StatementProgress> = emptyList(),
+    /** 点击某行状态标记（参数 = 0-based 行号）：切换该行语句对应的结果。 */
+    onLineMarkerClick: (Int) -> Unit = {},
     /** 外部持有的焦点请求器（Ctrl+Tab 切换后交回焦点）。 */
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
@@ -715,6 +723,15 @@ internal fun EditorPane(
         fontFamily = gutterFontFamily, fontSize = gutterFontSize, color = gutterCurColor,
         fontWeight = FontWeight.Medium,
     )
+    // 行状态标记（执行结果）：一行多语句聚合为一点，点右侧小数字标识语句数
+    val lineMarkers = remember(progress) { aggregateLineMarkers(progress) }
+    val markerR = with(density) { 5.5.dp.toPx() }
+    val markerCx = with(density) { 10.dp.toPx() }
+    val markerCountStyle = TextStyle(
+        fontFamily = gutterFontFamily,
+        fontSize = (editorSettings.fontSizeSp * 0.6f).sp,
+        color = gutterColor,
+    )
 
     Box(modifier = modifier) {
         Box(
@@ -775,12 +792,25 @@ internal fun EditorPane(
                 },
         ) {
             Row(modifier = Modifier.fillMaxSize()) {
-                // 行号槽：Canvas 只绘可视行，滚动时仅重绘（scroll.value 在 draw 内读取）
+                // 行号槽：Canvas 只绘可视行，滚动时仅重绘（scroll.value 在 draw 内读取）；
+                // 行状态点画在行号左侧，点击行 → 切到该行语句的结果 tab。
                 Spacer(
                     modifier = Modifier
                         .width(GUTTER_W)
                         .fillMaxHeight()
                         .clipToBounds()
+                        .pointerInput(lineMarkers, gutterTops, lineHpx) {
+                            detectTapGestures { pos ->
+                                val tops = gutterTops
+                                val y = pos.y + scroll.value
+                                for (i in tops.indices) {
+                                    if (y >= tops[i] && y < tops[i] + lineHpx) {
+                                        if (lineMarkers[i] != null) onLineMarkerClick(i)
+                                        break
+                                    }
+                                }
+                            }
+                        }
                         .drawBehind {
                             val tops = gutterTops
                             if (tops.isNotEmpty()) {
@@ -798,6 +828,28 @@ internal fun EditorPane(
                                             size = Size(w - 6f, lineHpx - 4f),
                                             cornerRadius = CornerRadius(4f, 4f),
                                         )
+                                    }
+                                    // 执行结果状态点（语义色，只做色点）；一行多语句时右侧标语句数
+                                    lineMarkers[i]?.let { marker ->
+                                        val cy = top + lineHpx / 2f
+                                        drawCircle(
+                                            color = lineMarkerColor(marker.status),
+                                            radius = markerR,
+                                            center = Offset(markerCx, cy),
+                                        )
+                                        if (marker.count > 1) {
+                                            val cm = gutterMeasurer.measure(
+                                                AnnotatedString(marker.count.toString()),
+                                                style = markerCountStyle,
+                                            )
+                                            drawText(
+                                                textLayoutResult = cm,
+                                                topLeft = Offset(
+                                                    markerCx + markerR + 1f,
+                                                    top + ((lineHpx - cm.size.height) / 2f).coerceAtLeast(0f),
+                                                ),
+                                            )
+                                        }
                                     }
                                     val m = gutterMeasurer.measure(
                                         AnnotatedString((i + 1).toString()),
@@ -1089,7 +1141,15 @@ internal fun EditorPane(
     }
 }
 
-private val GUTTER_W = 40.dp
+private val GUTTER_W = 48.dp
+
+/** gutter 行状态点的语义色（只做色块/点；文字仍走主题色）。 */
+private fun lineMarkerColor(status: RunStatus): Color = when (status) {
+    RunStatus.OK -> Color(0xFF43A047)
+    RunStatus.FAILED -> Color(0xFFE53935)
+    RunStatus.RUNNING, RunStatus.PENDING -> Color(0xFFFFB300)
+    RunStatus.SKIPPED -> Color(0xFF9E9E9E)
+}
 
 // 补全弹层宽度：300dp 为下限（原固定宽度，保持观感）；实际宽度按候选内容自适应，上限 960dp
 private val COMPLETION_W = 300.dp

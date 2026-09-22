@@ -63,6 +63,52 @@ class SqlSplitterTest {
     }
 
     @Test
+    fun `statement ranges keep offsets`() {
+        val sql = "SELECT 1; SELECT 2"
+        assertEquals(listOf(0..7, 10..17), splitSqlStatementRanges(sql))
+        // ranges 映射回与 splitSqlStatements 完全一致的语句文本
+        assertEquals(
+            splitSqlStatements(sql),
+            splitSqlStatementRanges(sql).map { sql.substring(it.first, it.last + 1) },
+        )
+    }
+
+    @Test
+    fun `statement ranges trim surrounding whitespace`() {
+        val sql = "  SELECT 1 ;\n\n  SELECT 2  ;"
+        val ranges = splitSqlStatementRanges(sql)
+        assertEquals("SELECT 1", sql.substring(ranges[0].first, ranges[0].last + 1))
+        assertEquals("SELECT 2", sql.substring(ranges[1].first, ranges[1].last + 1))
+    }
+
+    @Test
+    fun `statement ranges cover multi-line and one-line many statements`() {
+        val sql = "SELECT 1; SELECT 2; SELECT 3"
+        assertEquals(3, splitSqlStatementRanges(sql).size)
+        val multi = "SELECT a,\n  b\nFROM t; SELECT 2"
+        val ranges = splitSqlStatementRanges(multi)
+        assertEquals("SELECT a,\n  b\nFROM t", multi.substring(ranges[0].first, ranges[0].last + 1))
+        assertEquals("SELECT 2", multi.substring(ranges[1].first, ranges[1].last + 1))
+    }
+
+    @Test
+    fun `statement ranges agree with split on tricky input`() {
+        val sql = "SELECT ';' FROM t; -- c;\n/* x; */ SELECT 2;"
+        assertEquals(
+            splitSqlStatements(sql),
+            splitSqlStatementRanges(sql).map { sql.substring(it.first, it.last + 1) },
+        )
+    }
+
+    @Test
+    fun `statement ranges empty for blank or comment-only`() {
+        assertEquals(emptyList(), splitSqlStatementRanges(""))
+        assertEquals(emptyList(), splitSqlStatementRanges("   \n\t"))
+        assertEquals(emptyList(), splitSqlStatementRanges("-- only comment"))
+        assertEquals(emptyList(), splitSqlStatementRanges("/* block */"))
+    }
+
+    @Test
     fun `isCommentOnlySql detects comment-only content`() {
         assertTrue("-- foo".isCommentOnlySql())
         assertTrue("/* foo */".isCommentOnlySql())

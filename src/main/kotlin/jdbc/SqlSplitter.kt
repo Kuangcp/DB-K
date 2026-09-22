@@ -9,59 +9,49 @@ package jdbc
  * - 每条语句去首尾空白，丢弃空白片段；
  * - 仅含注释/空白的片段（如独立的 `-- xxx` 行）被忽略，不交给驱动执行。
  */
-fun splitSqlStatements(sql: String): List<String> {
-    val out = mutableListOf<String>()
-    val cur = StringBuilder()
+fun splitSqlStatements(sql: String): List<String> =
+    splitSqlStatementRanges(sql).map { sql.substring(it.first, it.last + 1) }
+
+/**
+ * 与 [splitSqlStatements] 同一词法规则，但保留每条语句在原文中的字符区间（含首尾索引）。
+ * 区间按首尾非空白裁剪（`substring(r.first, r.last + 1)` 即语句文本，与
+ * [splitSqlStatements] 的产物逐条相等）；仅含注释/空白的片段不产出。
+ */
+fun splitSqlStatementRanges(sql: String): List<IntRange> {
+    val out = mutableListOf<IntRange>()
+    var segStart = 0
     var state = 0 // 0 普通 | 1 单引号 | 2 双引号 | 3 反引号 | 4 行注释 | 5 块注释
     var i = 0
+    fun flush(endExclusive: Int) {
+        var s = segStart
+        var e = endExclusive - 1
+        while (s < endExclusive && sql[s].isWhitespace()) s++
+        while (e >= s && sql[e].isWhitespace()) e--
+        if (e >= s && !sql.substring(s, e + 1).isCommentOnlySql()) out += s..e
+    }
     while (i < sql.length) {
         val c = sql[i]
         val next = sql.getOrNull(i + 1)
         when (state) {
             0 -> when {
-                c == '\'' -> { cur.append(c); state = 1 }
-                c == '"' -> { cur.append(c); state = 2 }
-                c == '`' -> { cur.append(c); state = 3 }
-                c == '-' && next == '-' -> { cur.append(c).append(next); state = 4; i++ }
-                c == '/' && next == '*' -> { cur.append(c).append(next); state = 5; i++ }
-                c == ';' -> flushStatement(cur, out)
-                else -> cur.append(c)
+                c == '\'' -> state = 1
+                c == '"' -> state = 2
+                c == '`' -> state = 3
+                c == '-' && next == '-' -> { state = 4; i++ }
+                c == '/' && next == '*' -> { state = 5; i++ }
+                c == ';' -> { flush(i); segStart = i + 1 }
+                else -> {}
             }
-            1 -> {
-                cur.append(c)
-                if (c == '\'') {
-                    if (next == '\'') { cur.append(next); i++ } else state = 0
-                }
-            }
-            2 -> {
-                cur.append(c)
-                if (c == '"') {
-                    if (next == '"') { cur.append(next); i++ } else state = 0
-                }
-            }
-            3 -> {
-                cur.append(c)
-                if (c == '`') {
-                    if (next == '`') { cur.append(next); i++ } else state = 0
-                }
-            }
-            4 -> { cur.append(c); if (c == '\n') state = 0 }
-            5 -> {
-                cur.append(c)
-                if (c == '*' && next == '/') { cur.append(next); state = 0; i++ }
-            }
+            1 -> if (c == '\'') { if (next == '\'') i++ else state = 0 }
+            2 -> if (c == '"') { if (next == '"') i++ else state = 0 }
+            3 -> if (c == '`') { if (next == '`') i++ else state = 0 }
+            4 -> if (c == '\n') state = 0
+            5 -> if (c == '*' && next == '/') { state = 0; i++ }
         }
         i++
     }
-    flushStatement(cur, out)
+    flush(sql.length)
     return out
-}
-
-private fun flushStatement(cur: StringBuilder, out: MutableList<String>) {
-    val s = cur.toString().trim()
-    cur.setLength(0)
-    if (s.isEmpty() || s.isCommentOnlySql()) return
-    out += s
 }
 
 /** 是否仅含注释与空白（无任何可执行 token）。字符串/引号标识符均视为真实 token。 */

@@ -57,11 +57,19 @@ object RedisProtocol {
     }
 
     /** 光标所在行（去空白；空行 / `#` 注释行 → null）。无选中执行时用它定位命令。 */
-    fun commandAtCaret(text: String, caret: Int): String? {
+    fun commandAtCaret(text: String, caret: Int): String? = commandAtCaretRange(text, caret)?.first
+
+    /** 光标所在命令 + 其首字符 offset（供 gutter 行锚定）；空行/注释行 → null。 */
+    fun commandAtCaretRange(text: String, caret: Int): Pair<String, Int>? {
         val pos = caret.coerceIn(0, text.length)
         val lineStart = text.lastIndexOf('\n', pos - 1) + 1
         val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
-        return text.substring(lineStart, lineEnd).trim().takeIf { it.isNotEmpty() && !it.startsWith("#") }
+        val line = text.substring(lineStart, lineEnd)
+        val lead = line.indexOfFirst { !it.isWhitespace() }
+        if (lead < 0) return null
+        val cmd = line.trim()
+        if (cmd.isEmpty() || cmd.startsWith("#")) return null
+        return cmd to (lineStart + lead)
     }
 
     /** 只读命令白名单：无选中时的「光标执行」只放行这些；写命令/未知命令一律不自动执行。 */

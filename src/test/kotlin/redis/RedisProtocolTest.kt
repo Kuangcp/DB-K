@@ -87,6 +87,15 @@ class RedisProtocolTest {
     }
 
     @Test
+    fun `command at caret range keeps source offset`() {
+        val text = "GET a\n  SET b 1\n# c"
+        val (cmd, at) = RedisProtocol.commandAtCaretRange(text, text.indexOf("SET"))!!
+        assertEquals("SET b 1", cmd)
+        assertEquals(text.indexOf("SET"), at)
+        assertNull(RedisProtocol.commandAtCaretRange(text, text.indexOf("# c")))
+    }
+
+    @Test
     fun `read only command classification`() {
         assertTrue(RedisProtocol.isReadOnlyCommand("GET a"))
         assertTrue(RedisProtocol.isReadOnlyCommand("hgetall h"))

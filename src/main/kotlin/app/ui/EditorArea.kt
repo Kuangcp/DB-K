@@ -132,8 +132,8 @@ fun WindowScope.EditorArea(
     /** 递增信号：请求把焦点交回编辑器（Ctrl+Tab 切换后；节点重建会丢焦点）。 */
     editorFocusTick: Int = 0,
     run: ConsoleRunUi,
-    /** 执行请求：参数为编辑器当前选中片段（去首尾空白）；null = 无有效选中。 */
-    onRun: (String?) -> Unit,
+    /** 执行请求：参数 = 选中片段（去首尾空白）+ 其在正文中的起点 offset（gutter 行锚定；null = 无锚点）。 */
+    onRun: (String?, Int?) -> Unit,
     /** 无选中且光标处没有可自动执行的只读查询时的提示（toast）。 */
     onRunHint: () -> Unit = {},
     /** 结果区多语句 Tab 切换（选中第 index 条语句结果）。 */
@@ -506,17 +506,20 @@ fun WindowScope.EditorArea(
                                 val sel = state.selection
                                 val selected = selectedSqlOf(text, sel)
                                 if (selected != null) {
-                                    onRun(selected)
+                                    onRun(selected.first, selected.second)
                                 } else {
-                                    val query = when (profile?.dbType?.protocol) {
-                                        Protocol.JDBC -> statementAtCaret(text, sel.start)?.takeIf { isReadOnlySql(it) }
-                                        Protocol.REDIS -> RedisProtocol.commandAtCaret(text, sel.start)
-                                            ?.takeIf { RedisProtocol.isReadOnlyCommand(it) }
+                                    val query: Pair<String, Int>? = when (profile?.dbType?.protocol) {
+                                        Protocol.JDBC -> statementAtCaretRange(text, sel.start)
+                                            ?.takeIf { isReadOnlySql(it.first) }
+                                        Protocol.REDIS -> RedisProtocol.commandAtCaretRange(text, sel.start)
+                                            ?.takeIf { RedisProtocol.isReadOnlyCommand(it.first) }
                                         // ES 编辑器本身就是 _search DSL，整段即为只读查询
-                                        Protocol.ELASTICSEARCH -> text.trim().takeIf { it.isNotEmpty() }
+                                        Protocol.ELASTICSEARCH -> text.trim().takeIf { it.isNotEmpty() }?.let {
+                                            it to text.indexOfFirst { c -> !c.isWhitespace() }
+                                        }
                                         null -> null
                                     }
-                                    if (query != null) onRun(query) else onRunHint()
+                                    if (query != null) onRun(query.first, query.second) else onRunHint()
                                 }
                             },
                             completionIdentifiers = completionIdentifiers,
@@ -532,6 +535,17 @@ fun WindowScope.EditorArea(
                             findOpen = findReplaceOpen,
                             onCloseFind = { findReplaceOpen = false },
                             onSwitchConsole = onSwitchConsole,
+                            progress = run.progress,
+                            // 点击 gutter 行状态点 → 切到该行语句的结果（同行多语句时循环）
+                            onLineMarkerClick = { line ->
+                                val candidates = run.outcomes.withIndex()
+                                    .filter { !it.value.pinned && it.value.line == line }
+                                    .map { it.index }
+                                if (candidates.isNotEmpty()) {
+                                    val pos = candidates.indexOf(run.activeIndex)
+                                    onSelectOutcome(candidates[(pos + 1) % candidates.size])
+                                }
+                            },
                             focusRequester = editorFocus,
                             modifier = Modifier
                                 .weight(if (resultsVisible) 1f - resultFrac else 1f)
@@ -650,14 +664,18 @@ internal fun insertSnippetAtCaret(cur: String, selStart: Int, selEnd: Int, snipp
     return (cur.substring(0, from) + insert + cur.substring(to)) to (from + insert.length)
 }
 
-/** 编辑器当前选中片段（去首尾空白）；无选中或选中空白 → null。 */
-private fun selectedSqlOf(text: String, sel: TextRange): String? {
+/** 选中片段（去首尾空白）+ 其首字符在正文中的 offset；无选中或选中空白 → null。 */
+private fun selectedSqlOf(text: String, sel: TextRange): Pair<String, Int>? {
     if (sel.collapsed) return null
     // 反向选择（从下往上）时 start>end，必须取 min/max
     val from = minOf(sel.start, sel.end)
     val to = maxOf(sel.start, sel.end)
     val sub = text.substring(from, to)
-    return sub.trim().takeIf { it.isNotEmpty() }
+    val lead = sub.indexOfFirst { !it.isWhitespace() }
+    if (lead < 0) return null
+    val trimmed = sub.trim()
+    if (trimmed.isEmpty()) return null
+    return trimmed to (from + lead)
 }
 
 /**

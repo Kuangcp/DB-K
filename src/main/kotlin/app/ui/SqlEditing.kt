@@ -650,10 +650,20 @@ private val SQL_WRITE_KEYWORDS = setOf(
  * 光标所在位置的完整语句（去首尾空白、排除纯注释/空白）；无则 null。
  * 无选中按 Ctrl+Enter 时用它定位要执行的语句（跨行 / 一行多语句由 [statementRangeAt] 处理）。
  */
-fun statementAtCaret(sql: String, caret: Int): String? {
+fun statementAtCaret(sql: String, caret: Int): String? = statementAtCaretRange(sql, caret)?.first
+
+/**
+ * caret 所在语句 + 其可执行首字符在 [sql] 中的 offset（供 gutter 行锚定）。
+ * 无语句/空/仅注释返回 null；词法规则同 [statementRangeAt]。
+ */
+fun statementAtCaretRange(sql: String, caret: Int): Pair<String, Int>? {
     val range = statementRangeAt(sql, caret) ?: return null
-    val seg = sql.substring(range.first, range.last + 1).trim()
-    return seg.takeIf { it.isNotEmpty() && !it.isCommentOnlySql() }
+    val seg = sql.substring(range.first, range.last + 1)
+    val lead = seg.indexOfFirst { !it.isWhitespace() }
+    if (lead < 0) return null
+    val stmt = seg.trim()
+    if (stmt.isEmpty() || stmt.isCommentOnlySql()) return null
+    return stmt to (range.first + lead)
 }
 
 /**

@@ -124,6 +124,13 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
   新增同类弹窗照此办理，不要让用户只能用鼠标点。多字段表单（如连接编辑）不适用。
 - SQL 执行走 `app/state/ConsoleState.run` → 单线程 `LiveConnection` 执行器，
   禁止另起线程直连同一 `java.sql.Connection`（会并发冲突）。
+- **gutter 行状态标记（DataGrip 风格）**：`SqlEditorPane` 行号槽左侧画执行结果点，只反映
+  每个控制台「最后一批」执行的 SQL；一行多语句聚合为一点（最严重状态：失败红 > 执行中/待执行黄
+  > 全部跳过灰 > 成功绿），点多时右侧小数字标语句数。点击行 → 切到该行语句的结果 tab（同行多语句循环）。
+  - 状态源：`ConsoleRunUi.progress`（逐语句 `StatementProgress`，执行中**逐条写回** snapshot 实现「逐条点亮」），
+    与 `outcomes` 分开；行号由 `SessionFactory.splitStatementRanges`（带 offset 切分）+ `statementLines`（anchor 平移到正文）算出。
+  - `run(console, profile, sql, anchor)` 的 `anchor` = 执行文本起点在控制台正文中的 offset（预览命令不在正文 → null → 不画标记）；UI 从选区/光标语句起点传入。
+  - **陈旧处理**：正文增删换行（`lineCountOf` 变化）会清空 `progress`；行内编辑保留 → 见 `ConsoleState.setText`。
 - 树操作回调由 `Main` 层 `rememberCoroutineScope` 调度，`app/state` 的 suspend 动作内部
   已切 `Dispatchers.IO`。
 

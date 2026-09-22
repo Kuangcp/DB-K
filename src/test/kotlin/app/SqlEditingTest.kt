@@ -395,6 +395,15 @@ class SqlEditingTest {
     }
 
     @Test
+    fun `statementAtCaretRange returns trimmed statement with source offset`() {
+        val sql = "SELECT 1;\n  SELECT 2; SELECT 3"
+        val (stmt, at) = statementAtCaretRange(sql, sql.indexOf("SELECT 2") + 2)!!
+        assertEquals("SELECT 2", stmt)
+        assertEquals(sql.indexOf("SELECT 2"), at)
+        assertNull(statementAtCaretRange("-- only", 3))
+    }
+
+    @Test
     fun `isReadOnlySql allows queries and rejects writes`() {
         assertTrue(isReadOnlySql("SELECT * FROM t"))
         assertTrue(isReadOnlySql("-- c\nSELECT 1"))

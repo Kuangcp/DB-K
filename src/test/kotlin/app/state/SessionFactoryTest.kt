@@ -48,4 +48,29 @@ class SessionFactoryTest {
             SessionFactory.splitStatements(profile(DbType.ELASTICSEARCH), "{ \"index\": \"i\" }"),
         )
     }
+
+    @Test
+    fun `splits statement ranges per protocol`() {
+        val sqlite = "SELECT 1; SELECT 2"
+        assertEquals(
+            listOf(0..7, 10..17),
+            SessionFactory.splitStatementRanges(profile(DbType.SQLITE), sqlite),
+        )
+        // Redis：每行一条命令；空行/注释行不产出
+        val redisText = "GET a\n\n# c\nSET b 1"
+        val rr = SessionFactory.splitStatementRanges(profile(DbType.REDIS), redisText)
+        assertEquals(listOf("GET a", "SET b 1"), rr.map { redisText.substring(it.first, it.last + 1) })
+        // ES：整段一个报体
+        val esText = "{ \"index\": \"i\" }"
+        assertEquals(
+            listOf(0..esText.lastIndex),
+            SessionFactory.splitStatementRanges(profile(DbType.ELASTICSEARCH), esText),
+        )
+        assertEquals(emptyList(), SessionFactory.splitStatementRanges(profile(DbType.ELASTICSEARCH), "  \n"))
+        // ranges 与 splitStatements 产物逐条一致
+        assertEquals(
+            SessionFactory.splitStatements(profile(DbType.REDIS), redisText),
+            rr.map { redisText.substring(it.first, it.last + 1) },
+        )
+    }
 }

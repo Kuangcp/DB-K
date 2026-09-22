@@ -568,11 +568,10 @@ private fun WindowScope.AppBody(
             .sorted()
     }.orEmpty()
 
-    fun runActiveConsole(sql: String?) {
+    fun runActiveConsole(sql: String?, anchor: Int?) {
         val c = consoleState.activeConsole() ?: return
         val p = profiles.firstOrNull { it.id == c.connectionId } ?: return
-        val target = sql?.trim().orEmpty()
-        if (target.isEmpty()) {
+        if (sql.isNullOrBlank()) {
             toastState.show(I18n.t(Str.MainSelectSql))
             return
         }
@@ -583,11 +582,11 @@ private fun WindowScope.AppBody(
         val pending = consoleState.editCount(c.id)
         if (pending > 0) {
             dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionRerun) {
-                scope.launch { consoleState.run(c, p, target); NativeMemory.trim("after query") }
+                scope.launch { consoleState.run(c, p, sql, anchor); NativeMemory.trim("after query") }
             }
             return
         }
-        scope.launch { consoleState.run(c, p, target); NativeMemory.trim("after query") }
+        scope.launch { consoleState.run(c, p, sql, anchor); NativeMemory.trim("after query") }
     }
 
     fun suggestConsoleName(profile: ConnectionProfile): String {

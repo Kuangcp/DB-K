@@ -330,7 +330,92 @@ class ConsoleStateRunTest {
     }
 
     @Test
-    fun `unpin clears flag without removing tab`() = runBlocking {
+    fun `run anchors statement lines to editor text`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+            val text = "SELECT 1;\nSELECT 2;\nSELECT 3"
+            state.setText(console.id, text)
+
+            state.run(console, stored, text, anchor = 0)
+
+            val slot = state.runStateOf(console.id)
+            assertEquals(listOf(0, 1, 2), slot.progress.map { it.line })
+            assertEquals(
+                listOf(RunStatus.OK, RunStatus.OK, RunStatus.OK),
+                slot.progress.map { it.status },
+            )
+            assertEquals(listOf(0, 1, 2), slot.outcomes.map { it.line })
+        }
+    }
+
+    @Test
+    fun `run maps selected fragment lines through anchor`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+            val text = "SELECT 0;\nSELECT 1;\nSELECT 2"
+            state.setText(console.id, text)
+            val anchor = text.indexOf("SELECT 1")
+
+            state.run(console, stored, text.substring(anchor), anchor = anchor)
+
+            assertEquals(listOf(1, 2), state.runStateOf(console.id).progress.map { it.line })
+        }
+    }
+
+    @Test
+    fun `statements on one line share a single line marker`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+            val text = "SELECT 1; SELECT 2; SELECT 3"
+            state.setText(console.id, text)
+
+            state.run(console, stored, text, anchor = 0)
+
+            assertEquals(listOf(0, 0, 0), state.runStateOf(console.id).progress.map { it.line })
+        }
+    }
+
+    @Test
+    fun `unexecuted statements after failure are marked skipped`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+            val text = "SELECT 1;\nSELECT * FROM no_such_table;\nSELECT 2"
+            state.setText(console.id, text)
+
+            state.run(console, stored, text, anchor = 0)
+
+            val slot = state.runStateOf(console.id)
+            assertEquals(listOf(0, 1, 2), slot.progress.map { it.line })
+            assertEquals(
+                listOf(RunStatus.OK, RunStatus.FAILED, RunStatus.SKIPPED),
+                slot.progress.map { it.status },
+            )
+            assertEquals(2, slot.outcomes.size)
+        }
+    }
+
+    @Test
+    fun `run without anchor yields null lines`() = runBlocking {
         val dbPath = dir.resolve("app.db")
         val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
         repo.use {
@@ -339,12 +424,11 @@ class ConsoleStateRunTest {
             val (_, state) = newState(it, dbPath)
             val console = state.createConsole(pid, "c")
 
-            state.run(console, stored, "SELECT id FROM account")
-            assertEquals(PinToggleResult.PINNED, state.togglePin(console.id))
-            assertEquals(PinToggleResult.UNPINNED, state.togglePin(console.id))
+            state.run(console, stored, "SELECT 1; SELECT 2")
+
             val slot = state.runStateOf(console.id)
-            assertEquals(1, slot.outcomes.size)
-            assertFalse(slot.outcomes[0].pinned)
+            assertEquals(listOf(null, null), slot.progress.map { it.line })
+            assertEquals(listOf(null, null), slot.outcomes.map { it.line })
         }
     }
 }

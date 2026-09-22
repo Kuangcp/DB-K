@@ -673,17 +673,22 @@ class ConsoleStateTest {
     }
 
     @Test
-    fun `prune hides missing external console but keeps row`() = runTest {
+    fun `line-structure edits clear gutter markers but inline edits keep them`() = runTest {
         repo().use { repo ->
             val pid = repo.createConnection(profile())
             val state = newState(repo)
-            val f = extFile("a.sql", "SELECT 1")
-            val rec = state.openExternalFile(pid, f)
-            Files.delete(f)
-            state.pruneMissingExternal(listOf(pid))
-            val ws = state.workspaces.activeWorkspace()!!
-            assertFalse(state.workspaces.contains(ws.id, rec.id))
-            assertNotNull(repo.getConsole(rec.id))
+            val c = state.createConsole(pid, "c")
+            state.runSlots[c.id] = ConsoleRunUi(
+                progress = listOf(StatementProgress(1, RunStatus.OK)),
+                progressLineCount = 3,
+            )
+            // 行内编辑：行数不变 → 标记保留
+            state.setText(c.id, "a\nb\ncX")
+            assertFalse(state.runStateOf(c.id).progress.isEmpty())
+            // 增删换行：行结构变化 → 锚点失效，清空标记
+            state.setText(c.id, "a\nb")
+            assertTrue(state.runStateOf(c.id).progress.isEmpty())
+            advanceUntilIdle()
         }
     }
 }

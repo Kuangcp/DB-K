@@ -50,6 +50,12 @@ enum class ExternalFileIssue { CONFLICT, MISSING }
  *   切控制台/退出强制落盘；重启后回到上次焦点所在行。
  * - 执行目标 = 控制台绑定的数据源（与左侧树选中解耦，树选中只做导航/切换激活）。
  */
+/** 一条语句在本批执行中的进度（gutter 行状态用）。 */
+enum class RunStatus { PENDING, RUNNING, OK, FAILED, SKIPPED }
+
+/** 一条语句的进度：锚定行（0-based；null = 不在编辑器正文里，不画标记）+ 状态。 */
+data class StatementProgress(val line: Int?, val status: RunStatus)
+
 /** 一次多语句执行中单个 SQL 语句的结果。 */
 data class StatementOutcome(
     val sql: String,
@@ -61,6 +67,8 @@ data class StatementOutcome(
     val pinned: Boolean = false,
     /** 结果编号（结果 N）：执行产生时分配，pin/取消/重排/刷新都不变。 */
     val tabNo: Int = 0,
+    /** 锚定行（0-based；null = 不画 gutter 标记，如预览命令不在正文里）。 */
+    val line: Int? = null,
 ) {
     val ok: Boolean get() = error == null
     val isQuery: Boolean get() = result?.isQuery == true
@@ -82,6 +90,10 @@ data class ConsoleRunUi(
     val outcomes: List<StatementOutcome> = emptyList(),
     val activeIndex: Int = 0,
     val ranMs: Long = 0L,
+    /** 本批全部语句的进度（gutter 行状态）；与 [outcomes] 分开，含未执行/执行中的占位。 */
+    val progress: List<StatementProgress> = emptyList(),
+    /** 执行当时编辑器的物理行数；正文增删换行后行号漂移 → 标记失效。 */
+    val progressLineCount: Int = 0,
 ) {
     /** 当前激活语句的结果（UI 便捷访问）。 */
     val active: StatementOutcome? get() = outcomes.getOrNull(activeIndex)
@@ -986,6 +998,12 @@ class ConsoleState(
         // 此处再兜底：内容没变不置脏、不起防抖任务（否则点一下编辑器就变“未保存”）。
         if (buffers[consoleId] == text) return
         buffers[consoleId] = text
+        // 行结构变化（增删换行）→ 执行状态的 gutter 行锚点漂移，清空标记；行内编辑保留。
+        runSlots[consoleId]?.let { ui ->
+            if (ui.progress.isNotEmpty() && lineCountOf(text) != ui.progressLineCount) {
+                runSlots[consoleId] = ui.copy(progress = emptyList())
+            }
+        }
         dirtyConsoleIds = dirtyConsoleIds + consoleId
         saveJobs.remove(consoleId)?.cancel()
         saveJobs[consoleId] = scope.launch {
@@ -1090,14 +1108,21 @@ class ConsoleState(
      * 执行控制台 SQL（目标 = 控制台绑定的 profile；profile 由调用方从档案列表解析）。
      * @param sql 待执行语句；null 时取控制台缓冲全文（预览/程序化执行用）。
      *   交互层规则：编辑器无选中文本时禁止全量执行，因此 UI 一律传选中片段。
-     * 选中片段按 `;` 拆成多条语句依次执行（忽略字符串/注释内的分号与仅含注释的片段），
-     * 每条语句一个结果，多语句时结果区多 Tab 展示；某条出错即停（后续不执行）。
+     * @param anchor [sql] 起点在控制台正文中的 offset（null = 不在正文里，如预览命令 → 不锚定 gutter 行）。
+     * 选中片段按协议拆成多条语句依次执行（忽略字符串/注释内的分号与仅含注释的片段），
+     * 每条语句一个结果，多语句时结果区多 Tab 展示；某条出错即停（后续不执行、标 SKIPPED）。
      * 连接未就绪先补连/重连；同源所有 JDBC 都经 LiveConnection 单线程执行器串行。
      *
      * 执行期登记当前 Statement 供取消；每条语句成功/失败都会写 sql_history。
+     * 逐条把 [ConsoleRunUi.progress] 写回 snapshot（gutter 行状态逐条点亮）。
      * 代次守卫：取消或新执行会 bump runGens，使本 run 的迟到结果被丢弃（不覆盖新状态）。
      */
-    suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile, sql: String? = null) {
+    suspend fun run(
+        console: ConsoleRecord,
+        profile: db.ConnectionProfile,
+        sql: String? = null,
+        anchor: Int? = null,
+    ) {
         // 同控制台不允许叠加执行（执行中兜底）
         if (runSlots[console.id]?.executing == true) return
         // 已 pin 的查询结果在新执行时保留（仅内存；最多 PIN_MAX）。
@@ -1110,7 +1135,11 @@ class ConsoleState(
         // 任何新执行都使上次「双击预览」的 Redis 键元数据失效（预览路径会在执行后重新写入）
         redisKeyMetas.remove(console.id)
         withContext(ioDispatcher) { flushNow(console.id) }
-        val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
+        // 锚点补偿 sql 的前导空白（target 会被 trim，而 anchor 指向未 trim 的起点）
+        val rawSql = sql.orEmpty()
+        val leading = rawSql.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) 0 else it }
+        val target = rawSql.trim().ifEmpty { textOf(console.id).trim() }
+        val effectiveAnchor = if (sql.isNullOrBlank()) anchor else anchor?.plus(leading)
         if (target.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
                 outcomes = pinned + StatementOutcome(sql = "", error = I18n.t(Str.RunEnterSql), tabNo = tabBase + 1),
@@ -1118,14 +1147,16 @@ class ConsoleState(
             )
             return
         }
-        val statements = SessionFactory.splitStatements(profile, target)
-        if (statements.isEmpty()) {
+        val ranges = SessionFactory.splitStatementRanges(profile, target)
+        if (ranges.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
                 outcomes = pinned + StatementOutcome(sql = target, error = I18n.t(Str.RunOnlyComments), tabNo = tabBase + 1),
                 activeIndex = pinned.size,
             )
             return
         }
+        val statements = ranges.map { target.substring(it.first, it.last + 1) }
+        val lines = statementLines(textOf(console.id), ranges, effectiveAnchor)
         val status = connectionsState.statusOf(profile.id)
         if (status != ConnUiStatus.CONNECTED) {
             connectionsState.ensureConnectionReady(profile)
@@ -1156,25 +1187,42 @@ class ConsoleState(
         lastStableSlots[console.id] = runSlots[console.id] ?: ConsoleRunUi()
         runStartedAt[console.id] = System.currentTimeMillis()
         runTarget[console.id] = target
-        // 执行中也保留 pinned tab（否则执行时对照结果会消失）
-        runSlots[console.id] = ConsoleRunUi(executing = true, outcomes = pinned)
+        // 本批全部语句进度（初始 PENDING）；逐条执行时更新并写回（gutter 逐条点亮）。
+        val lineCountAtRun = lineCountOf(textOf(console.id))
+        var progress = lines.map { StatementProgress(it, RunStatus.PENDING) }
+        fun publish(soFar: List<StatementOutcome>) {
+            runSlots[console.id] = ConsoleRunUi(
+                executing = true,
+                outcomes = pinned + soFar,
+                activeIndex = if (soFar.isEmpty()) 0 else pinned.size + soFar.size - 1,
+                progress = progress,
+                progressLineCount = lineCountAtRun,
+            )
+        }
+        publish(emptyList())
 
         // 逐条执行；出错即停（后续语句不执行），每条独立写历史
         val outcomes = mutableListOf<StatementOutcome>()
-        for (stmt in statements) {
+        for ((i, stmt) in statements.withIndex()) {
             // Redis 危险命令：执行前二次确认（由 UI 注入钩子）。
             val danger = if (session.protocol == Protocol.REDIS) RedisProtocol.dangerousCommand(stmt) else null
             if (danger != null && confirmDangerous?.invoke(danger) == false) {
-                outcomes += StatementOutcome(stmt, error = I18n.t(Str.RunDangerCancelled, danger))
+                progress = progress.mapIndexed { j, p -> if (j == i) p.copy(status = RunStatus.FAILED) else p }
+                outcomes += StatementOutcome(stmt, error = I18n.t(Str.RunDangerCancelled, danger), line = lines.getOrNull(i))
+                progress = progress.mapIndexed { j, p -> if (j > i) p.copy(status = RunStatus.SKIPPED) else p }
+                publish(outcomes)
                 break
             }
+            progress = progress.mapIndexed { j, p -> if (j == i) p.copy(status = RunStatus.RUNNING) else p }
+            publish(outcomes)
             val stmtStarted = System.currentTimeMillis()
             val result = withContext(ioDispatcher) {
                 runCatching { session.runStatement(stmt, contextSql) }
             }
             if (runGens[console.id] != gen) return // 已被取消/新执行覆盖：丢弃迟到结果
             result.onSuccess { r ->
-                outcomes += StatementOutcome(stmt, result = r)
+                outcomes += StatementOutcome(stmt, result = r, line = lines.getOrNull(i))
+                progress = progress.mapIndexed { j, p -> if (j == i) p.copy(status = RunStatus.OK) else p }
                 recordHistory(
                     profileId = profile.id, sql = stmt, ok = true,
                     durationMs = r.durationMs, rowCount = r.affectedRows ?: r.rowCount,
@@ -1182,13 +1230,17 @@ class ConsoleState(
             }.onFailure { t ->
                 Logger.error(t, "query failed on {}", profile.name)
                 val msg = friendlySqlError(t)
-                outcomes += StatementOutcome(stmt, error = msg)
+                outcomes += StatementOutcome(stmt, error = msg, line = lines.getOrNull(i))
+                progress = progress.mapIndexed { j, p -> if (j == i) p.copy(status = RunStatus.FAILED) else p }
                 recordHistory(
                     profileId = profile.id, sql = stmt, ok = false,
                     durationMs = System.currentTimeMillis() - stmtStarted, rowCount = 0, error = msg,
                 )
+                progress = progress.mapIndexed { j, p -> if (j > i) p.copy(status = RunStatus.SKIPPED) else p }
+                publish(outcomes)
                 break
             }
+            publish(outcomes)
         }
 
         if (runGens[console.id] != gen) return
@@ -1202,6 +1254,8 @@ class ConsoleState(
             outcomes = pinned + numbered,
             activeIndex = if (errIdx >= 0) pinned.size + errIdx else pinned.size,
             ranMs = durationMs,
+            progress = progress,
+            progressLineCount = lineCountAtRun,
         )
         // 结果落地后计算可编辑计划（无基表/无主键/视图 → 保持 null）
         ensureEditPlan(console, profile)
