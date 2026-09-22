@@ -30,6 +30,7 @@ import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -44,6 +45,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -51,6 +53,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -74,6 +79,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.awt.event.KeyEvent as AwtKeyEvent
 import app.state.ColumnCatalog
 import app.settings.EditorSettings
 import app.settings.ShortcutCommand
@@ -139,6 +145,10 @@ internal fun EditorPane(
     var editing by remember { mutableStateOf(false) }
     var forceComplete by remember { mutableStateOf(false) }
     var suppressTextActivation by remember { mutableStateOf(false) }
+    // 多光标列编辑：空 = 单光标（BasicTextField 自身选区为权威）。expectedMultiText 用于区分
+    // “多光标批量编辑造成的文本变化”（保留多光标）与其它来源（格式化/预览插入等）→ 自动退出。
+    var multiCursors by remember { mutableStateOf<List<CursorSel>>(emptyList()) }
+    var expectedMultiText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(state) {
         var lastText = state.text.toString()
         snapshotFlow { state.text.toString() to state.selection }
@@ -151,6 +161,10 @@ internal fun EditorPane(
                     else { editing = true; forceComplete = false }
                 } else {
                     editing = false
+                }
+                if (multiCursors.isNotEmpty() && text != expectedMultiText) {
+                    multiCursors = emptyList()
+                    expectedMultiText = null
                 }
             }
     }
@@ -261,6 +275,138 @@ internal fun EditorPane(
             selection = TextRange(caret)
         }
     }
+
+    fun exitMultiCursor() {
+        multiCursors = emptyList()
+        expectedMultiText = null
+        editing = false
+    }
+
+    fun addMultiCursor(delta: Int) {
+        val text = state.text.toString()
+        val baseHead = if (multiCursors.isEmpty()) state.selection.end else multiCursors.last().head
+        val newOffset = addCursorUpDown(text, baseHead, delta) ?: return
+        if (multiCursors.isEmpty()) {
+            val s = state.selection
+            multiCursors = listOf(CursorSel(s.start, s.end))
+            expectedMultiText = text
+        }
+        if (multiCursors.any { it.head == newOffset }) return
+        multiCursors = multiCursors + CursorSel(newOffset, newOffset)
+        state.edit { selection = TextRange(newOffset, newOffset) }
+    }
+
+    fun shiftMultiCursors(delta: Int) {
+        if (multiCursors.isEmpty()) return
+        val newCursors = shiftCursors(multiCursors, delta, state.text.toString().length)
+        multiCursors = newCursors
+        val active = newCursors.last()
+        state.edit { selection = TextRange(active.start, active.end) }
+    }
+
+    fun applyMultiEdit(op: MultiEditOp) {
+        if (multiCursors.isEmpty()) return
+        val res = applyMultiCursorEdit(state.text.toString(), multiCursors, op)
+        suppressTextActivation = true
+        editing = false
+        expectedMultiText = res.text
+        multiCursors = res.cursors
+        state.edit {
+            replace(0, length, res.text)
+            val active = res.cursors.lastOrNull()
+            selection = if (active != null) TextRange(active.start, active.end) else selection
+        }
+    }
+
+    /**
+     * 多光标下的编辑键：可打印字符 / Backspace / Delete / Enter 一次性批量应用到所有光标。
+     * 返回是否消费该事件。
+     *
+     * **必须在 AWT 层拦截**：Compose 的 KeyDown 事件 `utf16CodePoint` 来自 AWT `getKeyChar()`，
+     * 对 KEY_PRESSED 是 CHAR_UNDEFINED；真正字符只在 AWT `KEY_TYPED` 上（Compose 视为 Unknown
+     * 类型被我们的 KeyDown 分支忽略）。所以字符/Enter 在 KEY_TYPED 处理，Backspace/Delete 在 KEY_PRESSED。
+     */
+    fun editableTypedChar(c: Char): Boolean =
+        c != AwtKeyEvent.CHAR_UNDEFINED && c != '\b' && c != '\t' && c != '\n' && c >= ' ' && c != '\u007f'
+
+    fun handleAwtEdit(e: AwtKeyEvent): Boolean {
+        if (multiCursors.isEmpty()) return false
+        return when (e.id) {
+            AwtKeyEvent.KEY_TYPED -> {
+                val ch = e.keyChar
+                when {
+                    ch == '\n' && !e.isControlDown && !e.isAltDown && !e.isShiftDown -> {
+                        applyMultiEdit(MultiEditOp.Insert('\n'))
+                        true
+                    }
+                    editableTypedChar(ch) && !e.isControlDown && !e.isAltDown -> {
+                        applyMultiEdit(MultiEditOp.Insert(ch))
+                        true
+                    }
+                    // Backspace / Delete 的删除已在 KEY_PRESSED 做；若平台还额外派发字符，一并吞掉。
+                    ch == '\b' || ch.code == 0x7F -> true
+                    else -> false
+                }
+            }
+            AwtKeyEvent.KEY_PRESSED -> when (e.keyCode) {
+                // Enter 的编辑在随后的 KEY_TYPED('\n') 做，这里只消费，避免穿透到文本域
+                AwtKeyEvent.VK_ENTER -> !e.isControlDown && !e.isAltDown && !e.isShiftDown
+                AwtKeyEvent.VK_BACK_SPACE -> when {
+                    e.isControlDown && !e.isAltDown -> {
+                        applyMultiEdit(MultiEditOp.BackspaceWord)
+                        true
+                    }
+                    !e.isControlDown && !e.isAltDown -> {
+                        applyMultiEdit(MultiEditOp.Backspace)
+                        true
+                    }
+                    else -> false
+                }
+                AwtKeyEvent.VK_DELETE -> when {
+                    e.isControlDown && !e.isAltDown -> {
+                        applyMultiEdit(MultiEditOp.DeleteWord)
+                        true
+                    }
+                    !e.isControlDown && !e.isAltDown -> {
+                        applyMultiEdit(MultiEditOp.Delete)
+                        true
+                    }
+                    else -> false
+                }
+                else -> false
+            }
+            else -> false
+        }
+    }
+
+    // 窗口级 AWT 派发器（与 Main 同款：DisposableEffect(Unit) 常驻，用 rememberUpdatedState
+    // 读最新状态）。多光标未激活时 handleAwtEdit 直接放行，不干扰普通输入。
+    val onAwtEditEvent = rememberUpdatedState<(AwtKeyEvent) -> Boolean> { e -> handleAwtEdit(e) }
+    DisposableEffect(Unit) {
+        val dispatcher = java.awt.KeyEventDispatcher { e -> onAwtEditEvent.value(e) }
+        val kfm = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        kfm.addKeyEventDispatcher(dispatcher)
+        onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
+    }
+
+    fun duplicateLine() {
+        if (multiCursors.isNotEmpty()) exitMultiCursor()
+        val res = duplicateLineText(state.text.toString(), state.selection.start, state.selection.end) ?: return
+        suppressTextActivation = true
+        editing = false
+        state.edit {
+            replace(0, length, res.first)
+            selection = TextRange(res.second)
+        }
+    }
+    // 打开查找替换栏（焦点会移出编辑器）时退出多光标，避免 AWT 拦截到查找框的输入。
+    LaunchedEffect(findOpen) {
+        if (findOpen) {
+            multiCursors = emptyList()
+            expectedMultiText = null
+            editing = false
+        }
+    }
     // 拖拽选区自动滚动：指针停在上/下边缘时持续滚动并同步延伸选区（多行大块选择必需）。
     // 编辑器是「BasicTextField + 外层 verticalScroll」结构，BasicTextField 不知道外层滚动，
     // 不会自己滚；所以在父 Box 上旁路观察指针（Final pass，不干涉文本域自身选区逻辑）。
@@ -283,7 +429,7 @@ internal fun EditorPane(
     val textMeasurer = rememberTextMeasurer()
 
     // ---- 补全派生状态：caret 词/限定符/星号 → 语句上下文（含 CTE/子查询）→ 候选 → 弹层 ----
-    val caretActive = editing
+    val caretActive = editing && multiCursors.isEmpty()
     val canComplete = caretActive && sel.collapsed
     // JSON 模式（Elasticsearch DSL）：走 [esDslSuggestions]，不走 SQL 词法/补全
     val jsonMode = editorLanguage == EditorLanguage.JSON
@@ -488,6 +634,17 @@ internal fun EditorPane(
         scroll.scrollTo(target.toInt())
     }
 
+    // 多光标新增时把活动光标行滚到可视区（Alt+Shift+↑/↓ 加完光标立刻可见）。
+    LaunchedEffect(multiCursors.size) {
+        if (multiCursors.isEmpty() || boxH <= 0) return@LaunchedEffect
+        val lay = textLayout ?: return@LaunchedEffect
+        val off = multiCursors.last().head.coerceIn(0, content.length)
+        val top = textTopPx + lay.getLineTop(lay.getLineForOffset(off))
+        val viewport = (boxH - 2f * textTopPx).coerceAtLeast(lineHpx)
+        val target = (top + lineHpx / 2f - viewport / 2f).coerceAtLeast(0f)
+        scroll.scrollTo(target.toInt())
+    }
+
     // 拖拽选区自动滚动循环：指针在边缘区时持续滚动，并把选区焦点移到边缘所在文本位置
     // （固定端 = 开始拖拽时远离指针的那一端，锁在 scrollAnchor 里）。
     // 指针坐标 → 文本 offset（含滚动偏移；夹在排版范围内，避免指针拖到窗口外时坐标失控）。
@@ -558,6 +715,7 @@ internal fun EditorPane(
                             val e = awaitPointerEvent(PointerEventPass.Final)
                             when (e.type) {
                                 PointerEventType.Press -> if (e.buttons.isPrimaryPressed) {
+                                    exitMultiCursor()
                                     dragActive = true
                                     scrollAnchor = null
                                     dragPointer = e.changes.firstOrNull()?.position
@@ -647,20 +805,28 @@ internal fun EditorPane(
                         .fillMaxHeight()
                         .padding(start = 2.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
                         .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                        .onFocusChanged { if (!it.isFocused) exitMultiCursor() }
                         .verticalScroll(scroll)
                         .onPreviewKeyEvent { e ->
                             if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                             if (keymap.matches(ShortcutCommand.EXECUTE, e)) {
                                 // 选中 SQL 才执行；无选中什么都不做（禁止整段执行）
+                                if (multiCursors.isNotEmpty()) exitMultiCursor()
                                 onCtrlEnter()
                                 return@onPreviewKeyEvent true
                             }
                             // 基础编辑键（固定）：Ctrl+Space 显式唤起补全（Esc 关闭后可重新呼出；空前缀也列出上下文列/表）
                             if (keymap.matches(ShortcutCommand.COMPLETE, e)) {
                                 // 显式唤起：允许空前缀（列/表）；未敲字也行
+                                if (multiCursors.isNotEmpty()) exitMultiCursor()
                                 editing = true
                                 forceComplete = true
                                 dismissed = false
+                                return@onPreviewKeyEvent true
+                            }
+                            // 业务功能：复制当前行 / 选区覆盖的整块行（可配置，默认 Ctrl+Y）
+                            if (keymap.matches(ShortcutCommand.DUPLICATE_LINE, e)) {
+                                duplicateLine()
                                 return@onPreviewKeyEvent true
                             }
                             // Ctrl+Tab / Ctrl+Shift+Tab：按最近使用切控制台（消费，避免 Tab 走焦点遍历）
@@ -673,6 +839,36 @@ internal fun EditorPane(
                                 editing = false
                                 onSwitchConsole(-1)
                                 return@onPreviewKeyEvent true
+                            }
+                            // 多光标列编辑：Alt+Shift+↑/↓ 加光标；Shift+←/→ 横向扩展；Esc / 普通方向键退出
+                            if (e.isAltPressed && e.isShiftPressed && !e.isCtrlPressed) {
+                                when (e.key) {
+                                    Key.DirectionUp -> { addMultiCursor(-1); return@onPreviewKeyEvent true }
+                                    Key.DirectionDown -> { addMultiCursor(1); return@onPreviewKeyEvent true }
+                                    else -> {}
+                                }
+                            }
+                            if (multiCursors.isNotEmpty()) {
+                                // Shift+←/→ 与 Ctrl+Shift+←/→ 都按「所有光标同步扩展」处理。
+                                // （很多用户习惯用 Ctrl+Shift 选词；若放给原生，只会移动活动光标，
+                                // 导致看起来只有最后一行被选中、且替换编辑不生效。）
+                                if (e.isShiftPressed && !e.isAltPressed) {
+                                    when (e.key) {
+                                        Key.DirectionLeft -> { shiftMultiCursors(-1); return@onPreviewKeyEvent true }
+                                        Key.DirectionRight -> { shiftMultiCursors(1); return@onPreviewKeyEvent true }
+                                        else -> {}
+                                    }
+                                }
+                                if (!e.isCtrlPressed && !e.isAltPressed && !e.isShiftPressed) {
+                                    when (e.key) {
+                                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> {
+                                            exitMultiCursor()
+                                            return@onPreviewKeyEvent false
+                                        }
+                                        Key.Escape -> { exitMultiCursor(); return@onPreviewKeyEvent true }
+                                        else -> {}
+                                    }
+                                }
                             }
                             if (popupOpen) {
                                 when (e.key) {
@@ -715,6 +911,61 @@ internal fun EditorPane(
                             }
                         }
                     },
+                )
+            }
+            // 多光标 overlay：自绘额外光标线与矩形选区（不拦截指针）；主光标仍由 BasicTextField 原生绘制。
+            if (multiCursors.isNotEmpty()) {
+                val lay = textLayout
+                val cursorColor = themeColors.editorForeground
+                val selColor = themeColors.primary.copy(alpha = 0.22f)
+                val baseX = gutterWpx + textPadLPx
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawBehind {
+                            val layout = lay ?: return@drawBehind
+                            val scrolled = scroll.value
+                            multiCursors.forEach { cursor ->
+                                val head = cursor.head.coerceIn(0, content.length)
+                                val lineIdx = layout.getLineForOffset(head)
+                                val lineTop = layout.getLineTop(lineIdx) + textTopPx - scrolled
+                                val lineBottom = layout.getLineBottom(lineIdx) + textTopPx - scrolled
+                                val x = baseX + layout.getCursorRect(head).left
+                                if (cursor.collapsed) {
+                                    drawLine(
+                                        color = cursorColor,
+                                        start = Offset(x, lineTop),
+                                        end = Offset(x, lineBottom),
+                                        strokeWidth = 2f,
+                                    )
+                                } else {
+                                    val start = cursor.start.coerceIn(0, content.length)
+                                    val end = cursor.end.coerceIn(0, content.length)
+                                    if (layout.getLineForOffset(start) == layout.getLineForOffset(end)) {
+                                        val left = baseX + layout.getCursorRect(start).left
+                                        val right = baseX + layout.getCursorRect(end).left
+                                        drawRect(
+                                            color = selColor,
+                                            topLeft = Offset(left, lineTop),
+                                            size = Size((right - left).coerceAtLeast(0f), lineBottom - lineTop),
+                                        )
+                                        drawLine(
+                                            color = cursorColor,
+                                            start = Offset(x, lineTop),
+                                            end = Offset(x, lineBottom),
+                                            strokeWidth = 2f,
+                                        )
+                                    } else {
+                                        drawLine(
+                                            color = cursorColor,
+                                            start = Offset(x, lineTop),
+                                            end = Offset(x, lineBottom),
+                                            strokeWidth = 2f,
+                                        )
+                                    }
+                                }
+                            }
+                        },
                 )
             }
             // 右侧纵向滚动条（文本区 end padding 已留 6dp，不会遮字）

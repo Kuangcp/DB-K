@@ -495,6 +495,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.CmdRefreshResult -> "刷新结果"
     Str.CmdSwitchConsoleNext -> "下一个控制台（最近使用）"
     Str.CmdSwitchConsolePrev -> "上一个控制台（最近使用）"
+    Str.CmdDuplicateLine -> "复制当前行"
     Str.CmdSaveConsole -> "保存控制台"
     Str.CmdFindReplace -> "查找替换"
     Str.CmdComplete -> "召唤补全"

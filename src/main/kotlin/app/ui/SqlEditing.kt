@@ -590,6 +590,35 @@ fun extractTableName(sql: String): String? {
 }
 
 /**
+ * 复制当前行（选区折叠时）或选区覆盖的整块行（有选区时）。
+ * 返回 (新文本, 新光标偏移)；文本为空返回 null。
+ *
+ * 折叠选区：把光标所在行（含行尾换行边界）复制到下一行，光标落到副本行同一列；
+ * 非折叠选区：把选区覆盖到的整行一起复制到其后，光标停在副本块首。
+ */
+fun duplicateLineText(text: String, selStart: Int, selEnd: Int): Pair<String, Int>? {
+    if (text.isEmpty()) return null
+    val from = minOf(selStart, selEnd).coerceIn(0, text.length)
+    val to = maxOf(selStart, selEnd).coerceIn(0, text.length)
+    val lineStart = text.lastIndexOf('\n', from - 1) + 1
+    val lineEnd = when {
+        from == to -> text.indexOf('\n', from).let { if (it < 0) text.length else it }
+        // 选区终点正好停在下一行行首（前一字符是换行）→ 只复制到上一行结尾，不误带下一行
+        to > 0 && text[to - 1] == '\n' -> to - 1
+        else -> text.indexOf('\n', to).let { if (it < 0) text.length else it }
+    }
+    val lineText = text.substring(lineStart, lineEnd)
+    val insertAt = lineEnd
+    val newText = text.substring(0, insertAt) + "\n" + lineText + text.substring(insertAt)
+    val caret = if (from == to) {
+        insertAt + 1 + (from - lineStart).coerceIn(0, lineText.length)
+    } else {
+        insertAt + 1
+    }
+    return newText to caret
+}
+
+/**
  * 把一行结果组成 INSERT 语句（值一律加引号、单引号翻倍；NULL → NULL）。
  * 返回 null 表示无法确定源表（复杂查询），调用方应隐藏对应菜单项。
  */

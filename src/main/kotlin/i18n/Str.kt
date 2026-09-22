@@ -502,6 +502,7 @@ enum class Str {
     CmdRefreshResult,
     CmdSwitchConsoleNext,
     CmdSwitchConsolePrev,
+    CmdDuplicateLine,
     CmdSaveConsole,
     CmdFindReplace,
     CmdComplete,

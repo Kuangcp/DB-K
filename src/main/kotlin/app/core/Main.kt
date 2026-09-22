@@ -898,9 +898,10 @@ private fun WindowScope.AppBody(
                     val matched = keymapState.value.matchAnyAwt(e)
                     when (matched) {
                         ShortcutCommand.SWITCH_CONSOLE_NEXT,
-                        ShortcutCommand.SWITCH_CONSOLE_PREV -> {
-                            // 切换本身由编辑器 Compose preview 处理（那里天然只在编辑器聚焦时触发）；
-                            // 这里只吞掉 X11 额外派发的 KEY_TYPED（'\t'），避免漏进编辑器。
+                        ShortcutCommand.SWITCH_CONSOLE_PREV,
+                        ShortcutCommand.DUPLICATE_LINE -> {
+                            // 切换/复制当前行本身由编辑器 Compose preview 处理（那里天然只在编辑器聚焦时触发）；
+                            // 这里只吞掉 X11 额外派发的 KEY_TYPED（'\t' / Ctrl+Y 控制字符），避免漏进编辑器。
                             e.id == java.awt.event.KeyEvent.KEY_TYPED
                         }
                         ShortcutCommand.TOGGLE_RESULTS -> {

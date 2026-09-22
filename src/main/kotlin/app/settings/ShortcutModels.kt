@@ -197,6 +197,7 @@ enum class ShortcutCommand(
     REFRESH_RESULT("refreshResult", Str.CmdRefreshResult, true, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.F5))),
     SWITCH_CONSOLE_NEXT("switchConsoleNext", Str.CmdSwitchConsoleNext, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.TAB))),
     SWITCH_CONSOLE_PREV("switchConsolePrev", Str.CmdSwitchConsolePrev, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, shift = true, key = ShortcutKey.TAB))),
+    DUPLICATE_LINE("duplicateLine", Str.CmdDuplicateLine, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.Y))),
 
     // ── 固定：基础编辑键（登记、消字面量，不进设置） ──
     SAVE_CONSOLE("saveConsole", Str.CmdSaveConsole, false, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.S))),

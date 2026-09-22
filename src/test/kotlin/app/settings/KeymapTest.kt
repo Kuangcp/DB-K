@@ -67,7 +67,7 @@ class KeymapTest {
         assertEquals(
             listOf(
                 "execute", "formatSql", "viewDdl", "toggleResults", "transpose", "refreshResult",
-                "switchConsoleNext", "switchConsolePrev",
+                "switchConsoleNext", "switchConsolePrev", "duplicateLine",
             ),
             ShortcutCommand.configurableCommands.map { it.id },
         )

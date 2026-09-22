@@ -272,6 +272,46 @@ class SqlEditingTest {
         check(!sqlCompletionAllowed("SELECT -- x", 11))
     }
 
+    // ---- duplicateLineText（Ctrl+Y 复制当前行） ----
+
+    @Test
+    fun `duplicateLineText copies current line and keeps column`() {
+        // 光标在 "bb" 第二个字符（索引 4）：复制后光标落在副本行同一列
+        assertEquals(
+            ("aa\nbb\nbb\ncc" to 7),
+            duplicateLineText("aa\nbb\ncc", 4, 4),
+        )
+        // 最后一行（无尾随换行）
+        assertEquals(
+            ("aa\nbb\nbb" to 6),
+            duplicateLineText("aa\nbb", 3, 3),
+        )
+        // 空行也能复制
+        assertEquals(
+            ("aa\n\n\nbb" to 4),
+            duplicateLineText("aa\n\nbb", 3, 3),
+        )
+    }
+
+    @Test
+    fun `duplicateLineText copies selection as whole lines`() {
+        // 选区横跨三段：整块行复制，光标停在副本块首
+        assertEquals(
+            ("aa\nbb\ncc\naa\nbb\ncc\n" to 9),
+            duplicateLineText("aa\nbb\ncc\n", 1, 7),
+        )
+        // 选区终点正好落在行首（前一个字符是换行）→ 只复制上一行，不误带下一行
+        assertEquals(
+            ("aa\naa\nbb\ncc" to 3),
+            duplicateLineText("aa\nbb\ncc", 0, 3),
+        )
+    }
+
+    @Test
+    fun `duplicateLineText returns null for empty text`() {
+        assertNull(duplicateLineText("", 0, 0))
+    }
+
     @Test
     fun `matchesQualifier accepts alias table and schema table`() {
         val ref = TableRef(qualifier = "public.users", schema = "public", table = "users", alias = "u")
