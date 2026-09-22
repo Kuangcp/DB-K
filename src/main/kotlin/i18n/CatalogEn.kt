@@ -48,7 +48,7 @@ internal fun en(key: Str): String = when (key) {
     Str.WorkspaceDefaultName -> "Default"
     Str.WorkspaceNoWorkspace -> "No workspace"
     Str.WorkspaceMenuTooltip -> "Workspaces"
-    Str.WorkspaceNew -> "New workspace…"
+    Str.WorkspaceNew -> "New"
     Str.WorkspaceNewTitle -> "New workspace"
     Str.WorkspaceRenameTitle -> "Rename workspace"
     Str.WorkspaceDeleteTitle -> "Delete workspace"

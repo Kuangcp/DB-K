@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
-import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -38,6 +37,9 @@ import androidx.compose.ui.unit.sp
 import app.i18n.t
 import db.WorkspaceRecord
 import i18n.Str
+
+/** 工作区下拉项行高：比标题栏工具菜单（26dp）稍高，容下名称 + 计数 + hover 图标。 */
+private val WORKSPACE_ITEM_H = 30.dp
 
 /**
  * 标签条右侧的工作区切换器：当前工作区名 + 下拉。
@@ -93,8 +95,8 @@ internal fun WorkspaceSwitcher(
                 )
             }
             if (workspaces.isNotEmpty()) Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
-            DropdownMenuItem(onClick = { open = false; onCreate() }) {
-                Text(t(Str.WorkspaceNew), fontSize = 13.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f))
+            CompactMenuItem(onClick = { open = false; onCreate() }, height = WORKSPACE_ITEM_H) {
+                Text(t(Str.WorkspaceNew), fontSize = 12.5.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f))
             }
         }
     }
@@ -116,8 +118,9 @@ private fun WorkspaceRow(
     onDelete: () -> Unit,
 ) {
     var hovering by remember { mutableStateOf(false) }
-    DropdownMenuItem(
+    CompactMenuItem(
         onClick = onSelect,
+        height = WORKSPACE_ITEM_H,
         modifier = Modifier.pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
@@ -142,7 +145,7 @@ private fun WorkspaceRow(
         }
         Text(
             t(Str.WorkspaceWithCount, displayName(ws), count),
-            fontSize = 13.sp,
+            fontSize = 12.5.sp,
             fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
             color = if (current) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
         )

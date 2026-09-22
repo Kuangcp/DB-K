@@ -48,7 +48,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.WorkspaceDefaultName -> "默认"
     Str.WorkspaceNoWorkspace -> "无工作区"
     Str.WorkspaceMenuTooltip -> "工作区"
-    Str.WorkspaceNew -> "新建工作区…"
+    Str.WorkspaceNew -> "新建"
     Str.WorkspaceNewTitle -> "新建工作区"
     Str.WorkspaceRenameTitle -> "重命名工作区"
     Str.WorkspaceDeleteTitle -> "删除工作区"

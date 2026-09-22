@@ -429,23 +429,3 @@ internal fun StatusDot(status: ConnUiStatus) {
         modifier = Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(statusColor(status)),
     )
 }
-
-/**
- * 紧凑下拉项：Material2 默认 DropdownMenuItem 最小高 48dp，主题多时弹层接近半屏；
- * 这里自绘 26dp 行高 + 10dp 横向内边距（标题栏工具菜单统一用它）。
- */
-@Composable
-private fun CompactMenuItem(
-    onClick: () -> Unit,
-    content: @Composable RowScope.() -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(26.dp)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
-        content = content,
-    )
-}
