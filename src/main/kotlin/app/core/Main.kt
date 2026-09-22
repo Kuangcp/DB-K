@@ -94,6 +94,8 @@ import app.state.ExportRequest
 import app.state.FolderDialogRequest
 import app.state.ImportConflictRequest
 import app.state.PassphraseRequest
+import app.state.PIN_MAX
+import app.state.PinToggleResult
 import app.state.TableDdlRequest
 import app.state.TreeState
 import app.state.ToastState
@@ -1227,6 +1229,17 @@ private fun WindowScope.AppBody(
                                     dialogState.confirm = ConfirmRequest.DiscardResultEdits(pending, Str.ActionRefreshResult, doRefresh)
                                 } else {
                                     doRefresh()
+                                }
+                            }
+                        },
+                        onTogglePin = {
+                            val c = activeConsole
+                            if (c != null) {
+                                when (consoleState.togglePin(c.id)) {
+                                    PinToggleResult.PINNED -> toastState.show(I18n.t(Str.ResultPinned))
+                                    PinToggleResult.UNPINNED -> toastState.show(I18n.t(Str.ResultUnpinned))
+                                    PinToggleResult.LIMIT_REACHED -> toastState.show(I18n.t(Str.ResultPinLimit, PIN_MAX))
+                                    PinToggleResult.NO_RESULT -> {}
                                 }
                             }
                         },

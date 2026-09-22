@@ -58,6 +58,7 @@ internal fun ResultToolbar(
     onCommitEdits: () -> Unit,
     onClearAllEdits: () -> Unit,
     onRefreshResult: () -> Unit,
+    onTogglePin: () -> Unit,
     canFetchMore: Boolean,
     onFetchMore: () -> Unit,
     editCount: Int,
@@ -76,8 +77,8 @@ internal fun ResultToolbar(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 4.dp),
     ) {
-        // 左侧：多语句 Tab（单语句不占位，状态文案已能表达结果）
-        if (run.outcomes.size > 1) {
+        // 左侧：多语句 Tab，或有固定结果时（单个也显示，带图钉标记）
+        if (run.outcomes.size > 1 || run.outcomes.any { it.pinned }) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
@@ -144,6 +145,15 @@ internal fun ResultToolbar(
                 description = t(Str.ResultRefresh),
                 enabled = result != null && !resultBusy,
                 onClick = onRefreshResult,
+            )
+            // 固定当前查询结果：新执行时保留该 tab（最多 PIN_MAX；仅查询结果可 pin）
+            val activePinned = run.active?.pinned == true
+            ResultIconButton(
+                icon = DbIcons.Pin,
+                description = if (activePinned) t(Str.ResultUnpin) else t(Str.ResultPin),
+                enabled = result?.isQuery == true && !resultBusy,
+                active = activePinned,
+                onClick = onTogglePin,
             )
             // 行级写操作（N3）：插入行 / 标记删除选中行（无主键/视图/转置时禁用）
             if (canModifyRows) {
@@ -230,8 +240,18 @@ private fun ResultChip(index: Int, outcome: StatementOutcome, active: Boolean, o
     ) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(dot))
         Spacer(Modifier.width(5.dp))
+        if (outcome.pinned) {
+            Icon(
+                DbIcons.Pin,
+                contentDescription = null,
+                tint = MaterialTheme.colors.primary,
+                modifier = Modifier.size(10.dp),
+            )
+            Spacer(Modifier.width(3.dp))
+        }
         Text(
-            t(Str.ResultTabLabel, index + 1),
+            // 编号来自结果本身（产生时分配），pin/取消/重排都不会改名。
+            t(Str.ResultTabLabel, outcome.tabNo.takeIf { it > 0 } ?: (index + 1)),
             fontSize = 11.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
             color = if (active) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),

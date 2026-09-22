@@ -143,6 +143,8 @@ fun WindowScope.EditorArea(
     onClearAllEdits: () -> Unit = {},
     /** 刷新当前结果 Tab（重新执行该语句）。 */
     onRefreshResult: () -> Unit = {},
+    /** 固定/取消固定当前查询结果（新执行不覆盖，可单独刷新）。 */
+    onTogglePin: () -> Unit = {},
     /** 「取更多」当前是否可用（结果被截断且原查询不含分页子句）。 */
     canFetchMore: Boolean = false,
     /** 取更多：按方言注入分页，把新行追加到当前结果（不重跑原查询）。 */
@@ -545,6 +547,7 @@ fun WindowScope.EditorArea(
                                 onCommitEdits = onCommitEdits,
                                 onClearAllEdits = onClearAllEdits,
                                 onRefreshResult = onRefreshResult,
+                                onTogglePin = onTogglePin,
                                 canFetchMore = canFetchMore,
                                 onFetchMore = onFetchMore,
                                 editCount = resultEdits.count,

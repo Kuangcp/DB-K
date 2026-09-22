@@ -57,11 +57,21 @@ data class StatementOutcome(
     val result: QueryResult? = null,
     /** 该语句失败原因。 */
     val error: String? = null,
+    /** 钉住（仅查询结果）：新执行时保留该 tab、可单独刷新；仅内存态，不落库。 */
+    val pinned: Boolean = false,
+    /** 结果编号（结果 N）：执行产生时分配，pin/取消/重排/刷新都不变。 */
+    val tabNo: Int = 0,
 ) {
     val ok: Boolean get() = error == null
     val isQuery: Boolean get() = result?.isQuery == true
     val affectedRows: Int? get() = result?.affectedRows
 }
+
+/** [ConsoleState.togglePin] 的结果。 */
+enum class PinToggleResult { PINNED, UNPINNED, LIMIT_REACHED, NO_RESULT }
+
+/** 单个控制台最多同时 pin 的结果数（内存态上限）。 */
+const val PIN_MAX = 10
 
 /**
  * 控制台最近一次执行快照。多语句执行时 [outcomes] 按序存放每条语句的结果
@@ -457,7 +467,8 @@ class ConsoleState(
         val ui = runSlots[console.id] ?: return
         if (ui.executing || resultBusyOf(console.id)) return
         val idx = if (index >= 0) index else ui.activeIndex
-        val stmt = ui.outcomes.getOrNull(idx)?.sql?.takeIf { it.isNotBlank() } ?: return
+        val old = ui.outcomes.getOrNull(idx) ?: return
+        val stmt = old.sql.takeIf { it.isNotBlank() } ?: return
 
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             connectionsState.ensureConnectionReady(profile)
@@ -478,12 +489,12 @@ class ConsoleState(
 
         val outcomes = ui.outcomes.toMutableList()
         res.onSuccess { r ->
-            outcomes[idx] = StatementOutcome(stmt, result = r)
+            outcomes[idx] = StatementOutcome(stmt, result = r, pinned = old.pinned, tabNo = old.tabNo)
             recordHistory(profile.id, stmt, true, r.durationMs, r.affectedRows ?: r.rowCount)
         }.onFailure { t ->
             Logger.error(t, "refresh outcome failed on {}", profile.name)
             val msg = friendlySqlError(t)
-            outcomes[idx] = StatementOutcome(stmt, error = msg)
+            outcomes[idx] = StatementOutcome(stmt, error = msg, pinned = old.pinned, tabNo = old.tabNo)
             recordHistory(profile.id, stmt, false, 0, 0, msg)
         }
         runSlots[console.id] = ConsoleRunUi(
@@ -1089,6 +1100,10 @@ class ConsoleState(
     suspend fun run(console: ConsoleRecord, profile: db.ConnectionProfile, sql: String? = null) {
         // 同控制台不允许叠加执行（执行中兜底）
         if (runSlots[console.id]?.executing == true) return
+        // 已 pin 的查询结果在新执行时保留（仅内存；最多 PIN_MAX）。
+        val pinned = runSlots[console.id]?.outcomes?.filter { it.pinned }.orEmpty()
+        // 结果编号单调递增（含已 pin 的旧结果），保证一个结果一旦产生名字就固定。
+        val tabBase = runSlots[console.id]?.outcomes?.maxOfOrNull { it.tabNo } ?: 0
         // 新执行 → 丢弃旧的未提交修改/编辑计划（UI 已在有修改时先确认）
         clearEdits(console.id)
         editPlans.remove(console.id)
@@ -1098,14 +1113,16 @@ class ConsoleState(
         val target = sql?.trim().orEmpty().ifEmpty { textOf(console.id).trim() }
         if (target.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(sql = "", error = I18n.t(Str.RunEnterSql))),
+                outcomes = pinned + StatementOutcome(sql = "", error = I18n.t(Str.RunEnterSql), tabNo = tabBase + 1),
+                activeIndex = pinned.size,
             )
             return
         }
         val statements = SessionFactory.splitStatements(profile, target)
         if (statements.isEmpty()) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(sql = target, error = I18n.t(Str.RunOnlyComments))),
+                outcomes = pinned + StatementOutcome(sql = target, error = I18n.t(Str.RunOnlyComments), tabNo = tabBase + 1),
+                activeIndex = pinned.size,
             )
             return
         }
@@ -1115,17 +1132,20 @@ class ConsoleState(
         }
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(
+                outcomes = pinned + StatementOutcome(
                     sql = target,
                     error = connectionsState.statusMessageOf(profile.id) ?: I18n.t(Str.ConsoleConnectionUnavailable),
-                )),
+                    tabNo = tabBase + 1,
+                ),
+                activeIndex = pinned.size,
             )
             return
         }
         val session = connectionsState.sessionOf(profile.id)
         if (session == null) {
             runSlots[console.id] = ConsoleRunUi(
-                outcomes = listOf(StatementOutcome(sql = target, error = I18n.t(Str.ConsoleConnectionClosed))),
+                outcomes = pinned + StatementOutcome(sql = target, error = I18n.t(Str.ConsoleConnectionClosed), tabNo = tabBase + 1),
+                activeIndex = pinned.size,
             )
             return
         }
@@ -1136,7 +1156,8 @@ class ConsoleState(
         lastStableSlots[console.id] = runSlots[console.id] ?: ConsoleRunUi()
         runStartedAt[console.id] = System.currentTimeMillis()
         runTarget[console.id] = target
-        runSlots[console.id] = ConsoleRunUi(executing = true)
+        // 执行中也保留 pinned tab（否则执行时对照结果会消失）
+        runSlots[console.id] = ConsoleRunUi(executing = true, outcomes = pinned)
 
         // 逐条执行；出错即停（后续语句不执行），每条独立写历史
         val outcomes = mutableListOf<StatementOutcome>()
@@ -1174,14 +1195,43 @@ class ConsoleState(
         val startedAt = runStartedAt.remove(console.id)
         runTarget.remove(console.id)
         val durationMs = startedAt?.let { System.currentTimeMillis() - it } ?: 0L
-        val errIdx = outcomes.indexOfFirst { !it.ok }
+        // 为新结果分配稳定编号（接着已有最大编号递增）
+        val numbered = outcomes.mapIndexed { i, o -> o.copy(tabNo = tabBase + i + 1) }
+        val errIdx = numbered.indexOfFirst { !it.ok }
         runSlots[console.id] = ConsoleRunUi(
-            outcomes = outcomes,
-            activeIndex = if (errIdx >= 0) errIdx else 0,
+            outcomes = pinned + numbered,
+            activeIndex = if (errIdx >= 0) pinned.size + errIdx else pinned.size,
             ranMs = durationMs,
         )
         // 结果落地后计算可编辑计划（无基表/无主键/视图 → 保持 null）
         ensureEditPlan(console, profile)
+    }
+
+    /**
+     * pin / 取消 pin 当前激活结果（仅查询结果；最多 [PIN_MAX] 个）。
+     * pin 后立即把该 tab 移到最前并选中；新执行时 pinned 结果会保留在最前。
+     */
+    fun togglePin(consoleId: String): PinToggleResult {
+        val ui = runSlots[consoleId] ?: return PinToggleResult.NO_RESULT
+        val idx = ui.activeIndex
+        val cur = ui.outcomes.getOrNull(idx) ?: return PinToggleResult.NO_RESULT
+        if (!cur.isQuery) return PinToggleResult.NO_RESULT
+        val outcomes = ui.outcomes.toMutableList()
+        // 始终保持“pinned 在左，非 pinned 在右”；pin 按次序追加到 pin 区右侧。
+        if (cur.pinned) {
+            val pinnedBefore = outcomes.count { it.pinned }
+            outcomes.removeAt(idx)
+            val insertAt = pinnedBefore - 1
+            outcomes.add(insertAt, cur.copy(pinned = false))
+            runSlots[consoleId] = ui.copy(outcomes = outcomes, activeIndex = insertAt)
+            return PinToggleResult.UNPINNED
+        }
+        val pinnedCount = outcomes.count { it.pinned }
+        if (pinnedCount >= PIN_MAX) return PinToggleResult.LIMIT_REACHED
+        outcomes.removeAt(idx)
+        outcomes.add(pinnedCount, cur.copy(pinned = true))
+        runSlots[consoleId] = ui.copy(outcomes = outcomes, activeIndex = pinnedCount)
+        return PinToggleResult.PINNED
     }
 
     /** 切换结果区当前展示的语句（多语句时 Tab 选择）。 */

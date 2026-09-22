@@ -229,4 +229,122 @@ class ConsoleStateRunTest {
             assertTrue(history.last().ok)
         }
     }
+
+    @Test
+    fun `pin moves to front survives next run and can refresh`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            state.run(console, stored, "SELECT id, name FROM account ORDER BY id")
+            val pinnedSql = state.runStateOf(console.id).active!!.sql
+            assertEquals(PinToggleResult.PINNED, state.togglePin(console.id))
+            var slot = state.runStateOf(console.id)
+            assertTrue(slot.outcomes[0].pinned)
+            assertEquals(0, slot.activeIndex) // pin 后立即移到最前
+
+            // 新执行不覆盖 pinned，且 activeIndex 指向新结果
+            state.run(console, stored, "SELECT COUNT(*) AS n FROM account")
+            slot = state.runStateOf(console.id)
+            assertEquals(2, slot.outcomes.size)
+            assertTrue(slot.outcomes[0].pinned)
+            assertEquals(pinnedSql, slot.outcomes[0].sql)
+            assertEquals(1, slot.activeIndex)
+            assertFalse(slot.outcomes[1].pinned)
+
+            // 刷新 pinned tab 拿最新结果，标记保留
+            state.refreshOutcome(console, stored, 0)
+            slot = state.runStateOf(console.id)
+            assertTrue(slot.outcomes[0].pinned)
+            assertNotNull(slot.outcomes[0].result)
+            assertEquals(0, slot.activeIndex)
+        }
+    }
+
+    @Test
+    fun `pin is limited to PIN_MAX and only queries can be pinned`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            repeat(PIN_MAX + 1) { i ->
+                state.run(console, stored, "SELECT $i AS v")
+                val r = state.togglePin(console.id)
+                if (i < PIN_MAX) assertEquals(PinToggleResult.PINNED, r, "第 ${i + 1} 个应可 pin")
+                else assertEquals(PinToggleResult.LIMIT_REACHED, r)
+            }
+            assertEquals(PIN_MAX, state.runStateOf(console.id).outcomes.count { it.pinned })
+
+            // DML 结果不可 pin
+            state.run(console, stored, "INSERT INTO account VALUES (99, 'z')")
+            assertEquals(PinToggleResult.NO_RESULT, state.togglePin(console.id))
+        }
+    }
+
+    @Test
+    fun `tab numbers are stable and pins append in pin order`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            // 一次执行两条语句 → 结果编号 1、2
+            state.run(console, stored, "SELECT 1 AS a; SELECT 2 AS b")
+            var slot = state.runStateOf(console.id)
+            assertEquals(listOf(1, 2), slot.outcomes.map { it.tabNo })
+
+            // 先 pin 第 1 个，再 pin 第 2 个 → pin 区按 pin 次序 [1,2]（不是最新在前）
+            state.selectRunOutcome(console.id, 0)
+            state.togglePin(console.id)
+            state.selectRunOutcome(console.id, 1)
+            state.togglePin(console.id)
+            slot = state.runStateOf(console.id)
+            assertEquals(listOf(1, 2), slot.outcomes.map { it.tabNo })
+            assertTrue(slot.outcomes.all { it.pinned })
+
+            // 取消第 1 个的 pin：编号不变（2 不能变成 1）
+            state.selectRunOutcome(console.id, 0)
+            state.togglePin(console.id)
+            slot = state.runStateOf(console.id)
+            assertEquals(setOf(1, 2), slot.outcomes.map { it.tabNo }.toSet())
+            assertFalse(slot.outcomes.first { it.tabNo == 1 }.pinned)
+            assertTrue(slot.outcomes.first { it.tabNo == 2 }.pinned)
+
+            // 新执行：新结果编号继续递增（3），pinned 的 2 保留
+            state.run(console, stored, "SELECT 3 AS c")
+            slot = state.runStateOf(console.id)
+            assertEquals(3, slot.outcomes.first { !it.pinned }.tabNo)
+            assertTrue(slot.outcomes.first { it.tabNo == 2 }.pinned)
+        }
+    }
+
+    @Test
+    fun `unpin clears flag without removing tab`() = runBlocking {
+        val dbPath = dir.resolve("app.db")
+        val repo = ConnectionsRepository(dbPath, dir.resolve("consoles"))
+        repo.use {
+            val pid = it.createConnection(seedH2Profile())
+            val stored = it.getConnection(pid)!!
+            val (_, state) = newState(it, dbPath)
+            val console = state.createConsole(pid, "c")
+
+            state.run(console, stored, "SELECT id FROM account")
+            assertEquals(PinToggleResult.PINNED, state.togglePin(console.id))
+            assertEquals(PinToggleResult.UNPINNED, state.togglePin(console.id))
+            val slot = state.runStateOf(console.id)
+            assertEquals(1, slot.outcomes.size)
+            assertFalse(slot.outcomes[0].pinned)
+        }
+    }
 }
