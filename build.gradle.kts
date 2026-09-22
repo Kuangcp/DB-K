@@ -42,6 +42,9 @@ dependencies {
     implementation("org.tinylog:tinylog-api:2.7.0")
     // impl 含 writers 抽象类，SessionLogWriter 编译需在 compileClasspath
     implementation("org.tinylog:tinylog-impl:2.7.0")
+    // SLF4J → tinylog 绑定：ClickHouse/Jedis/MariaDB(waffle) 等经 SLF4J 打日志的库
+    // 统一落到会话日志，同时消除启动时 “No SLF4J providers” 警告
+    implementation("org.tinylog:slf4j-tinylog:2.7.0")
 
     // 单元测试：kotlin.test（JUnit 5 平台） + JUnit Jupiter（含 engine，@TempDir 等）
     testImplementation(kotlin("test"))

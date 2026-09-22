@@ -416,17 +416,26 @@ internal fun EditorPane(
     var boxW by remember { mutableStateOf(0) }
     var boxH by remember { mutableStateOf(0) }
     val density = LocalDensity.current
-    val editorStyle = TextStyle(
-        fontFamily = editorFontFamily(editorSettings.fontFamilyName),
-        fontSize = editorSettings.fontSizeSp.sp,
-        lineHeight = EditorSettings.lineHeightSp(editorSettings.fontSizeSp).sp,
-        color = themeColors.editorForeground,
-    )
+    // 稳定引用：editorStyle 会作为下面 textLayout 的 remember 键；若每次重组都新建（自定义字体走
+    // SystemFont 时值可能不相等），会导致整篇文本反复重排版。
+    val editorStyle = remember(editorSettings, themeColors) {
+        TextStyle(
+            fontFamily = editorFontFamily(editorSettings.fontFamilyName),
+            fontSize = editorSettings.fontSizeSp.sp,
+            lineHeight = EditorSettings.lineHeightSp(editorSettings.fontSizeSp).sp,
+            color = themeColors.editorForeground,
+        )
+    }
     // 行号槽字号跟随编辑器字号（旧固定 11sp ≈ 13sp * 0.85）
     val gutterFontFamily = editorStyle.fontFamily
     val gutterFontSize = (editorSettings.fontSizeSp * 0.85f).sp
     val gutterLineHeight = editorStyle.lineHeight
     val textMeasurer = rememberTextMeasurer()
+    // 行号槽用独立 measurer：行号是一堆小字符串，会挤爆主布局的小容量 LRU 缓存，
+    // 反过来让正文每帧重新排版。分开后正文排版稳定命中缓存。
+    val gutterMeasurer = rememberTextMeasurer(cacheSize = 64)
+    // 补全弹层宽度测量同理用独立 measurer，避免把正文排版挤出缓存。
+    val popupMeasurer = rememberTextMeasurer(cacheSize = 128)
 
     // ---- 补全派生状态：caret 词/限定符/星号 → 语句上下文（含 CTE/子查询）→ 候选 → 弹层 ----
     val caretActive = editing && multiCursors.isEmpty()
@@ -585,15 +594,22 @@ internal fun EditorPane(
     val textTopPx = with(density) { 6.dp.toPx() }
     val lineHpx = with(density) { gutterLineHeight.toDp().toPx() }
     val textWpxInt = if (boxW > 0) (boxW - gutterWpx - textPadLPx - textPadRPx).toInt().coerceAtLeast(40) else 0
-    val textLayout = if (textWpxInt > 40) {
-        runCatching {
-            textMeasurer.measure(
-                AnnotatedString(content),
-                style = editorStyle,
-                constraints = Constraints(maxWidth = textWpxInt),
-            )
-        }.getOrNull()
-    } else null
+    // 关键：整篇文本排版必须缓存。`state.text` 与 `state.selection` 共用同一个 TextFieldState
+    // 快照，选区变化也会触发重组；若每次都重测，长 SQL 下选中的高亮会明显滞后。
+    // 键用 content（String，值相等即命中），选区变化不会失配。
+    val textLayout = remember(content, editorStyle, textWpxInt) {
+        if (textWpxInt > 40) {
+            runCatching {
+                textMeasurer.measure(
+                    AnnotatedString(content),
+                    style = editorStyle,
+                    constraints = Constraints(maxWidth = textWpxInt),
+                )
+            }.getOrNull()
+        } else {
+            null
+        }
+    }
     // 物理行 → 其首个可视行的内容 Y（文本区坐标系内；含自动换行展开）。直接按每行起点偏移查
     // 排版行：TextLayout 本身包含换行产生的空行（含尾随换行后的最后一行），getLineForOffset
     // 对 offset == length 同样返回该空行的行号，因此无需对尾随换行做算术补偿。
@@ -783,7 +799,7 @@ internal fun EditorPane(
                                             cornerRadius = CornerRadius(4f, 4f),
                                         )
                                     }
-                                    val m = textMeasurer.measure(
+                                    val m = gutterMeasurer.measure(
                                         AnnotatedString((i + 1).toString()),
                                         style = if (cur) numCurStyle else numStyle,
                                     )
@@ -1003,10 +1019,10 @@ internal fun EditorPane(
                 )
                 val detailStyle = baseTextStyle.merge(TextStyle(fontSize = 10.sp))
                 val nameW = shown.maxOfOrNull {
-                    textMeasurer.measure(AnnotatedString(it.text), nameStyle).size.width
+                    popupMeasurer.measure(AnnotatedString(it.text), nameStyle).size.width
                 } ?: 0
                 val detailW = shown.asSequence().mapNotNull { it.detail }
-                    .maxOfOrNull { textMeasurer.measure(AnnotatedString(it), detailStyle).size.width }
+                    .maxOfOrNull { popupMeasurer.measure(AnnotatedString(it), detailStyle).size.width }
                     ?: 0
                 with(density) {
                     // chrome: 左右内边距 20 + 色点 6 + 间距 8（有详情时再加 8）+ 2dp 取整/字距余量
