@@ -135,7 +135,7 @@ internal fun WindowScope.HeaderBar(
                     DropdownMenu(expanded = themeMenuOpen, onDismissRequest = { themeMenuOpen = false }) {
                         themes.forEach { th ->
                             val label = th.nameKey?.let { t(it) } ?: th.name
-                            DropdownMenuItem(onClick = { themeMenuOpen = false; onSelectTheme(th.id) }) {
+                            CompactMenuItem(onClick = { themeMenuOpen = false; onSelectTheme(th.id) }) {
                                 Icon(
                                     Icons.Filled.Check,
                                     null,
@@ -144,18 +144,20 @@ internal fun WindowScope.HeaderBar(
                                 )
                                 Text(
                                     label,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.5.sp,
                                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+                                    maxLines = 1,
                                     modifier = Modifier.padding(start = 8.dp),
                                 )
                             }
                         }
                         Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
-                        DropdownMenuItem(onClick = { themeMenuOpen = false; onManageThemes() }) {
+                        CompactMenuItem(onClick = { themeMenuOpen = false; onManageThemes() }) {
                             Text(
                                 t(Str.ThemeManage),
-                                fontSize = 13.sp,
+                                fontSize = 12.5.sp,
                                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                                maxLines = 1,
                             )
                         }
                     }
@@ -425,5 +427,25 @@ internal fun statusColor(status: ConnUiStatus): Color = when (status) {
 internal fun StatusDot(status: ConnUiStatus) {
     Box(
         modifier = Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(statusColor(status)),
+    )
+}
+
+/**
+ * 紧凑下拉项：Material2 默认 DropdownMenuItem 最小高 48dp，主题多时弹层接近半屏；
+ * 这里自绘 26dp 行高 + 10dp 横向内边距（标题栏工具菜单统一用它）。
+ */
+@Composable
+private fun CompactMenuItem(
+    onClick: () -> Unit,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(26.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        content = content,
     )
 }
