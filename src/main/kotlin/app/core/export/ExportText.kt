@@ -28,6 +28,14 @@ object ExportText {
         }
     }
 
+    /**
+     * 单行 CSV（含表头行）：列名行 + 数据行，各字段走 [csvField]。
+     * 用于结果区右键「复制本行 → CSV」，方便直接粘贴到表格软件。
+     */
+    fun csvHeaderAndRow(columns: List<String>, row: List<String?>): String =
+        columns.joinToString(",") { csvField(it) } + "\n" +
+            row.joinToString(",") { csvField(it) }
+
     /** SQL INSERT / JSON 里的字符串字面量转义（标准 SQL：单引号双写）。 */
     fun sqlString(v: String): String = "'" + v.replace("'", "''") + "'"
 

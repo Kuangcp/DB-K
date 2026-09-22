@@ -53,6 +53,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import app.core.export.ExportText
 import app.settings.ShortcutCommand
 import app.dialog.CellViewerDialog
 import app.dialog.EditCellDialog
@@ -508,6 +509,20 @@ internal fun ResultTable(
                                                     if (insertSql != null) {
                                                         onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedRowInsert, tableName))
                                                     }
+                                                },
+                                            )
+                                        }
+                                        // CSV 不需要表名，只需要列名 + 原始行；与 INSERT 一样跳过截断行。
+                                        if (!transposed && origRow != null && origRow !in truncatedRows) {
+                                            add(
+                                                ContextMenuItem(I18n.t(lang, Str.ResultCopyRowCsv)) {
+                                                    onCopyText(
+                                                        ExportText.csvHeaderAndRow(
+                                                            result.columns.map { it.name },
+                                                            result.rows[origRow],
+                                                        ),
+                                                        I18n.t(lang, Str.ResultCopiedRowCsv),
+                                                    )
                                                 },
                                             )
                                         }

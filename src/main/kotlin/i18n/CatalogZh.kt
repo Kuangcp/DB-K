@@ -336,6 +336,8 @@ internal fun zh(key: Str): String = when (key) {
     Str.ResultViewFull -> "查看完整内容"
     Str.ResultCopyRowInsert -> "复制本行 → INSERT"
     Str.ResultCopiedRowInsert -> "已复制本行 → INSERT（表 {0}）"
+    Str.ResultCopyRowCsv -> "复制本行 → CSV（含表头）"
+    Str.ResultCopiedRowCsv -> "已复制本行 → CSV（含表头）"
     Str.ResultEditCell -> "编辑单元格（Ctrl+双击）"
     Str.ResultEditInDialog -> "在对话框中编辑…"
     Str.ResultSetNull -> "置为 NULL"

@@ -337,6 +337,8 @@ internal fun en(key: Str): String = when (key) {
     Str.ResultViewFull -> "View full content"
     Str.ResultCopyRowInsert -> "Copy row → INSERT"
     Str.ResultCopiedRowInsert -> "Copied row → INSERT (table {0})"
+    Str.ResultCopyRowCsv -> "Copy row → CSV (with header)"
+    Str.ResultCopiedRowCsv -> "Copied row → CSV (with header)"
     Str.ResultEditCell -> "Edit cell (Ctrl+double-click)"
     Str.ResultEditInDialog -> "Edit in dialog…"
     Str.ResultSetNull -> "Set to NULL"

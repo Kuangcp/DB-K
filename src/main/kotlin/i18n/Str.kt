@@ -343,6 +343,8 @@ enum class Str {
     ResultViewFull,
     ResultCopyRowInsert,
     ResultCopiedRowInsert,
+    ResultCopyRowCsv,
+    ResultCopiedRowCsv,
     ResultEditCell,
     ResultEditInDialog,
     ResultSetNull,

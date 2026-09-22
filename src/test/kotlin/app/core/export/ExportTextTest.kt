@@ -16,6 +16,16 @@ class ExportTextTest {
     }
 
     @Test
+    fun `csv header and row composes two escaped lines`() {
+        assertEquals(
+            "id,\"na,me\"\n1,\"he \"\"hi\"\"\"",
+            ExportText.csvHeaderAndRow(listOf("id", "na,me"), listOf("1", "he \"hi\"")),
+        )
+        // NULL → 空串；表头同样转义
+        assertEquals("a,b\n1,", ExportText.csvHeaderAndRow(listOf("a", "b"), listOf("1", null)))
+    }
+
+    @Test
     fun `sql literal types null numeric boolean and string`() {
         assertEquals("NULL", ExportText.sqlLiteral(null, Types.VARCHAR))
         assertEquals("42", ExportText.sqlLiteral("42", Types.INTEGER))
