@@ -11,15 +11,20 @@ import kotlin.test.assertTrue
 class AppThemesTest {
 
     @Test
-    fun `registry has five builtins with unique ids and default`() {
-        assertEquals(5, builtInThemes.size)
-        assertEquals(5, builtInThemes.map { it.id }.toSet().size)
+    fun `registry has six builtins with unique ids and default`() {
+        assertEquals(6, builtInThemes.size)
+        assertEquals(6, builtInThemes.map { it.id }.toSet().size)
         assertNotNull(themeById(defaultThemeId))
         assertTrue(builtInThemes.all { it.builtIn })
-        assertEquals(listOf("dark", "light", "monokai", "dracula", "sublime"), builtInThemes.map { it.id })
+        assertEquals(
+            listOf("dark", "light", "monokai", "dracula", "sublime", "datagrip"),
+            builtInThemes.map { it.id },
+        )
         assertEquals("ThemeNameLight", themeById("light")!!.nameKey!!.name)
         assertNull(themeById("monokai")!!.nameKey)
         assertEquals("Monokai", themeById("monokai")!!.name)
+        assertNull(themeById("datagrip")!!.nameKey)
+        assertEquals("DataGrip", themeById("datagrip")!!.name)
     }
 
     @Test
@@ -49,6 +54,24 @@ class AppThemesTest {
         assertFalse(themeById("monokai")!!.colors.isLight)
         assertFalse(themeById("dracula")!!.colors.isLight)
         assertFalse(themeById("sublime")!!.colors.isLight)
+        assertFalse(themeById("datagrip")!!.colors.isLight)
+    }
+
+    @Test
+    fun `datagrip keeps the curated colors`() {
+        val c = themeById("datagrip")!!.colors
+        assertEquals(Color(0xFF2B2D30), c.background)
+        assertEquals(Color(0xFF1E1F22), c.surface)
+        assertEquals(Color(0xFFF8F8F2), c.onSurface)
+        assertEquals(Color(0xFF75CBEB), c.primary)
+        assertEquals(Color(0xFF1E1F22), c.editorBackground)
+        assertEquals(Color(0xFFCECECE), c.editorForeground)
+        assertEquals(Color(0xFFCF8E6D), c.keyword)
+        assertEquals(Color(0xFF57A563), c.string)
+        assertEquals(Color(0xFF2AACB8), c.number)
+        assertEquals(Color(0xFFA4A4A4), c.comment)
+        assertEquals(Color(0xFFF8F8F2), c.punctuation)
+        assertEquals(Color(0xFF4BA5D3), c.function)
     }
 
     @Test
@@ -84,8 +107,8 @@ class AppThemesTest {
         )
         // 模拟 bug：自定义列表里混入了内置与重复的自定义
         val merged = mergeThemes(listOf(builtInThemes.first(), custom, custom))
-        assertEquals(6, merged.size)
-        assertEquals(6, merged.map { it.id }.toSet().size)
+        assertEquals(7, merged.size)
+        assertEquals(7, merged.map { it.id }.toSet().size)
         assertEquals("mine", merged.last().id)
     }
 
@@ -116,5 +139,6 @@ class AppThemesTest {
         assertEquals(Color(0xFFA6E22E), themeById("monokai")!!.colors.function)
         assertEquals(Color(0xFF50FA7B), themeById("dracula")!!.colors.function)
         assertEquals(Color(0xFF6699CC), themeById("sublime")!!.colors.function)
+        assertEquals(Color(0xFF4BA5D3), themeById("datagrip")!!.colors.function)
     }
 }

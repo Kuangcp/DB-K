@@ -157,7 +157,20 @@ private val SublimeTheme = ThemeSpec(
     ),
 )
 
-val builtInThemes: List<ThemeSpec> = listOf(DarkTheme, LightTheme, MonokaiTheme, DraculaTheme, SublimeTheme)
+/** DataGrip 深色（JetBrains 风格高对比暗色，专有名不翻译）。 */
+private val DataGripTheme = ThemeSpec(
+    id = "datagrip", name = "DataGrip", builtIn = true,
+    colors = ThemeColors(
+        background = Color(0xFF2B2D30), surface = Color(0xFF1E1F22),
+        onSurface = Color(0xFFF8F8F2), primary = Color(0xFF75CBEB),
+        editorBackground = Color(0xFF1E1F22), editorForeground = Color(0xFFCECECE),
+        keyword = Color(0xFFCF8E6D), string = Color(0xFF57A563), number = Color(0xFF2AACB8),
+        comment = Color(0xFFA4A4A4), punctuation = Color(0xFFF8F8F2), function = Color(0xFF4BA5D3),
+    ),
+)
+
+val builtInThemes: List<ThemeSpec> =
+    listOf(DarkTheme, LightTheme, MonokaiTheme, DraculaTheme, SublimeTheme, DataGripTheme)
 
 const val defaultThemeId: String = "light"
 
