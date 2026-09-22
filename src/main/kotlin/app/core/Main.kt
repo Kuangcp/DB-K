@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowDecoration
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowScope
@@ -168,6 +169,7 @@ fun main() = application {
     AppRoot(onExit = ::exitApplication)
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun AppRoot(onExit: () -> Unit) {
     // 窗口几何：上次退出时保存则恢复位置与尺寸
@@ -294,7 +296,9 @@ private fun AppRoot(onExit: () -> Unit) {
     Window(
         title = "DB-K",
         state = windowState,
-        undecorated = true,
+        // 无边框窗口的拖拽缩放热区默认 8dp（WindowDecorationDefaults 未暴露稳定读取），
+        // 会盖住贴窗口右/下边缘的结果滚动条（悬停变缩放光标、抓不到）；缩到 4dp 后滚动条可正常点击拖动。
+        decoration = WindowDecoration.Undecorated(4.dp),
         onCloseRequest = requestClose,
     ) {
         // 运行时窗口图标（X11 任务栏/装饰、Windows 任务栏）：从 classpath 读 png 设到 AWT Frame。
