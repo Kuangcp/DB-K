@@ -56,6 +56,36 @@ object RedisProtocol {
         return out
     }
 
+    /** 光标所在行（去空白；空行 / `#` 注释行 → null）。无选中执行时用它定位命令。 */
+    fun commandAtCaret(text: String, caret: Int): String? {
+        val pos = caret.coerceIn(0, text.length)
+        val lineStart = text.lastIndexOf('\n', pos - 1) + 1
+        val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
+        return text.substring(lineStart, lineEnd).trim().takeIf { it.isNotEmpty() && !it.startsWith("#") }
+    }
+
+    /** 只读命令白名单：无选中时的「光标执行」只放行这些；写命令/未知命令一律不自动执行。 */
+    private val READ_ONLY_COMMANDS = setOf(
+        "GET", "MGET", "GETRANGE", "SUBSTR", "STRLEN", "EXISTS", "TYPE", "TTL", "PTTL",
+        "KEYS", "SCAN", "RANDOMKEY", "DUMP", "OBJECT",
+        "LLEN", "LRANGE", "LINDEX", "LPOS",
+        "SMEMBERS", "SISMEMBER", "SMISMEMBER", "SCARD", "SRANDMEMBER", "SDIFF", "SINTER", "SUNION",
+        "ZRANGE", "ZRANGEBYSCORE", "ZREVRANGE", "ZRANGEBYLEX", "ZREVRANGEBYLEX",
+        "ZSCORE", "ZMSCORE", "ZCARD", "ZCOUNT", "ZRANK", "ZREVRANK", "ZLEXCOUNT",
+        "HGET", "HGETALL", "HMGET", "HKEYS", "HVALS", "HLEN", "HEXISTS", "HSCAN", "HRANDFIELD",
+        "BITCOUNT", "BITPOS", "GETBIT", "PFCOUNT",
+        "GEOHASH", "GEOPOS", "GEODIST", "GEOSEARCH",
+        "XINFO", "XLEN", "XRANGE", "XREVRANGE", "XPENDING",
+        "INFO", "DBSIZE", "PING", "ECHO", "COMMAND", "TIME", "LASTSAVE", "MEMORY", "LATENCY",
+        "PUBSUB", "WAIT",
+    )
+
+    /** 该命令首词是否为只读查询。 */
+    fun isReadOnlyCommand(statement: String): Boolean {
+        val head = tokenize(statement).firstOrNull()?.uppercase() ?: return false
+        return head in READ_ONLY_COMMANDS
+    }
+
     private val TWO_COLUMN_COMMANDS = setOf("HGETALL", "CONFIG", "XPENDING")
 
     /** 破坏性 / 危险命令的首词（执行前二次确认）。 */

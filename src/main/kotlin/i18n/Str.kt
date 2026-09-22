@@ -533,6 +533,7 @@ enum class Str {
     MainStreamExportNeedsJdbc,
     MainStreamExportFailed,
     MainSelectSql,
+    MainCaretNoQuery,
     MainQueryRunning,
     MainPreviewUnsupportedKind,
     MainConnectFailed,

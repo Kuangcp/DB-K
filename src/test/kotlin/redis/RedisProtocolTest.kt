@@ -2,6 +2,9 @@ package redis
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Redis 控制台纯逻辑：命令切分 / 分词 / 回复渲染。 */
 class RedisProtocolTest {
@@ -72,5 +75,28 @@ class RedisProtocolTest {
         assertEquals(null, RedisProtocol.dangerousCommand("GET k"))
         assertEquals(null, RedisProtocol.dangerousCommand("SET FLUSHALL 1"))
         assertEquals(null, RedisProtocol.dangerousCommand(""))
+    }
+
+    @Test
+    fun `command at caret picks current line`() {
+        val text = "GET a\n# comment\nHGETALL h\n\nSET b 1"
+        assertEquals("HGETALL h", RedisProtocol.commandAtCaret(text, text.indexOf("HGETALL") + 2))
+        assertEquals("GET a", RedisProtocol.commandAtCaret(text, 1))
+        assertNull(RedisProtocol.commandAtCaret(text, text.indexOf("# comment") + 1))
+        assertNull(RedisProtocol.commandAtCaret("GET a\n\n", 7))
+    }
+
+    @Test
+    fun `read only command classification`() {
+        assertTrue(RedisProtocol.isReadOnlyCommand("GET a"))
+        assertTrue(RedisProtocol.isReadOnlyCommand("hgetall h"))
+        assertTrue(RedisProtocol.isReadOnlyCommand("SCAN 0 MATCH x*"))
+        assertTrue(RedisProtocol.isReadOnlyCommand("INFO"))
+        assertFalse(RedisProtocol.isReadOnlyCommand("SET a 1"))
+        assertFalse(RedisProtocol.isReadOnlyCommand("DEL a"))
+        assertFalse(RedisProtocol.isReadOnlyCommand("FLUSHALL"))
+        assertFalse(RedisProtocol.isReadOnlyCommand("CONFIG GET maxmemory"))
+        assertFalse(RedisProtocol.isReadOnlyCommand("MULTI"))
+        assertFalse(RedisProtocol.isReadOnlyCommand("SOMENEWCMD x"))
     }
 }

@@ -5,6 +5,7 @@ import engine.model.QueryResult
 import engine.model.SchemaMeta
 import i18n.I18n
 import i18n.Str
+import jdbc.isCommentOnlySql
 
 /*
  * SQL 编辑器补全 / 结果交互的纯逻辑（app.ui 层但无 compose 依赖，便于后续单测）。
@@ -632,4 +633,37 @@ fun rowToInsertSql(sql: String, colNames: List<String>, row: List<String?>): Str
         if (v == null) "NULL" else "'${v.replace("'", "''")}'"
     }
     return "INSERT INTO $table ($cols) VALUES ($vals);"
+}
+
+/** 只读语句的起始词（保守：只放行明确只读的动作）。 */
+private val SQL_READ_STARTERS = setOf("select", "with", "show", "describe", "desc", "values", "table", "fetch")
+
+/** 写/副作用关键字：出现任一即判为非只读（保守，宁可漏判不乱放行）。 */
+private val SQL_WRITE_KEYWORDS = setOf(
+    "insert", "update", "delete", "merge", "upsert", "replace", "create", "alter", "drop",
+    "truncate", "grant", "revoke", "call", "exec", "execute", "do", "copy", "set", "use",
+    "vacuum", "analyze", "attach", "detach", "reindex", "refresh", "comment", "lock", "unlock",
+    "into", "nextval", "setval",
+)
+
+/**
+ * 光标所在位置的完整语句（去首尾空白、排除纯注释/空白）；无则 null。
+ * 无选中按 Ctrl+Enter 时用它定位要执行的语句（跨行 / 一行多语句由 [statementRangeAt] 处理）。
+ */
+fun statementAtCaret(sql: String, caret: Int): String? {
+    val range = statementRangeAt(sql, caret) ?: return null
+    val seg = sql.substring(range.first, range.last + 1).trim()
+    return seg.takeIf { it.isNotEmpty() && !it.isCommentOnlySql() }
+}
+
+/**
+ * 保守判定语句是否为只读查询（无选中时的「光标执行」安全闸）：
+ * 首词必须属于只读起始词，且整句（字符串/注释内不计）不得出现写关键字。
+ * 宁可漏判（让用户手动选中执行），也不误放行写操作。
+ */
+fun isReadOnlySql(statement: String): Boolean {
+    val tokens = tokenizeSql(statement).filter { !it.literal && !it.punct }
+    val first = tokens.firstOrNull()?.text?.lowercase() ?: return false
+    if (first !in SQL_READ_STARTERS) return false
+    return tokens.drop(1).none { it.text.lowercase() in SQL_WRITE_KEYWORDS }
 }

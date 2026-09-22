@@ -379,4 +379,36 @@ class SqlEditingTest {
         assertTrue(sqlHasPaginationClause("SELECT * FROM t WHERE ROWNUM <= 5"))
         assertFalse(sqlHasPaginationClause("SELECT * FROM t ORDER BY id"))
     }
+
+    @Test
+    fun `statementAtCaret isolates statement across lines and multiple per line`() {
+        val sql = "SELECT 1;\nSELECT a\nFROM t WHERE x = ';';\nSELECT 2; SELECT 3"
+        // 跨行语句 + 字符串内分号
+        assertEquals("SELECT a\nFROM t WHERE x = ';'", statementAtCaret(sql, sql.indexOf("FROM t") + 2))
+        // 一行多语句：取光标所在那条
+        assertEquals("SELECT 3", statementAtCaret(sql, sql.indexOf("SELECT 3") + 3))
+        // 分号后空白区归到下一句
+        assertEquals("SELECT 2", statementAtCaret("SELECT 1;   \nSELECT 2", 10))
+        // 末尾空白 / 纯注释 → null
+        assertNull(statementAtCaret("SELECT 1;   ", 11))
+        assertNull(statementAtCaret("SELECT 1;\n-- tail", 13))
+    }
+
+    @Test
+    fun `isReadOnlySql allows queries and rejects writes`() {
+        assertTrue(isReadOnlySql("SELECT * FROM t"))
+        assertTrue(isReadOnlySql("-- c\nSELECT 1"))
+        assertTrue(isReadOnlySql("WITH c AS (SELECT 1) SELECT * FROM c"))
+        assertTrue(isReadOnlySql("SHOW TABLES"))
+        assertTrue(isReadOnlySql("VALUES (1), (2)"))
+        assertFalse(isReadOnlySql("UPDATE t SET x = 1"))
+        assertFalse(isReadOnlySql("INSERT INTO t VALUES (1)"))
+        assertFalse(isReadOnlySql("DELETE FROM t"))
+        assertFalse(isReadOnlySql("WITH c AS (SELECT 1) INSERT INTO t SELECT * FROM c"))
+        assertFalse(isReadOnlySql("SELECT * FROM t FOR UPDATE"))
+        assertFalse(isReadOnlySql("SELECT * FROM t INTO new_t"))
+        assertFalse(isReadOnlySql("CREATE TABLE t (id INT)"))
+        assertFalse(isReadOnlySql("EXPLAIN ANALYZE INSERT INTO t VALUES (1)"))
+        assertFalse(isReadOnlySql(""))
+    }
 }

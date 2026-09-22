@@ -57,6 +57,7 @@ import db.SqlHistoryRow
 import db.WorkspaceRecord
 import engine.EditorLanguage
 import engine.Protocol
+import redis.RedisProtocol
 import engine.model.SchemaMeta
 import i18n.I18n
 import i18n.Str
@@ -133,6 +134,8 @@ fun WindowScope.EditorArea(
     run: ConsoleRunUi,
     /** 执行请求：参数为编辑器当前选中片段（去首尾空白）；null = 无有效选中。 */
     onRun: (String?) -> Unit,
+    /** 无选中且光标处没有可自动执行的只读查询时的提示（toast）。 */
+    onRunHint: () -> Unit = {},
     /** 结果区多语句 Tab 切换（选中第 index 条语句结果）。 */
     onSelectOutcome: (Int) -> Unit,
     /** Redis 结果视图的键元数据（非 Redis 后端忽略）。 */
@@ -497,7 +500,25 @@ fun WindowScope.EditorArea(
                             state = state,
                             consoleId = consoleId,
                             dirty = editorDirty,
-                            onCtrlEnter = { selectedSqlOf(state.text.toString(), state.selection)?.let(onRun) },
+                            // 有选区 → 执行选区（任意语句）；无选区 → 只自动执行光标处的「只读查询」。
+                            onCtrlEnter = {
+                                val text = state.text.toString()
+                                val sel = state.selection
+                                val selected = selectedSqlOf(text, sel)
+                                if (selected != null) {
+                                    onRun(selected)
+                                } else {
+                                    val query = when (profile?.dbType?.protocol) {
+                                        Protocol.JDBC -> statementAtCaret(text, sel.start)?.takeIf { isReadOnlySql(it) }
+                                        Protocol.REDIS -> RedisProtocol.commandAtCaret(text, sel.start)
+                                            ?.takeIf { RedisProtocol.isReadOnlyCommand(it) }
+                                        // ES 编辑器本身就是 _search DSL，整段即为只读查询
+                                        Protocol.ELASTICSEARCH -> text.trim().takeIf { it.isNotEmpty() }
+                                        null -> null
+                                    }
+                                    if (query != null) onRun(query) else onRunHint()
+                                }
+                            },
                             completionIdentifiers = completionIdentifiers,
                             completionTables = completionTables,
                             completionFunctions = completionFunctions,

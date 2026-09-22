@@ -527,6 +527,7 @@ internal fun en(key: Str): String = when (key) {
     Str.MainStreamExportNeedsJdbc -> "Full export needs a live JDBC connection; reconnect and retry"
     Str.MainStreamExportFailed -> "Full export failed: {0}"
     Str.MainSelectSql -> "Select the SQL to run first (Ctrl+A to select all)"
+    Str.MainCaretNoQuery -> "No runnable query at the caret; select it to run writes/non-queries"
     Str.MainQueryRunning -> "A query is already running (click \"Cancel\" or press Esc)"
     Str.MainPreviewUnsupportedKind -> "This object type cannot be previewed"
     Str.MainConnectFailed -> "Failed to connect \"{0}\": {1}"

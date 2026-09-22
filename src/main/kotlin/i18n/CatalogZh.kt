@@ -526,6 +526,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.MainStreamExportNeedsJdbc -> "全量导出需要可用的 JDBC 连接，请重连后再试"
     Str.MainStreamExportFailed -> "全量导出失败：{0}"
     Str.MainSelectSql -> "请先选中要执行的 SQL（Ctrl+A 全选）"
+    Str.MainCaretNoQuery -> "光标处不是可自动执行的查询语句；写操作/非查询请选中后再执行"
     Str.MainQueryRunning -> "已有查询在执行中（可点「取消」或按 Esc）"
     Str.MainPreviewUnsupportedKind -> "该对象类型不支持预览"
     Str.MainConnectFailed -> "连接「{0}」失败：{1}"

@@ -1182,6 +1182,7 @@ private fun WindowScope.AppBody(
                         onSaveNow = { consoleState.activeConsole()?.let { consoleState.saveNow(it.id) } },
                         run = activeRun,
                         onRun = ::runActiveConsole,
+                        onRunHint = { toastState.show(I18n.t(Str.MainCaretNoQuery)) },
                         redisKeyMeta = activeConsole?.let { consoleState.redisKeyMetaOf(it.id) },
                         onSelectOutcome = { i ->
                             val c = activeConsole
