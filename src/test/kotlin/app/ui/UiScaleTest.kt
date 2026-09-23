@@ -1,5 +1,7 @@
 package app.ui
 
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -29,5 +31,11 @@ class UiScaleTest {
     @Test
     fun `target one leaves system density unchanged`() {
         assertEquals(1.25f, scaledDensity(1.25f, 1f, 1f))
+    }
+
+    @Test
+    fun `explicit-scale size multiplies both dimensions`() {
+        assertEquals(DpSize(1140.dp, 780.dp), scaledSize(760.dp, 520.dp, 1.5f))
+        assertEquals(DpSize(760.dp, 520.dp), scaledSize(760.dp, 520.dp, 1f))
     }
 }

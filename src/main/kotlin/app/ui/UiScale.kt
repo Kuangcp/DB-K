@@ -47,6 +47,10 @@ fun scaledSize(width: Dp, height: Dp): DpSize =
 @Composable
 fun scaledSize(size: DpSize): DpSize = scaledSize(size.width, size.height)
 
+/** 非组合版本：供 [androidx.compose.runtime.LaunchedEffect] 等非组合上下文按显式倍率重算窗口尺寸。 */
+fun scaledSize(width: Dp, height: Dp, scale: Float): DpSize =
+    DpSize(width * scale, height * scale)
+
 /**
  * 与 [DialogWindow]（`onCloseRequest/state/title/resizable/onPreviewKeyEvent` 重载）同参，
  * 但在内容层套一层 [ProvideUiScale]。调用方把 `rememberDialogState` 的尺寸用 [scaledSize] 放大。

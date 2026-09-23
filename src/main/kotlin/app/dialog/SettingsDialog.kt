@@ -30,6 +30,7 @@ import androidx.compose.material.TextFieldColors
 import androidx.compose.material.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -52,6 +53,7 @@ import app.i18n.t
 import app.settings.EditorSettings
 import app.settings.Keymap
 import app.settings.UiScalePrefs
+import app.state.UiScaleState
 import app.ui.LocalThemeColors
 import app.ui.ScaledDialogWindow
 import app.ui.ThemeSpec
@@ -89,10 +91,17 @@ fun SettingsDialog(
     onUiScalePreview: (Float) -> Unit = {},
 ) {
     if (!visible) return
+    // 实时预览会改 UiScaleState；`rememberDialogState` 只在首次组合取 size，
+    // 故用 LaunchedEffect 把原生窗口尺寸同步到当前缩放，避免从 100% 拖大后设置窗内容溢出。
+    val scale = UiScaleState.scale
+    val dialogState = rememberDialogState(size = scaledSize(760.dp, 520.dp, scale))
+    LaunchedEffect(scale) {
+        dialogState.size = scaledSize(760.dp, 520.dp, scale)
+    }
     ScaledDialogWindow(
         onCloseRequest = onDismiss,
         title = t(Str.SettingsTitle),
-        state = rememberDialogState(size = scaledSize(760.dp, 520.dp)),
+        state = dialogState,
     ) {
         // DialogWindow 是独立 composition，不继承主窗口的 CompositionLocal → 自行提供语言
         ProvideI18n(language) {
