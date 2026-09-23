@@ -714,6 +714,8 @@ internal fun EditorPane(
         },
     )
     val edgeZonePx = with(density) { 30.dp.toPx() }
+    // 右侧滚动条区域（含 dirty 提示）：按下不算拖选，否则拖滚动条到底/回顶会误触发自动滚动选字
+    val scrollbarZonePx = with(density) { (dbScrollbarStyle().thickness.value + 8f).dp.toPx() }
     val scrollDir = when {
         !dragActive || dragPointer == null -> 0
         dragPointer!!.y < textTopPx + edgeZonePx -> -1
@@ -776,9 +778,12 @@ internal fun EditorPane(
                             when (e.type) {
                                 PointerEventType.Press -> if (e.buttons.isPrimaryPressed) {
                                     exitMultiCursor()
-                                    dragActive = true
+                                    val p = e.changes.firstOrNull()?.position
+                                    // 滚动条上的按下不是文本拖选：避免拖动滚动条时被误判成拖选选区
+                                    val onScrollbar = boxW > 0 && p != null && p.x >= boxW - scrollbarZonePx
+                                    dragActive = !onScrollbar
                                     scrollAnchor = null
-                                    dragPointer = e.changes.firstOrNull()?.position
+                                    dragPointer = if (onScrollbar) null else p
                                 }
                                 PointerEventType.Move -> if (dragActive) {
                                     if (e.buttons.isPrimaryPressed) {
