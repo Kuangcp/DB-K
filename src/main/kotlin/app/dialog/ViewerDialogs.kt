@@ -45,12 +45,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
 import app.core.NativeMemory
 import app.ui.decodeBase64Bytes
+import app.ui.ScaledDialogWindow
+import app.ui.scaledSize
 import app.ui.humanSize
 import app.ui.imageFormatName
 import app.ui.jsonSyntaxPalette
@@ -302,9 +303,9 @@ fun DdlDialog(
     } else {
         I18n.t(Str.DdlTitleDefinition, I18n.t(request.noun), request.objectName)
     }
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
-        state = rememberDialogState(size = VIEWER_WINDOW_SIZE),
+        state = rememberDialogState(size = scaledSize(VIEWER_WINDOW_SIZE)),
         title = title,
         resizable = true,
         onPreviewKeyEvent = escapeCloses(onDismiss),
@@ -372,9 +373,9 @@ fun TextViewerDialog(
     extraAction: Pair<String, () -> Unit>? = null,
 ) {
     val lineCount = content.count { it == '\n' } + 1
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
-        state = rememberDialogState(size = VIEWER_WINDOW_SIZE),
+        state = rememberDialogState(size = scaledSize(VIEWER_WINDOW_SIZE)),
         title = title,
         resizable = true,
         onPreviewKeyEvent = escapeCloses(onDismiss),
@@ -497,9 +498,9 @@ fun CellViewerDialog(
         }
     }
 
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
-        state = rememberDialogState(size = VIEWER_WINDOW_SIZE),
+        state = rememberDialogState(size = scaledSize(VIEWER_WINDOW_SIZE)),
         title = title,
         resizable = true,
         onPreviewKeyEvent = escapeCloses(onDismiss),
@@ -660,9 +661,9 @@ fun CommitPreviewDialog(
     onDismiss: () -> Unit,
 ) {
     val sql = remember(request) { request.statements.joinToString("\n") }
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
-        state = rememberDialogState(size = DpSize(720.dp, 520.dp)),
+        state = rememberDialogState(size = scaledSize(DpSize(720.dp, 520.dp))),
         title = I18n.t(Str.CommitPreviewTitle, request.statements.size),
         resizable = true,
         onPreviewKeyEvent = escapeCloses(onDismiss),

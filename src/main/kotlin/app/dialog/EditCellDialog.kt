@@ -32,8 +32,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
+import app.ui.ScaledDialogWindow
+import app.ui.scaledSize
 import jdbc.CellValue
 import i18n.I18n
 import i18n.Str
@@ -71,9 +72,9 @@ fun EditCellDialog(
     // 尺寸只在打开时按 initial 算一次（可手动缩放）；打开后打字不再改窗口大小，避免跳变。
     val windowSize = remember(initial) { dialogSizeFor(initial) }
 
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
-        state = rememberDialogState(size = windowSize),
+        state = rememberDialogState(size = scaledSize(windowSize)),
         title = title,
         resizable = true,
         onPreviewKeyEvent = { e ->

@@ -45,13 +45,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.i18n.ProvideI18n
 import app.i18n.t
 import app.settings.ThemesStore
 import app.ui.LocalThemeColors
+import app.ui.ScaledDialogWindow
 import app.ui.ThemeColors
+import app.ui.scaledSize
 import app.ui.ThemeSpec
 import app.ui.defaultThemeId
 import app.ui.sqlHighlightKeywordSet
@@ -128,10 +129,10 @@ fun ThemeDialog(
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
         title = t(Str.ThemeManagerTitle),
-        state = rememberDialogState(width = 780.dp, height = 560.dp),
+        state = rememberDialogState(size = scaledSize(780.dp, 560.dp)),
     ) {
         ProvideI18n(language) {
             MaterialTheme(colors = activeTheme.colors.toMaterialColors()) {
