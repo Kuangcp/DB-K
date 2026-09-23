@@ -409,6 +409,8 @@ private fun WindowScope.AppBody(
     }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
+    // 打开设置时的缩放快照：用于「取消」回退；实时预览改的是 UiScaleState
+    var settingsInitialScale by remember { mutableStateOf(UiScaleState.scale) }
     // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
     var keymap by remember { mutableStateOf(KeymapPrefs.load()) }
     // 语言偏好（null = 跟随系统）：设置窗口保存后写盘并即时生效（无重启）
@@ -1424,7 +1426,10 @@ private fun WindowScope.AppBody(
                         onSelectTheme = ::selectTheme,
                         onManageThemes = { dialogState.showThemeDialog = true },
                         editorSettings = editorSettings,
-                        onOpenSettings = { dialogState.showSettings = true },
+                        onOpenSettings = {
+                            settingsInitialScale = UiScaleState.scale
+                            dialogState.showSettings = true
+                        },
                         mainWindowState = mainWindowState,
                         onWindowCloseRequest = onWindowCloseRequest,
                     )
@@ -1447,20 +1452,28 @@ private fun WindowScope.AppBody(
                     visible = dialogState.showSettings,
                     theme = activeTheme,
                     language = effectiveLang,
-                    initial = SettingsSnapshot(editorSettings, keymap, languagePref),
-                    onDismiss = { dialogState.showSettings = false },
+                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale),
+                    onDismiss = {
+                        // 取消/关闭：回退实时预览的缩放，不落盘
+                        UiScaleState.set(settingsInitialScale)
+                        dialogState.showSettings = false
+                    },
                     onSave = { snapshot ->
                         editorSettings = snapshot.editor
                         keymap = snapshot.keymap
                         languagePref = snapshot.language
                         // 非 UI 层读的是全局 I18n.lang；与 snapshot 同步更新，避免一帧旧语言
                         I18n.lang = snapshot.language ?: Lang.system()
+                        // 全局界面缩放：即时生效 + 落盘
+                        UiScaleState.set(snapshot.uiScale)
+                        UiScalePrefs.save(snapshot.uiScale)
                         EditorPrefs.save(snapshot.editor)
                         KeymapPrefs.save(snapshot.keymap)
                         LanguagePrefs.save(snapshot.language)
                         dialogState.showSettings = false
                     },
                     onManageThemes = { dialogState.showThemeDialog = true },
+                    onUiScalePreview = { UiScaleState.set(it) },
                 )
                 ThemeDialog(
                     visible = dialogState.showThemeDialog,

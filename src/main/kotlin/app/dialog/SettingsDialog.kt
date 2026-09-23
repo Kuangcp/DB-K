@@ -43,7 +43,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.build.Version
 import app.core.openDirectory
@@ -52,9 +51,12 @@ import app.i18n.ProvideI18n
 import app.i18n.t
 import app.settings.EditorSettings
 import app.settings.Keymap
+import app.settings.UiScalePrefs
 import app.ui.LocalThemeColors
+import app.ui.ScaledDialogWindow
 import app.ui.ThemeSpec
 import app.ui.editorFontFamily
+import app.ui.scaledSize
 import db.AppPaths
 import i18n.I18n
 import i18n.Lang
@@ -66,6 +68,8 @@ data class SettingsSnapshot(
     val keymap: Keymap,
     /** 语言偏好；`null` = 跟随系统。 */
     val language: Lang? = null,
+    /** 全局界面缩放；1.0 = 100%。 */
+    val uiScale: Float = UiScalePrefs.DEFAULT_SCALE,
 )
 
 /**
@@ -81,12 +85,14 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
     onSave: (SettingsSnapshot) -> Unit,
     onManageThemes: () -> Unit = {},
+    /** 实时预览：拖动滑块时立即把比例广播到全局（取消时由调用方回退）。 */
+    onUiScalePreview: (Float) -> Unit = {},
 ) {
     if (!visible) return
-    DialogWindow(
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
         title = t(Str.SettingsTitle),
-        state = rememberDialogState(width = 760.dp, height = 520.dp),
+        state = rememberDialogState(size = scaledSize(760.dp, 520.dp)),
     ) {
         // DialogWindow 是独立 composition，不继承主窗口的 CompositionLocal → 自行提供语言
         ProvideI18n(language) {
@@ -96,7 +102,13 @@ fun SettingsDialog(
                     LocalContentColor provides MaterialTheme.colors.onSurface,
                     LocalThemeColors provides theme.colors,
                 ) {
-                    SettingsBody(initial = initial, onCancel = onDismiss, onSave = onSave, onManageThemes = onManageThemes)
+                    SettingsBody(
+                        initial = initial,
+                        onCancel = onDismiss,
+                        onSave = onSave,
+                        onManageThemes = onManageThemes,
+                        onUiScalePreview = onUiScalePreview,
+                    )
                 }
             }
         }
@@ -109,12 +121,14 @@ private fun SettingsBody(
     onCancel: () -> Unit,
     onSave: (SettingsSnapshot) -> Unit,
     onManageThemes: () -> Unit,
+    onUiScalePreview: (Float) -> Unit = {},
 ) {
     var section by remember { mutableIntStateOf(0) }
     var fontFamily by remember { mutableStateOf(initial.editor.fontFamilyName) }
     var fontSize by remember { mutableFloatStateOf(initial.editor.fontSizeSp) }
     var keymap by remember { mutableStateOf(initial.keymap) }
     var languagePref by remember { mutableStateOf(initial.language) }
+    var uiScale by remember { mutableFloatStateOf(initial.uiScale) }
 
     Column(
         modifier = Modifier
@@ -154,6 +168,8 @@ private fun SettingsBody(
                             onFontFamilyChange = { fontFamily = it },
                             fontSize = fontSize,
                             onFontSizeChange = { fontSize = it },
+                            uiScale = uiScale,
+                            onUiScaleChange = { uiScale = it; onUiScalePreview(it) },
                             languagePref = languagePref,
                             onLanguageChange = { languagePref = it },
                             onManageThemes = onManageThemes,
@@ -180,7 +196,14 @@ private fun SettingsBody(
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onCancel) { Text(t(Str.CommonCancel)) }
             TextButton(onClick = {
-                onSave(SettingsSnapshot(EditorSettings.sanitized(fontFamily, fontSize), keymap, languagePref))
+                onSave(
+                    SettingsSnapshot(
+                        editor = EditorSettings.sanitized(fontFamily, fontSize),
+                        keymap = keymap,
+                        language = languagePref,
+                        uiScale = uiScale,
+                    ),
+                )
             }) {
                 Text(t(Str.CommonSave))
             }
@@ -213,6 +236,8 @@ private fun GeneralSection(
     onFontFamilyChange: (String) -> Unit,
     fontSize: Float,
     onFontSizeChange: (Float) -> Unit,
+    uiScale: Float,
+    onUiScaleChange: (Float) -> Unit,
     languagePref: Lang?,
     onLanguageChange: (Lang?) -> Unit,
     onManageThemes: () -> Unit,
@@ -268,6 +293,24 @@ private fun GeneralSection(
             color = MaterialTheme.colors.onSurface,
         )
     }
+    Text(
+        t(Str.SettingsUiScale, "%.0f".format(uiScale * 100)),
+        style = MaterialTheme.typography.body2,
+        color = MaterialTheme.colors.onSurface,
+    )
+    Slider(
+        value = uiScale,
+        onValueChange = onUiScaleChange,
+        // 1.0..2.0、步进 0.05 → 20 段 → steps = 19
+        valueRange = UiScalePrefs.MIN_SCALE..UiScalePrefs.MAX_SCALE,
+        steps = 19,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        t(Str.SettingsUiScaleHint),
+        style = MaterialTheme.typography.caption,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+    )
     Text(
         t(Str.SettingsLanguage),
         style = MaterialTheme.typography.subtitle2,
