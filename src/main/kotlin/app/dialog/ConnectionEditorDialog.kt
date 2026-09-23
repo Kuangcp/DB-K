@@ -130,7 +130,8 @@ fun ConnectionEditorDialog(
 
     val isRedis = dbType == DbType.REDIS
     val isEs = dbType == DbType.ELASTICSEARCH
-    val canSubmit = name.isNotBlank() && (database.isNotBlank() || isEs)
+    // 数据库名非必填：服务端类数据库可不指定库连接（SQLite 的“数据库”是文件路径，仍必填）
+    val canSubmit = name.isNotBlank() && (!isEmbedded || database.isNotBlank())
 
     // ---------- 测试连接 ----------
     val scope = rememberCoroutineScope()
@@ -138,9 +139,8 @@ fun ConnectionEditorDialog(
     var testPassed by remember(request) { mutableStateOf<Boolean?>(null) }
     var testMessage by remember(request) { mutableStateOf("") }
     val canTest = when {
-        isRedis -> host.isNotBlank()
-        isEs -> host.isNotBlank()
-        else -> database.isNotBlank() && (isEmbedded || host.isNotBlank())
+        isEmbedded -> database.isNotBlank()
+        else -> host.isNotBlank()
     }
 
     fun runTestConnection() {
@@ -312,7 +312,7 @@ fun ConnectionEditorDialog(
                         )
                     }
                 }
-                if (!isEmbedded && (database.isNotBlank() || isRedis || isEs)) {
+                if (!isEmbedded) {
                     Text(
                         when {
                             isRedis -> t(Str.ConnUrlPreviewRedis, build().urlPreview())
