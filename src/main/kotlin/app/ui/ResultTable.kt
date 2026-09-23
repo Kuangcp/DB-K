@@ -45,6 +45,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -120,6 +122,16 @@ private const val MAX_FLEX_COL_WIDTH = 600
 /** 结果表内单元格坐标（行列均基于当前展示视图：转置后为转置坐标）。 */
 private data class CellSel(val row: Int, val col: Int)
 
+/** 矩形选区：锚点（选区起点）+ 焦点（当前格/另一端）；min/max 规整为矩形。 */
+private data class SelRect(val anchor: CellSel, val focus: CellSel) {
+    val minRow: Int get() = minOf(anchor.row, focus.row)
+    val maxRow: Int get() = maxOf(anchor.row, focus.row)
+    val minCol: Int get() = minOf(anchor.col, focus.col)
+    val maxCol: Int get() = maxOf(anchor.col, focus.col)
+    val isSingle: Boolean get() = anchor == focus
+    fun contains(row: Int, col: Int): Boolean = row in minRow..maxRow && col in minCol..maxCol
+}
+
 /** 行内编辑目标：已有结果格 / 待插入行的一格。 */
 private sealed interface EditTarget {
     data class Cell(val row: Int, val col: Int) : EditTarget
@@ -163,6 +175,7 @@ internal fun ResultTable(
     val lang = LocalLang.current
     // 窗口级 Ctrl 状态（AWT dispatcher 维护）；结果表格 Ctrl+双击=编辑用
     val ctrlHeld = LocalCtrlHeld.current
+    val shiftHeld = LocalShiftHeld.current
     // 单元格大段文本查看器（双击 / 右键「查看完整内容」）
     var viewer by remember { mutableStateOf<CellView?>(null) }
     // 正在行内编辑的目标 + 草稿
@@ -233,30 +246,67 @@ internal fun ResultTable(
                 .toInt()
         }
     }
-    // 点选 / 方向键选中的单元格（换结果或转置即清空）
-    val sel = remember(result.sql, result.rows.size, transposed) { mutableStateOf<CellSel?>(null) }
+    // 点选 / 方向键选中的选区（换结果或转置即清空）
+    val sel = remember(result.sql, result.rows.size, transposed) { mutableStateOf<SelRect?>(null) }
     val focusRequester = remember { FocusRequester() }
-    val onMove = { dr: Int, dc: Int ->
-        if (view.rows.isNotEmpty() && cols.isNotEmpty()) {
-            val cur = sel.value ?: CellSel(0, 0)
-            val nr = (cur.row + dr).coerceIn(0, view.rows.size - 1)
-            val nc = (cur.col + dc).coerceIn(0, cols.size - 1)
-            sel.value = CellSel(nr, nc)
-            scope.launch {
-                // 垂直：目标行不在可视区才滚（避免每次移动都跳回顶部）
-                if (vScroll.layoutInfo.visibleItemsInfo.none { it.index == nr }) {
-                    vScroll.animateScrollToItem(nr)
-                }
-                // 水平：把目标列滚进视口
-                val x0 = with(density) { (RESULT_GUTTER_DP + widths.take(nc).sum()).dp.toPx() }
-                val x1 = x0 + with(density) { widths[nc].dp.toPx() }
-                val vp = hScroll.viewportSize
-                when {
-                    x0 < hScroll.value -> hScroll.animateScrollTo(x0.toInt())
-                    x1 > hScroll.value + vp -> hScroll.animateScrollTo((x1 - vp).toInt())
-                }
+    /** 把目标格滚进可视区（垂直：不可视才滚；水平：整列滚进视口）。 */
+    fun scrollToCell(nr: Int, nc: Int) {
+        scope.launch {
+            // 垂直：目标行不在可视区才滚（避免每次移动都跳回顶部）
+            if (vScroll.layoutInfo.visibleItemsInfo.none { it.index == nr }) {
+                vScroll.animateScrollToItem(nr)
+            }
+            // 水平：把目标列滚进视口
+            val x0 = with(density) { (RESULT_GUTTER_DP + widths.take(nc).sum()).dp.toPx() }
+            val x1 = x0 + with(density) { widths[nc].dp.toPx() }
+            val vp = hScroll.viewportSize
+            when {
+                x0 < hScroll.value -> hScroll.animateScrollTo(x0.toInt())
+                x1 > hScroll.value + vp -> hScroll.animateScrollTo((x1 - vp).toInt())
             }
         }
+    }
+    // 方向键：从焦点（或 0,0）收起为单选并移动。
+    val onMove = { dr: Int, dc: Int ->
+        if (view.rows.isNotEmpty() && cols.isNotEmpty()) {
+            val cur = sel.value?.focus ?: CellSel(0, 0)
+            val nr = (cur.row + dr).coerceIn(0, view.rows.size - 1)
+            val nc = (cur.col + dc).coerceIn(0, cols.size - 1)
+            sel.value = SelRect(CellSel(nr, nc), CellSel(nr, nc))
+            scrollToCell(nr, nc)
+        }
+    }
+    // Shift+方向键：锚点不动、焦点移动 → 扩展矩形。
+    val onExtend = { dr: Int, dc: Int ->
+        if (view.rows.isNotEmpty() && cols.isNotEmpty()) {
+            val rect = sel.value ?: SelRect(CellSel(0, 0), CellSel(0, 0))
+            val cur = rect.focus
+            val nr = (cur.row + dr).coerceIn(0, view.rows.size - 1)
+            val nc = (cur.col + dc).coerceIn(0, cols.size - 1)
+            sel.value = SelRect(rect.anchor, CellSel(nr, nc))
+            scrollToCell(nr, nc)
+        }
+    }
+    /** 选区内的行 × 列（按当前视图坐标；null 保留）。 */
+    fun selectedRowsOf(rect: SelRect): List<List<String?>> =
+        (rect.minRow..rect.maxRow).mapNotNull { r ->
+            view.rows.getOrNull(r)?.let { row -> (rect.minCol..rect.maxCol).map { c -> row.getOrNull(c) } }
+        }
+
+    /** 复制选区：列名 = 选中列（含表头 CSV/TSV）；Toast 带行/列数。 */
+    fun copySelection(rect: SelRect, tsv: Boolean) {
+        val block = selectedRowsOf(rect)
+        if (block.isEmpty()) return
+        val colNames = (rect.minCol..rect.maxCol).mapNotNull { cols.getOrNull(it)?.name }
+        val text = if (tsv) ExportText.tsvHeaderAndRows(colNames, block)
+        else ExportText.csvHeaderAndRows(colNames, block)
+        val nRows = rect.maxRow - rect.minRow + 1
+        val nCols = rect.maxCol - rect.minCol + 1
+        onCopyText(
+            text,
+            if (tsv) I18n.t(lang, Str.ResultCopiedSelectionTsv, nRows, nCols)
+            else I18n.t(lang, Str.ResultCopiedSelectionCsv, nRows, nCols),
+        )
     }
     fun cellText(r: Int, c: Int): String? = view.rows.getOrNull(r)?.getOrNull(c)
 
@@ -272,7 +322,7 @@ internal fun ResultTable(
     fun beginEdit(r: Int, c: Int) {
         if (!editableAt(r, c)) return
         editDraft = cellText(r, c).orEmpty()
-        sel.value = CellSel(r, c)
+        sel.value = SelRect(CellSel(r, c), CellSel(r, c))
         editing = EditTarget.Cell(r, c)
     }
 
@@ -324,8 +374,8 @@ internal fun ResultTable(
     val selSnapshot = sel.value
     LaunchedEffect(selSnapshot, transposed, rowView.rowOrder) {
         onSelectedRowChange(
-            selSnapshot?.let {
-                displayToOriginal(rowView.rowOrder, result.columns.size, transposed, it.row, it.col)?.row
+            selSnapshot?.focus?.let { f ->
+                displayToOriginal(rowView.rowOrder, result.columns.size, transposed, f.row, f.col)?.row
             },
         )
     }
@@ -339,15 +389,33 @@ internal fun ResultTable(
                 // 编辑中：其余按键（含方向键/Ctrl+C）交给文本框，不要劫持光标移动与复制
                 editing != null -> false
                 keymap.matches(ShortcutCommand.COPY_CELL, e) -> {
-                    sel.value
-                        ?.takeIf { it.row in view.rows.indices && it.col in cols.indices }
-                        ?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
+                    val rect = sel.value
+                    if (rect != null && !rect.isSingle) {
+                        // 多选 → 无表头 TSV（DataGrip 默认风格）
+                        val block = selectedRowsOf(rect)
+                        if (block.isNotEmpty()) {
+                            onCopyText(
+                                ExportText.tsvRows(block),
+                                I18n.t(lang, Str.ResultCopiedSelectionTsv, rect.maxRow - rect.minRow + 1, rect.maxCol - rect.minCol + 1),
+                            )
+                        }
+                    } else {
+                        rect?.focus
+                            ?.takeIf { it.row in view.rows.indices && it.col in cols.indices }
+                            ?.let { s -> copyCellValue(onCopyText, view.rows[s.row][s.col], cols[s.col].name) }
+                    }
                     true
                 }
-                e.key == Key.DirectionUp -> { onMove(-1, 0); true }
-                e.key == Key.DirectionDown -> { onMove(1, 0); true }
-                e.key == Key.DirectionLeft -> { onMove(0, -1); true }
-                e.key == Key.DirectionRight -> { onMove(0, 1); true }
+                e.isCtrlPressed && e.key == Key.A -> {
+                    if (view.rows.isNotEmpty() && cols.isNotEmpty()) {
+                        sel.value = SelRect(CellSel(0, 0), CellSel(view.rows.size - 1, cols.size - 1))
+                    }
+                    true
+                }
+                e.key == Key.DirectionUp -> { if (e.isShiftPressed) onExtend(-1, 0) else onMove(-1, 0); true }
+                e.key == Key.DirectionDown -> { if (e.isShiftPressed) onExtend(1, 0) else onMove(1, 0); true }
+                e.key == Key.DirectionLeft -> { if (e.isShiftPressed) onExtend(0, -1) else onMove(0, -1); true }
+                e.key == Key.DirectionRight -> { if (e.isShiftPressed) onExtend(0, 1) else onMove(0, 1); true }
                 else -> false
             }
         }
@@ -387,7 +455,7 @@ internal fun ResultTable(
                     ResultHeaderCell(
                         name = col.name,
                         width = widths[c],
-                        highlighted = sel.value?.col == c,
+                        highlighted = sel.value?.let { c in it.minCol..it.maxCol } == true,
                         sort = viewSpec.sorts.firstOrNull { it.column == c },
                         sortRank = viewSpec.sorts.indexOfFirst { it.column == c }.takeIf { it > 0 },
                         filterText = viewSpec.filters[c],
@@ -416,7 +484,7 @@ internal fun ResultTable(
             Column(modifier = Modifier.fillMaxSize().padding(end = scrollbarStyle.thickness, bottom = scrollbarStyle.thickness)) {
                 LazyColumn(state = vScroll, modifier = Modifier.weight(1f).fillMaxWidth()) {
                     itemsIndexed(view.rows) { index, row ->
-                        val rowSelected = sel.value?.row == index
+                        val rowSelected = sel.value?.let { index in it.minRow..it.maxRow } == true
                         val origRow = rowView.rowOrder.getOrNull(index)
                         val deleted = origRow != null && origRow in resultEdits.deletes
                         Row(
@@ -447,13 +515,19 @@ internal fun ResultTable(
                                 DataCell(
                                     value = v,
                                     width = widths[c],
-                                    selected = sel.value == CellSel(index, c),
+                                    selected = sel.value?.focus == CellSel(index, c),
+                                    rangeSelected = sel.value?.let { !it.isSingle && it.contains(index, c) } == true,
                                     pending = pending,
                                     deleted = deleted,
                                     onSelect = {
                                         val cur = editing
                                         if (cur != null && cur != EditTarget.Cell(index, c)) commitEditDraft()
-                                        sel.value = CellSel(index, c)
+                                        val rect = sel.value
+                                        sel.value = if (shiftHeld && rect != null) {
+                                            SelRect(rect.anchor, CellSel(index, c))
+                                        } else {
+                                            SelRect(CellSel(index, c), CellSel(index, c))
+                                        }
                                         focusRequester.requestFocus()
                                     },
                                     editor = if (isEditing) {
@@ -490,6 +564,19 @@ internal fun ResultTable(
                                         else -> cellView?.let { cv -> { viewer = cv } }
                                     },
                                     menuItems = buildList {
+                                        // 命中格在当前多选区内 → 顶部给「复制选区」
+                                        sel.value?.let { r -> if (!r.isSingle && r.contains(index, c)) r else null }?.let { rect ->
+                                            add(
+                                                ContextMenuItem(I18n.t(lang, Str.ResultCopySelectionTsv)) {
+                                                    copySelection(rect, tsv = true)
+                                                },
+                                            )
+                                            add(
+                                                ContextMenuItem(I18n.t(lang, Str.ResultCopySelectionCsv)) {
+                                                    copySelection(rect, tsv = false)
+                                                },
+                                            )
+                                        }
                                         add(
                                             ContextMenuItem(I18n.t(lang, Str.ResultCopyCell)) {
                                                 copyCellValue(onCopyText, v, colName)

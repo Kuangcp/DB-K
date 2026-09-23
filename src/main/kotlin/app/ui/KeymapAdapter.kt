@@ -29,6 +29,9 @@ val LocalKeymap = staticCompositionLocalOf { Keymap.Default }
  */
 val LocalCtrlHeld = staticCompositionLocalOf { false }
 
+/** 窗口级 Shift 是否按下（同 [LocalCtrlHeld]）：结果网格 Shift+点击=扩展选区用。 */
+val LocalShiftHeld = staticCompositionLocalOf { false }
+
 // ───────────────────────── Compose 侧 ─────────────────────────
 
 fun ShortcutKey.toComposeKey(): Key = when (this) {

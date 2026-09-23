@@ -63,6 +63,23 @@ object ExportText {
     fun tsvHeaderAndRow(columns: List<String>, row: List<String?>): String =
         tsvHeaderAndRows(columns, listOf(row))
 
+    /** 多行 TSV（**无表头**）：行内 Tab、行间 `\n`。用于结果区多选 Ctrl+C。 */
+    fun tsvRows(rows: List<List<String?>>): String =
+        rows.joinToString("\n") { r -> r.joinToString("\t") { tsvField(it) } }
+
+    /** 表头行 + 数据行 CSV：行内逗号、行间 `\n`，各字段走 [csvField]。用于多选「复制选区 → CSV」。 */
+    fun csvHeaderAndRows(columns: List<String>, rows: List<List<String?>>): String {
+        val header = columns.joinToString(",") { csvField(it) }
+        if (rows.isEmpty()) return header
+        return buildString {
+            append(header)
+            for (r in rows) {
+                append('\n')
+                append(r.joinToString(",") { csvField(it) })
+            }
+        }
+    }
+
     /** SQL INSERT / JSON 里的字符串字面量转义（标准 SQL：单引号双写）。 */
     fun sqlString(v: String): String = "'" + v.replace("'", "''") + "'"
 

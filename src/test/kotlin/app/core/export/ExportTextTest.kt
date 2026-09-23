@@ -63,6 +63,31 @@ class ExportTextTest {
     }
 
     @Test
+    fun `tsv rows without header`() {
+        // 多选 Ctrl+C：无表头，行内 Tab 分行
+        assertEquals(
+            "1\ta\n2\tb",
+            ExportText.tsvRows(listOf(listOf("1", "a"), listOf("2", "b"))),
+        )
+        assertEquals("x", ExportText.tsvRows(listOf(listOf("x"))))
+        assertEquals("", ExportText.tsvRows(emptyList()))
+        // NULL → 空串
+        assertEquals("1\t", ExportText.tsvRows(listOf(listOf("1", null))))
+    }
+
+    @Test
+    fun `csv header and rows compose escaped multi-line block`() {
+        assertEquals(
+            "id,name\n1,\"a,b\"\n2,\"x\ny\"",
+            ExportText.csvHeaderAndRows(
+                listOf("id", "name"),
+                listOf(listOf("1", "a,b"), listOf("2", "x\ny")),
+            ),
+        )
+        assertEquals("id", ExportText.csvHeaderAndRows(listOf("id"), emptyList()))
+    }
+
+    @Test
     fun `sql literal types null numeric boolean and string`() {
         assertEquals("NULL", ExportText.sqlLiteral(null, Types.VARCHAR))
         assertEquals("42", ExportText.sqlLiteral("42", Types.INTEGER))

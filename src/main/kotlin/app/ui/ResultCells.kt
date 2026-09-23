@@ -296,6 +296,7 @@ internal fun DataCell(
     value: String?,
     width: Int,
     selected: Boolean = false,
+    rangeSelected: Boolean = false,
     pending: Boolean = false,
     deleted: Boolean = false,
     /** value == null 时的占位文本（待插入行未填列用「未填」，区别于显式 NULL）。 */
@@ -347,6 +348,7 @@ internal fun DataCell(
     val currentDoubleClick = rememberUpdatedState(onDoubleClick)
     val background = when {
         selected -> MaterialTheme.colors.primary.copy(alpha = 0.18f)
+        rangeSelected -> MaterialTheme.colors.primary.copy(alpha = 0.10f)
         pending -> Color(0xFFFFB300).copy(alpha = 0.20f)
         else -> Color.Transparent
     }

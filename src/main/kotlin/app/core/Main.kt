@@ -106,6 +106,7 @@ import app.ui.CompletionTable
 import app.ui.CompletionDismissSignal
 import app.ui.LocalCompletionDismiss
 import app.ui.LocalCtrlHeld
+import app.ui.LocalShiftHeld
 import app.ui.LocalKeymap
 import app.ui.ResultEdits
 import app.ui.MAX_RESULT_FRAC
@@ -924,6 +925,8 @@ private fun WindowScope.AppBody(
     val completionDismiss = remember { CompletionDismissSignal() }
     // 窗口级 Ctrl 按下状态：供结果表格 Ctrl+双击=编辑（AWT dispatcher 维护，焦点无关）。
     var ctrlHeld by remember { mutableStateOf(false) }
+    // 窗口级 Shift 按下状态：结果网格 Shift+点击=扩展选区。
+    var shiftHeld by remember { mutableStateOf(false) }
     // Ctrl+Tab 切换后请求把焦点交回编辑器（控制台节点按 consoleId 重建会丢焦点）。
     var editorFocusTick by remember { mutableStateOf(0) }
     MaterialTheme(colors = activeTheme.colors.toMaterialColors()) {
@@ -936,6 +939,7 @@ private fun WindowScope.AppBody(
             LocalKeymap provides keymap,
             LocalCompletionDismiss provides completionDismiss,
             LocalCtrlHeld provides ctrlHeld,
+            LocalShiftHeld provides shiftHeld,
         ) {
             // 窗口级业务键（显示/隐藏结果区、查看定义 DDL）用 AWT 级 KeyEventDispatcher 拦截：
             // Linux/X11 实测，修饰键+字母除 KEY_PRESSED 外还会派发一次字符事件
@@ -945,11 +949,14 @@ private fun WindowScope.AppBody(
             // （KEY_PRESSED + KEY_TYPED）吃掉，两条通道都收不到；命中哪两条命令由用户可配置键表决定。
             DisposableEffect(Unit) {
                 val dispatcher = java.awt.KeyEventDispatcher { e ->
-                    // 只观察 Ctrl 状态（不吞事件）；结果表格用它判 Ctrl+双击=编辑。
+                    // 只观察 Ctrl/Shift 状态（不吞事件）；结果表格用 Ctrl+双击=编辑、Shift+点击=扩展选区。
                     if (e.keyCode == java.awt.event.KeyEvent.VK_CONTROL) {
                         ctrlHeld = e.id == java.awt.event.KeyEvent.KEY_PRESSED
                         // Ctrl 松开 = 结束 Ctrl+Tab 的 MRU 循环会话（下次按下重新取快照）
                         if (e.id == java.awt.event.KeyEvent.KEY_RELEASED) consoleState.endMruCycle()
+                    }
+                    if (e.keyCode == java.awt.event.KeyEvent.VK_SHIFT) {
+                        shiftHeld = e.id == java.awt.event.KeyEvent.KEY_PRESSED
                     }
                     val matched = keymapState.value.matchAnyAwt(e)
                     when (matched) {
