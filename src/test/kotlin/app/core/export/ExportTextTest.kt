@@ -26,6 +26,43 @@ class ExportTextTest {
     }
 
     @Test
+    fun `tsv field is raw with null as empty`() {
+        assertEquals("plain", ExportText.tsvField("plain"))
+        assertEquals("", ExportText.tsvField(null))
+        // B 方案：TSV 原义，不转义 Tab / 换行 / 引号
+        assertEquals("a\tb", ExportText.tsvField("a\tb"))
+        assertEquals("l1\nl2", ExportText.tsvField("l1\nl2"))
+        assertEquals("he \"hi\"", ExportText.tsvField("he \"hi\""))
+    }
+
+    @Test
+    fun `tsv header and rows compose tab separated lines`() {
+        // 单列多行（PG EXPLAIN 形态）：首行表头，随后每行一条
+        assertEquals(
+            "QUERY PLAN\nSeq Scan on t\n  Filter: (id > 1)",
+            ExportText.tsvHeaderAndRows(
+                listOf("QUERY PLAN"),
+                listOf(listOf("Seq Scan on t"), listOf("  Filter: (id > 1)")),
+            ),
+        )
+    }
+
+    @Test
+    fun `tsv header and rows handles columns nulls and empty row set`() {
+        assertEquals(
+            "id\tname\n1\t\n2\tbob",
+            ExportText.tsvHeaderAndRows(listOf("id", "name"), listOf(listOf("1", null), listOf("2", "bob"))),
+        )
+        // 无数据行 → 只有表头
+        assertEquals("id\tname", ExportText.tsvHeaderAndRows(listOf("id", "name"), emptyList()))
+    }
+
+    @Test
+    fun `tsv header and single row`() {
+        assertEquals("a\tb\n1\t", ExportText.tsvHeaderAndRow(listOf("a", "b"), listOf("1", null)))
+    }
+
+    @Test
     fun `sql literal types null numeric boolean and string`() {
         assertEquals("NULL", ExportText.sqlLiteral(null, Types.VARCHAR))
         assertEquals("42", ExportText.sqlLiteral("42", Types.INTEGER))

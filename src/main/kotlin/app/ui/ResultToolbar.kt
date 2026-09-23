@@ -70,6 +70,7 @@ internal fun ResultToolbar(
     onInsertRow: () -> Unit,
     onToggleRowDelete: () -> Unit,
     onExport: () -> Unit,
+    onCopyAll: () -> Unit,
     onCancelRun: () -> Unit,
 ) {
     val result = run.result
@@ -192,6 +193,13 @@ internal fun ResultToolbar(
                     onClick = onFetchMore,
                 )
             }
+            // 复制全部（TSV，含表头）：原始结果全量，供分享多行文本结果（如 PG EXPLAIN）
+            ResultIconButton(
+                icon = DbIcons.Copy,
+                description = t(Str.ResultCopyAllTsv),
+                enabled = result?.let { it.isQuery && it.rowCount > 0 } == true,
+                onClick = onCopyAll,
+            )
             ResultIconButton(
                 icon = DbIcons.Download,
                 description = t(Str.ResultExport),

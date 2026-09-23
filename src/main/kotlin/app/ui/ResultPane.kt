@@ -33,9 +33,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.core.export.ExportText
 import app.state.ConsoleRunUi
+import app.i18n.LocalLang
 import app.i18n.t
 import engine.model.QueryResult
+import i18n.I18n
 import i18n.Str
 import jdbc.CellValue
 import jdbc.QueryExecutor
@@ -131,6 +134,8 @@ internal fun ResultTabs(
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 非 composable 的 onClick 里取词需要显式语言（与 ResultTable 同做法）
+    val lang = LocalLang.current
     // 结果网格当前选中的原始行（行级操作按钮据此定位）；结果 / Tab 变化时清空
     var selectedRow by remember(run.activeIndex, run.result?.sql, run.result?.rows?.size) {
         mutableStateOf<Int?>(null)
@@ -159,6 +164,18 @@ internal fun ResultTabs(
                 onInsertRow = onInsertRow,
                 onToggleRowDelete = { selectedRow?.let(onToggleRowDelete) },
                 onExport = onExport,
+                onCopyAll = {
+                    // 复制**原始结果**全量（不套客户端排序/筛选）：EXPLAIN 等行序有意义
+                    run.result?.takeIf { it.isQuery && it.rowCount > 0 }?.let { r ->
+                        val text = ExportText.tsvHeaderAndRows(r.columns.map { it.name }, r.rows)
+                        val label = if (r.truncated) {
+                            I18n.t(lang, Str.ResultCopiedAllTsvTruncated, r.rowCount)
+                        } else {
+                            I18n.t(lang, Str.ResultCopiedAllTsv, r.rowCount)
+                        }
+                        onCopyText(text, label)
+                    }
+                },
                 onCancelRun = onCancelRun,
             )
             Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))

@@ -525,6 +525,18 @@ internal fun ResultTable(
                                                     )
                                                 },
                                             )
+                                            // TSV（含表头）：与 CSV 同守卫（转置/截断行不提供）
+                                            add(
+                                                ContextMenuItem(I18n.t(lang, Str.ResultCopyRowTsv)) {
+                                                    onCopyText(
+                                                        ExportText.tsvHeaderAndRow(
+                                                            result.columns.map { it.name },
+                                                            result.rows[origRow],
+                                                        ),
+                                                        I18n.t(lang, Str.ResultCopiedRowTsv),
+                                                    )
+                                                },
+                                            )
                                         }
                                         if (isEditable && !deleted) {
                                             add(ContextMenuItem(I18n.t(lang, Str.ResultEditCell)) { beginEdit(index, c) })

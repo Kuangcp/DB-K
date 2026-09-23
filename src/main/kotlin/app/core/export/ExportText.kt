@@ -36,6 +36,33 @@ object ExportText {
         columns.joinToString(",") { csvField(it) } + "\n" +
             row.joinToString(",") { csvField(it) }
 
+    /**
+     * TSV 字段：NULL → 空串；其余**原样**（B 方案：不做转义/引号包裹）。
+     * 值内含 Tab/换行时按原义带出（分享文本友好；粘回表格可能串列，属已知取舍）。
+     */
+    fun tsvField(v: String?): String = v ?: ""
+
+    /**
+     * 表头行 + 数据行：行内 Tab 分隔，行间 `\n`，无尾随换行。
+     * 用于结果区「复制本行 → TSV（含表头）」与「复制全部（TSV，含表头）」。
+     * 单列多行（如 PG `EXPLAIN`）即“表头 + 每行一条”。
+     */
+    fun tsvHeaderAndRows(columns: List<String>, rows: List<List<String?>>): String {
+        val header = columns.joinToString("\t") { tsvField(it) }
+        if (rows.isEmpty()) return header
+        return buildString {
+            append(header)
+            for (r in rows) {
+                append('\n')
+                append(r.joinToString("\t") { tsvField(it) })
+            }
+        }
+    }
+
+    /** 单行 TSV（含表头行）。 */
+    fun tsvHeaderAndRow(columns: List<String>, row: List<String?>): String =
+        tsvHeaderAndRows(columns, listOf(row))
+
     /** SQL INSERT / JSON 里的字符串字面量转义（标准 SQL：单引号双写）。 */
     fun sqlString(v: String): String = "'" + v.replace("'", "''") + "'"
 
