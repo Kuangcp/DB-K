@@ -78,6 +78,7 @@ import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
 import app.settings.ThemesStore
 import app.settings.TreeExpandPrefs
+import app.settings.UiScalePrefs
 import app.settings.WindowPrefs
 import app.state.CommitPreviewRequest
 import app.state.ConfirmRequest
@@ -100,6 +101,7 @@ import app.state.PinToggleResult
 import app.state.TableDdlRequest
 import app.state.TreeState
 import app.state.ToastState
+import app.state.UiScaleState
 import app.ui.CompletionTable
 import app.ui.CompletionDismissSignal
 import app.ui.LocalCompletionDismiss
@@ -110,6 +112,7 @@ import app.ui.MAX_RESULT_FRAC
 import app.ui.MIN_RESULT_FRAC
 import app.ui.EditorArea
 import app.ui.LocalThemeColors
+import app.ui.ProvideUiScale
 import app.ui.defaultThemeId
 import app.ui.mergeThemes
 import app.ui.themeById
@@ -158,6 +161,8 @@ fun main() = application {
     Logger.info("db-k session start; dataDir={}", AppPaths.dataDirectory())
     // 语言：启动即确定（存档优先，否则跟随系统 locale），供非 UI 层（RowUpdater 等）与 UI 共用。
     I18n.lang = LanguagePrefs.load() ?: Lang.system()
+    // 全局界面缩放：启动即确定（存档优先，默认 100%）；供所有窗口/对话框读取
+    UiScaleState.set(UiScalePrefs.load())
     // 未捕获异常（AWT-EventQueue / 后台线程 / 协程）默认只打到 stderr、不进会话日志；统一挂到
     // tinylog。JDK 的 EDT 在 processException 里调线程的 UncaughtExceptionHandler，最终落到这里。
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -192,9 +197,13 @@ private fun AppRoot(onExit: () -> Unit) {
         resultFrac = (resultFrac + d).coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)
     }
     val density = LocalDensity.current.density
+    // 全局界面缩放：无存档几何时按比例放大默认窗口，避免高分辨率屏首次启动过于局促
+    val uiScale = UiScaleState.scale
+    val defaultWidthPx = (1180 * uiScale).roundToInt()
+    val defaultHeightPx = (760 * uiScale).roundToInt()
     val windowState = rememberWindowState(
-        width = Dp((geo?.width ?: 1180) / density),
-        height = Dp((geo?.height ?: 760) / density),
+        width = Dp((geo?.width ?: defaultWidthPx).toFloat() / density),
+        height = Dp((geo?.height ?: defaultHeightPx).toFloat() / density),
         position = if (geo?.x != null && geo.y != null) {
             WindowPosition(Dp(geo.x / density), Dp(geo.y / density))
         } else {
@@ -319,7 +328,7 @@ private fun AppRoot(onExit: () -> Unit) {
         state = windowState,
         // 无边框窗口的拖拽缩放热区默认 8dp（WindowDecorationDefaults 未暴露稳定读取），
         // 会盖住贴窗口右/下边缘的结果滚动条（悬停变缩放光标、抓不到）；缩到 4dp 后滚动条可正常点击拖动。
-        decoration = WindowDecoration.Undecorated(4.dp),
+        decoration = WindowDecoration.Undecorated(4.dp * uiScale),
         onCloseRequest = requestClose,
     ) {
         // 运行时窗口图标（X11 任务栏/装饰、Windows 任务栏）：从 classpath 读 png 设到 AWT Frame。
@@ -330,22 +339,24 @@ private fun AppRoot(onExit: () -> Unit) {
                 window.iconImages = listOf(img)
             }
         }
-        AppBody(
-            repository = repository,
-            treeState = treeState,
-            connectionsState = connectionsState,
-            consoleState = consoleState,
-            dialogState = dialogState,
-            toastState = toastState,
-            mainWindowState = windowState,
-            onWindowCloseRequest = requestClose,
-            treeWidthDp = treeWidthDp,
-            onTreeWidthDelta = onTreeWidthDelta,
-            resultFrac = resultFrac,
-            onResultFracDelta = onResultFracDelta,
-            treeVisible = treeVisible,
-            onToggleTree = { treeVisible = !treeVisible },
-        )
+        ProvideUiScale {
+            AppBody(
+                repository = repository,
+                treeState = treeState,
+                connectionsState = connectionsState,
+                consoleState = consoleState,
+                dialogState = dialogState,
+                toastState = toastState,
+                mainWindowState = windowState,
+                onWindowCloseRequest = requestClose,
+                treeWidthDp = treeWidthDp,
+                onTreeWidthDelta = onTreeWidthDelta,
+                resultFrac = resultFrac,
+                onResultFracDelta = onResultFracDelta,
+                treeVisible = treeVisible,
+                onToggleTree = { treeVisible = !treeVisible },
+            )
+        }
     }
 }
 
