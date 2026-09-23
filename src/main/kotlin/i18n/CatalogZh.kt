@@ -73,6 +73,8 @@ internal fun zh(key: Str): String = when (key) {
     Str.SettingsEditorFontPlaceholder -> "留空 = 默认等宽字体；如 JetBrains Mono、Fira Code"
     Str.SettingsEditorFontSize -> "编辑器字号（sp）：{0}"
     Str.SettingsPreview -> "预览"
+    Str.SettingsUiScale -> "界面缩放（{0}%）"
+    Str.SettingsUiScaleHint -> "放大整个界面（字体、图标、边框），即时生效，取消不改"
 
     // ── 通用设置：诊断 ──
     Str.SettingsDiagnostics -> "诊断"

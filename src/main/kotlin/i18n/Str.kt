@@ -83,6 +83,8 @@ enum class Str {
     SettingsEditorFontPlaceholder,
     SettingsEditorFontSize,
     SettingsPreview,
+    SettingsUiScale,
+    SettingsUiScaleHint,
 
     // ── 通用设置：诊断 ──
     SettingsDiagnostics,

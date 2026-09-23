@@ -73,6 +73,8 @@ internal fun en(key: Str): String = when (key) {
     Str.SettingsEditorFontPlaceholder -> "Empty = default monospace; e.g. JetBrains Mono, Fira Code"
     Str.SettingsEditorFontSize -> "Editor font size (sp): {0}"
     Str.SettingsPreview -> "Preview"
+    Str.SettingsUiScale -> "UI scale ({0}%)"
+    Str.SettingsUiScaleHint -> "Scales the entire UI (text, icons, borders). Applies immediately; cancelling reverts."
 
     // ── General: diagnostics ──
     Str.SettingsDiagnostics -> "Diagnostics"
