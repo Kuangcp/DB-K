@@ -7,3 +7,6 @@ tools/
 local.properties
 .DS_Store
 logs
+
+# superpowers 隔离工作树
+.worktrees/
