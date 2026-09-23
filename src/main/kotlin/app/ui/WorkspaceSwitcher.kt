@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,7 +41,7 @@ import db.WorkspaceRecord
 import i18n.Str
 
 /** 工作区下拉项行高：比标题栏工具菜单（26dp）稍高，容下名称 + 计数 + hover 图标。 */
-private val WORKSPACE_ITEM_H = 30.dp
+private val WORKSPACE_ITEM_H = 34.dp
 
 /**
  * 标签条右侧的工作区切换器：当前工作区名 + 下拉。
@@ -96,7 +98,14 @@ internal fun WorkspaceSwitcher(
             }
             if (workspaces.isNotEmpty()) Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.08f))
             CompactMenuItem(onClick = { open = false; onCreate() }, height = WORKSPACE_ITEM_H) {
-                Text(t(Str.WorkspaceNew), fontSize = 12.5.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f))
+                Text(
+                    t(Str.WorkspaceNew),
+                    fontSize = 12.5.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
