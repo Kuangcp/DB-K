@@ -505,6 +505,7 @@ enum class Str {
     CmdFormatSql,
     CmdViewDdl,
     CmdToggleResults,
+    CmdToggleTree,
     CmdTranspose,
     CmdRefreshResult,
     CmdSwitchConsoleNext,

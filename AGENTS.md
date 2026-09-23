@@ -182,6 +182,8 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
   「控制台 N」（自动命名可右键改名）；TRIGGER 不预览。
 - 窗口几何：`WindowPrefs` 存 `<dataDir>/window.properties`（px 值）；退出 onCloseRequest 保存
   `windowState.position/size`（position 单位 Dp，需 *density 转 px；isSpecified=false 时不存 x/y，下次居中）。
+  同文件还存三栏布局 `treeWidth`（左树宽 dp）与 `resultFrac`（编辑/结果分隔比例）；左树**显隐不落盘**
+  （每次启动默认显示，`Ctrl+B` 切换）。最大化/全屏退出时几何保留上次值，但布局照写。
 - CSV 导出：`CsvExport` 写 UTF-8、双引号转义、NULL→空；AWT FileDialog 以 null owner 在 Linux 可用。
 - 需要人工确认的交互（拖拽、悬浮弹层、主题可读性…）：不要自己上 xdotool/截图分析，
   按「UI 验证方式」给步骤让用户验收。

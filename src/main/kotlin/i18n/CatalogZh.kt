@@ -498,6 +498,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.CmdFormatSql -> "格式化 SQL"
     Str.CmdViewDdl -> "查看对象定义"
     Str.CmdToggleResults -> "显示/隐藏结果区"
+    Str.CmdToggleTree -> "显示/隐藏左侧树"
     Str.CmdTranspose -> "行列转置"
     Str.CmdRefreshResult -> "刷新结果"
     Str.CmdSwitchConsoleNext -> "下一个控制台（最近使用）"

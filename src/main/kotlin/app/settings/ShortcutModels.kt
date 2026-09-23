@@ -193,6 +193,7 @@ enum class ShortcutCommand(
     FORMAT_SQL("formatSql", Str.CmdFormatSql, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, alt = true, key = ShortcutKey.L))),
     VIEW_DDL("viewDdl", Str.CmdViewDdl, true, ShortcutScope.WINDOW, listOf(chord(ctrl = true, key = ShortcutKey.Q))),
     TOGGLE_RESULTS("toggleResults", Str.CmdToggleResults, true, ShortcutScope.WINDOW, listOf(chord(alt = true, key = ShortcutKey.D))),
+    TOGGLE_TREE("toggleTree", Str.CmdToggleTree, true, ShortcutScope.WINDOW, listOf(chord(ctrl = true, key = ShortcutKey.B))),
     TRANSPOSE("transpose", Str.CmdTranspose, true, ShortcutScope.RESULT, listOf(chord(ctrl = true, key = ShortcutKey.T))),
     REFRESH_RESULT("refreshResult", Str.CmdRefreshResult, true, ShortcutScope.RESULT, listOf(chord(key = ShortcutKey.F5))),
     SWITCH_CONSOLE_NEXT("switchConsoleNext", Str.CmdSwitchConsoleNext, true, ShortcutScope.EDITOR, listOf(chord(ctrl = true, key = ShortcutKey.TAB))),

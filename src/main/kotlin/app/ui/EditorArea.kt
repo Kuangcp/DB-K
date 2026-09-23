@@ -197,6 +197,10 @@ fun WindowScope.EditorArea(
     /** 结果区显隐（Alt+D 由 Main 窗口根层统一接管，这里只读它布局）。 */
     resultsVisible: Boolean,
     onToggleResults: () -> Unit,
+    /** 编辑/结果分隔比例（结果区占比）；状态由 Main 持有，便于退出时持久化。 */
+    resultFrac: Float,
+    /** 分隔比例增量（拖动回调）；按当前值累加由 Main 负责（避免 pointerInput 缓存旧快照）。 */
+    onResultFracDelta: (Float) -> Unit,
     themes: List<ThemeSpec>,
     activeTheme: ThemeSpec,
     onSelectTheme: (String) -> Unit,
@@ -260,9 +264,8 @@ fun WindowScope.EditorArea(
         transposed = false
     }
     // —— 编辑区/结果区分隔 ——
-    // 编辑区与结果区按比例分配剩余高度（resultFrac 归结果区）；拖动中部窄分隔条实时改比例
-    // （像素差 / 内容区可用高换算，窗口缩放不改变已设比例）。
-    var resultFrac by remember { mutableStateOf(0.5f) }
+    // 编辑区与结果区按比例分配剩余高度（resultFrac 归结果区，状态由 Main 持有并持久化）；
+    // 拖动中部窄分隔条实时改比例（像素差 / 内容区可用高换算，窗口缩放不改变已设比例）。
     // 内容区总高度（px，拖动换算用）
     var paneH by remember { mutableStateOf(0) }
     // 结果区显隐由 Main 窗口根层（Alt+D）控制；新执行结果到达时自动重新显示，
@@ -556,9 +559,7 @@ fun WindowScope.EditorArea(
                         // 拖动分隔条：像素差 / 可用高 → 比例增量；窗口缩放不改变已设比例。
                         ResultSplitter(
                             paneHeightPx = paneH,
-                            onDragDeltaPx = { delta ->
-                                resultFrac = (resultFrac + delta).coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)
-                            },
+                            onDragDeltaPx = onResultFracDelta,
                         )
                         if (profile?.dbType?.protocol == Protocol.REDIS) {
                             RedisResultView(

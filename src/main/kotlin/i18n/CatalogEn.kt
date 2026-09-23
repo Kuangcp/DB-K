@@ -499,6 +499,7 @@ internal fun en(key: Str): String = when (key) {
     Str.CmdFormatSql -> "Format SQL"
     Str.CmdViewDdl -> "View object definition"
     Str.CmdToggleResults -> "Show/hide result pane"
+    Str.CmdToggleTree -> "Show/hide database tree"
     Str.CmdTranspose -> "Transpose rows/columns"
     Str.CmdRefreshResult -> "Refresh result"
     Str.CmdSwitchConsoleNext -> "Next console (most recently used)"

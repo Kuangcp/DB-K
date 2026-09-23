@@ -106,6 +106,8 @@ import app.ui.LocalCompletionDismiss
 import app.ui.LocalCtrlHeld
 import app.ui.LocalKeymap
 import app.ui.ResultEdits
+import app.ui.MAX_RESULT_FRAC
+import app.ui.MIN_RESULT_FRAC
 import app.ui.EditorArea
 import app.ui.LocalThemeColors
 import app.ui.defaultThemeId
@@ -174,6 +176,21 @@ fun main() = application {
 private fun AppRoot(onExit: () -> Unit) {
     // 窗口几何：上次退出时保存则恢复位置与尺寸
     val geo = remember { WindowPrefs.load() }
+    val layoutPrefs = remember { WindowPrefs.loadLayout() }
+    // 三栏布局状态（左树宽 / 编辑-结果分隔比例 / 左树显隐）：状态由 AppRoot 持有，
+    // 退出时随窗口几何一起持久化；左树显隐不落盘（每次启动默认显示）。
+    var treeWidthDp by remember { mutableStateOf(layoutPrefs.treeWidthDp.coerceIn(180f, 680f)) }
+    var resultFrac by remember { mutableStateOf(layoutPrefs.resultFrac.coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)) }
+    var treeVisible by remember { mutableStateOf(true) }
+    // 分隔条拖动是「增量」回调：lambda 在 AppRoot 里捕获 MutableState，拖动时读到的是当前值。
+    // （不能把 width/frac 本身作为参数快照向下传：TreeSplitter/ResultSplitter 的 pointerInput(Unit)
+    //   只捕获首个 lambda，快照值会让每次拖动都从同一旧值起算 → 拖不动。）
+    val onTreeWidthDelta: (Float) -> Unit = { d ->
+        treeWidthDp = (treeWidthDp + d).coerceIn(180f, 680f)
+    }
+    val onResultFracDelta: (Float) -> Unit = { d ->
+        resultFrac = (resultFrac + d).coerceIn(MIN_RESULT_FRAC, MAX_RESULT_FRAC)
+    }
     val density = LocalDensity.current.density
     val windowState = rememberWindowState(
         width = Dp((geo?.width ?: 1180) / density),
@@ -216,10 +233,13 @@ private fun AppRoot(onExit: () -> Unit) {
     }
 
     // 窗口几何：只在浮动状态落盘（最大化/全屏时尺寸是桌面给的，不是用户的恢复尺寸）；
-    // 位置不是绝对坐标（如首次启动居中）时仍保存尺寸，但不保存 x/y。
+    // 三栏布局（树宽 / 编辑-结果比例）无论窗口状态都落盘，几何保留上次值。
     fun persistWindowGeometry() {
-        if (windowState.placement != WindowPlacement.Floating) return
-        if (!windowState.size.isSpecified) return
+        val layout = WindowPrefs.Layout(treeWidthDp = treeWidthDp, resultFrac = resultFrac)
+        if (windowState.placement != WindowPlacement.Floating || !windowState.size.isSpecified) {
+            WindowPrefs.save(geometry = null, layout = layout)
+            return
+        }
         val pos = windowState.position as? WindowPosition.Absolute
         WindowPrefs.save(
             WindowPrefs.Geometry(
@@ -228,6 +248,7 @@ private fun AppRoot(onExit: () -> Unit) {
                 width = (windowState.size.width.value * density).roundToInt(),
                 height = (windowState.size.height.value * density).roundToInt(),
             ),
+            layout,
         )
     }
 
@@ -318,6 +339,12 @@ private fun AppRoot(onExit: () -> Unit) {
             toastState = toastState,
             mainWindowState = windowState,
             onWindowCloseRequest = requestClose,
+            treeWidthDp = treeWidthDp,
+            onTreeWidthDelta = onTreeWidthDelta,
+            resultFrac = resultFrac,
+            onResultFracDelta = onResultFracDelta,
+            treeVisible = treeVisible,
+            onToggleTree = { treeVisible = !treeVisible },
         )
     }
 }
@@ -333,6 +360,17 @@ private fun WindowScope.AppBody(
     toastState: ToastState,
     mainWindowState: WindowState,
     onWindowCloseRequest: () -> Unit,
+    /** 左树宽度（dp，由 AppRoot 持有并持久化）。 */
+    treeWidthDp: Float,
+    /** 左树宽度增量（拖动回调，px）；由 AppRoot 按当前值累加并 clamp。 */
+    onTreeWidthDelta: (Float) -> Unit,
+    /** 编辑/结果分隔比例（结果区占比，由 AppRoot 持有并持久化）。 */
+    resultFrac: Float,
+    /** 编辑/结果比例增量（拖动回调）；由 AppRoot 按当前值累加并 clamp。 */
+    onResultFracDelta: (Float) -> Unit,
+    /** 左树显隐（不持久化，每次启动默认显示）。 */
+    treeVisible: Boolean,
+    onToggleTree: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -365,8 +403,8 @@ private fun WindowScope.AppBody(
     // 语言偏好（null = 跟随系统）：设置窗口保存后写盘并即时生效（无重启）
     var languagePref by remember { mutableStateOf(LanguagePrefs.load()) }
     val effectiveLang = languagePref ?: Lang.system()
-    var treeWidthDp by remember { mutableStateOf(280f) }
-    // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）
+    // 结果区显隐由窗口根层接管（Alt+D），任意焦点位置都能命中（编辑器/树搜索框都不会漏字）；
+    // 瞬态，不持久化。
     var resultsVisible by remember { mutableStateOf(true) }
 
     // 待插入编辑器的文本（预览 / 历史 SQL）：在激活控制台光标/选区处追加，由 EditorArea 消费后清空
@@ -916,6 +954,12 @@ private fun WindowScope.AppBody(
                             }
                             true
                         }
+                        ShortcutCommand.TOGGLE_TREE -> {
+                            if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                                onToggleTree()
+                            }
+                            true
+                        }
                         ShortcutCommand.VIEW_DDL -> {
                             // 只在首次按下时取值（控制字符 KEY_TYPED 只吞不重复触发）
                             if (e.id == java.awt.event.KeyEvent.KEY_PRESSED) {
@@ -970,97 +1014,99 @@ private fun WindowScope.AppBody(
                     },
             ) {
                 Row(modifier = Modifier.fillMaxSize()) {
-                    DbTreeSidebar(
-                        modifier = Modifier.width(treeWidthDp.dp).fillMaxHeight(),
-                        rows = rows,
-                        selectedKey = treeState.selectedRowKey,
-                        onSelectRow = ::selectRow,
-                        searchQuery = treeSearchQuery,
-                        onSearchQueryChange = { treeSearchQuery = it },
-                        searchScopeId = treeSearchScope,
-                        scopeOptions = buildList {
-                            add(null to I18n.t(Str.TreeSearchScopeAll))
-                            profiles.forEach { p ->
-                                val suffix = when {
-                                    connectionsState.statusOf(p.id) == ConnUiStatus.CONNECTED -> ""
-                                    connectionsState.hasSearchCache(p.id) -> I18n.t(Str.MainSearchCached)
-                                    else -> I18n.t(Str.MainSearchDisconnected)
+                    if (treeVisible) {
+                        DbTreeSidebar(
+                            modifier = Modifier.width(treeWidthDp.dp).fillMaxHeight(),
+                            rows = rows,
+                            selectedKey = treeState.selectedRowKey,
+                            onSelectRow = ::selectRow,
+                            searchQuery = treeSearchQuery,
+                            onSearchQueryChange = { treeSearchQuery = it },
+                            searchScopeId = treeSearchScope,
+                            scopeOptions = buildList {
+                                add(null to I18n.t(Str.TreeSearchScopeAll))
+                                profiles.forEach { p ->
+                                    val suffix = when {
+                                        connectionsState.statusOf(p.id) == ConnUiStatus.CONNECTED -> ""
+                                        connectionsState.hasSearchCache(p.id) -> I18n.t(Str.MainSearchCached)
+                                        else -> I18n.t(Str.MainSearchDisconnected)
+                                    }
+                                    add(p.id to (p.name + suffix))
                                 }
-                                add(p.id to (p.name + suffix))
-                            }
-                        },
-                        onSearchScopeChange = { treeSearchScope = it },
-                        onSearchInProfile = { p -> treeSearchScope = p.id },
-                        onToggleExpand = ::toggleRow,
-                        onDisconnectConnection = ::disconnectProfile,
-                        onRefreshMetadata = { p ->
-                            scope.launch {
-                                val ok = connectionsState.refreshMetadata(p)
-                                toastState.show(
-                                    if (ok) I18n.t(Str.MainCacheRefreshed, p.name)
-                                    else I18n.t(Str.MainCacheRefreshFailed, p.name, connectionsState.statusMessageOf(p.id)?.take(80) ?: I18n.t(Str.ConnectionUnknownError)),
+                            },
+                            onSearchScopeChange = { treeSearchScope = it },
+                            onSearchInProfile = { p -> treeSearchScope = p.id },
+                            onToggleExpand = ::toggleRow,
+                            onDisconnectConnection = ::disconnectProfile,
+                            onRefreshMetadata = { p ->
+                                scope.launch {
+                                    val ok = connectionsState.refreshMetadata(p)
+                                    toastState.show(
+                                        if (ok) I18n.t(Str.MainCacheRefreshed, p.name)
+                                        else I18n.t(Str.MainCacheRefreshFailed, p.name, connectionsState.statusMessageOf(p.id)?.take(80) ?: I18n.t(Str.ConnectionUnknownError)),
+                                    )
+                                }
+                            },
+                            onCopyName = { row -> row.dbObject?.name?.let { writeClipboardText(it) } },
+                            onCopyQuery = { row ->
+                                val p = row.profile
+                                val obj = row.dbObject
+                                if (p != null && obj != null) {
+                                    connectionsState.sessionOf(p.id)?.previewQuery(row.schema, obj)
+                                        ?.let { writeClipboardText(it) }
+                                }
+                            },
+                            onAddFolder = { dialogState.folderDialog = FolderDialogRequest.Create(null) },
+                            onAddFolderAt = { folderId -> dialogState.folderDialog = FolderDialogRequest.Create(folderId) },
+                            onAddConnectionAt = { folderId -> dialogState.connectionEditor = ConnectionEditorRequest.Create(folderId) },
+                            onRenameFolder = { f -> dialogState.folderDialog = FolderDialogRequest.Rename(f) },
+                            onDeleteFolder = { f ->
+                                dialogState.confirm = ConfirmRequest.DeleteFolder(
+                                    f.id, f.name,
+                                    treeState.countConnectionsInFolder(f.id),
+                                    treeState.countChildFolders(f.id),
                                 )
-                            }
-                        },
-                        onCopyName = { row -> row.dbObject?.name?.let { writeClipboardText(it) } },
-                        onCopyQuery = { row ->
-                            val p = row.profile
-                            val obj = row.dbObject
-                            if (p != null && obj != null) {
-                                connectionsState.sessionOf(p.id)?.previewQuery(row.schema, obj)
-                                    ?.let { writeClipboardText(it) }
-                            }
-                        },
-                        onAddFolder = { dialogState.folderDialog = FolderDialogRequest.Create(null) },
-                        onAddFolderAt = { folderId -> dialogState.folderDialog = FolderDialogRequest.Create(folderId) },
-                        onAddConnectionAt = { folderId -> dialogState.connectionEditor = ConnectionEditorRequest.Create(folderId) },
-                        onRenameFolder = { f -> dialogState.folderDialog = FolderDialogRequest.Rename(f) },
-                        onDeleteFolder = { f ->
-                            dialogState.confirm = ConfirmRequest.DeleteFolder(
-                                f.id, f.name,
-                                treeState.countConnectionsInFolder(f.id),
-                                treeState.countChildFolders(f.id),
-                            )
-                        },
-                        onEditConnection = { p -> dialogState.connectionEditor = ConnectionEditorRequest.Edit(p) },
-                        onDeleteConnection = { p -> dialogState.confirm = ConfirmRequest.DeleteConnection(p.id, p.name) },
-                        onRefresh = { treeState.refresh() },
-                        onOpenConsoleForProfile = { p ->
-                            scope.launch {
-                                connectionsState.ensureConnectionReady(p)
-                                consoleState.activateForProfile(p.id)
-                            }
-                        },
-                        consolesForProfile = { pid -> consoleState.profileConsoles(pid) },
-                        activeConsoleId = activeConsole?.id,
-                        onOpenConsoleRecord = { c -> consoleState.reopenConsole(c.id) },
-                        onCreateConsoleForProfile = createConsoleFor,
-                        onPreviewObject = ::previewObject,
-                        onViewObjectDef = { row ->
-                            val p = row.profile
-                            val obj = row.dbObject
-                            if (p != null && obj != null) {
-                                dialogState.tableDdl = TableDdlRequest(p, row.schema, obj.name, obj.kind.nounKey)
-                            }
-                        },
-                        onExportProfiles = { exportProfiles(includePasswords = false) },
-                        onExportProfilesWithPasswords = { exportProfiles(includePasswords = true) },
-                        onImportProfiles = { importProfiles() },
-                        onSelectDb = { p, db ->
-                            val ns = connectionsState.schemasOf(p.id).orEmpty()
-                                .firstOrNull { it.displayName.equals(db, ignoreCase = true) }
-                            if (ns != null) scope.launch { connectionsState.setActiveDb(p, ns) }
-                        },
-                        onSelectKeyType = { p, type ->
-                            scope.launch {
-                                connectionsState.setObjectFilter(p, connectionsState.objectSearchOf(p.id).pattern, type)
-                            }
-                        },
-                        onKeyPatternChange = { p, pattern -> keySearchRequest = p to pattern },
-                        onLoadMoreObjects = { p -> scope.launch { connectionsState.loadMoreObjects(p) } },
-                        onApplyTreeDrop = { payload, target -> treeState.applyDrop(payload, target) },
-                    )
-                    TreeSplitter { delta -> treeWidthDp = (treeWidthDp + delta).coerceIn(180f, 680f) }
+                            },
+                            onEditConnection = { p -> dialogState.connectionEditor = ConnectionEditorRequest.Edit(p) },
+                            onDeleteConnection = { p -> dialogState.confirm = ConfirmRequest.DeleteConnection(p.id, p.name) },
+                            onRefresh = { treeState.refresh() },
+                            onOpenConsoleForProfile = { p ->
+                                scope.launch {
+                                    connectionsState.ensureConnectionReady(p)
+                                    consoleState.activateForProfile(p.id)
+                                }
+                            },
+                            consolesForProfile = { pid -> consoleState.profileConsoles(pid) },
+                            activeConsoleId = activeConsole?.id,
+                            onOpenConsoleRecord = { c -> consoleState.reopenConsole(c.id) },
+                            onCreateConsoleForProfile = createConsoleFor,
+                            onPreviewObject = ::previewObject,
+                            onViewObjectDef = { row ->
+                                val p = row.profile
+                                val obj = row.dbObject
+                                if (p != null && obj != null) {
+                                    dialogState.tableDdl = TableDdlRequest(p, row.schema, obj.name, obj.kind.nounKey)
+                                }
+                            },
+                            onExportProfiles = { exportProfiles(includePasswords = false) },
+                            onExportProfilesWithPasswords = { exportProfiles(includePasswords = true) },
+                            onImportProfiles = { importProfiles() },
+                            onSelectDb = { p, db ->
+                                val ns = connectionsState.schemasOf(p.id).orEmpty()
+                                    .firstOrNull { it.displayName.equals(db, ignoreCase = true) }
+                                if (ns != null) scope.launch { connectionsState.setActiveDb(p, ns) }
+                            },
+                            onSelectKeyType = { p, type ->
+                                scope.launch {
+                                    connectionsState.setObjectFilter(p, connectionsState.objectSearchOf(p.id).pattern, type)
+                                }
+                            },
+                            onKeyPatternChange = { p, pattern -> keySearchRequest = p to pattern },
+                            onLoadMoreObjects = { p -> scope.launch { connectionsState.loadMoreObjects(p) } },
+                            onApplyTreeDrop = { payload, target -> treeState.applyDrop(payload, target) },
+                        )
+                        TreeSplitter(onResize = onTreeWidthDelta)
+                    }
                     val runState = activeConsole?.let { consoleState.runStateOf(it.id) } ?: ConsoleRunUi()
                     val activeRun = runState // 仅供下方 lambda 引用
                     // 结果落地/切 Tab 后重算可编辑计划（异步拉列元数据；幂等）
@@ -1360,6 +1406,8 @@ private fun WindowScope.AppBody(
                         onDisconnect = { activeProfile?.let(::disconnectProfile) },
                         resultsVisible = resultsVisible,
                         onToggleResults = { resultsVisible = !resultsVisible },
+                        resultFrac = resultFrac,
+                        onResultFracDelta = onResultFracDelta,
                         themes = themes,
                         activeTheme = activeTheme,
                         onSelectTheme = ::selectTheme,

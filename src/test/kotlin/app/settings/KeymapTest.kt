@@ -66,7 +66,7 @@ class KeymapTest {
     fun `configurable commands are exactly the business features`() {
         assertEquals(
             listOf(
-                "execute", "formatSql", "viewDdl", "toggleResults", "transpose", "refreshResult",
+                "execute", "formatSql", "viewDdl", "toggleResults", "toggleTree", "transpose", "refreshResult",
                 "switchConsoleNext", "switchConsolePrev", "duplicateLine",
             ),
             ShortcutCommand.configurableCommands.map { it.id },

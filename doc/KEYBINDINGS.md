@@ -18,6 +18,7 @@
 | `formatSql` | 格式化 SQL（选区/整段） | Ctrl+Alt+L | `SqlWorkspace` 根 Column `onPreviewKeyEvent` | EDITOR |
 | `viewDdl` | 查看对象定义 DDL | Ctrl+Q | `Main.kt` AWT `KeyEventDispatcher` | WINDOW |
 | `toggleResults` | 显示/隐藏结果区 | Alt+D | `Main.kt` AWT `KeyEventDispatcher` | WINDOW |
+| `toggleTree` | 显示/隐藏左侧树 | Ctrl+B | `Main.kt` AWT `KeyEventDispatcher` | WINDOW |
 | `transpose` | 结果行列转置 | Ctrl+T | `SqlWorkspace` 根 Column | RESULT |
 | `refreshResult` | 刷新当前结果 Tab | F5 | 同上 | RESULT |
 
@@ -45,8 +46,9 @@
 
 ### 1.4 文档中已有但未实现
 
-`doc/DESIGN.md` §10 列的 `Ctrl+B`（收起/展开树）、`Ctrl+1..9`（切结果 Tab）、
+`doc/DESIGN.md` §10 列的 `Ctrl+1..9`（切结果 Tab）、
 `Ctrl+↑/↓`（历史）本次不实现；注册表可预留条目，后续补实现即自动出现在设置里。
+（`Ctrl+B` 收起/展开树已实现，见 §1.1。）
 
 ---
 
@@ -285,6 +287,7 @@ SettingsDialog(
          格式化 SQL        [Ctrl+Alt+L]          重置
 [窗口]    查看对象定义      [Ctrl+Q]              重置
          显示/隐藏结果区    [Alt+D]              重置
+         显示/隐藏左侧树    [Ctrl+B]             重置
 [结果区]  行列转置          [Ctrl+T]              重置
          刷新结果          [F5]                  重置
               ⚠ 冲突：与「xxx」重复（同一作用域）
