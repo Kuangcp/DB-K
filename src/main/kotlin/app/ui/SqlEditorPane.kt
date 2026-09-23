@@ -94,6 +94,49 @@ import engine.model.SchemaMeta
 import i18n.Str
 
 /**
+ * 返回**稳定**的 [OutputTransformation]（同一 composition 内只创建一次）。
+ *
+ * Compose 的 `BasicTextField` 用 `remember(state, codepointTransformation, outputTransformation)`
+ * 建 `TransformedTextFieldState`，再 `remember(transformedState)` 建 `TextFieldSelectionState`；
+ * 只要 `outputTransformation` 换新对象，selection state 就重建、`TextFieldDecoratorModifier` 会
+ * `resetPointerInputHandler()`，把正在进行的拖选/双击选词打断（历史 bug：刚编辑完双击选词没反应，
+ * 再双击一次才选中）。而 `transformOutput` 在 `TransformedTextFieldState` 的 derivedStateOf 内执行，
+ * 其中的 snapshot state 读取会被追踪，所以动态值经 [rememberUpdatedState] 读取即可随文本/光标
+ * 自动重算视觉文本，且不会重置选择状态。
+ *
+ * （无法用单测守卫：需真实指针手势 + Compose UI 测试环境；本工程沿用「UI 行为人工验收」。
+ * 修改此函数时务必保持返回值不随入参变化而重建。）
+ */
+@Composable
+internal fun rememberHighlightTransformation(
+    spans: List<AnnotatedString.Range<SpanStyle>>,
+    currentLineRange: Pair<Int, Int>?,
+    lineBgColor: Color,
+): OutputTransformation {
+    val latestSpans = rememberUpdatedState(spans)
+    val latestLineRange = rememberUpdatedState(currentLineRange)
+    val latestLineBg = rememberUpdatedState(lineBgColor)
+    return remember {
+        OutputTransformation {
+            // 重要：buffer 可能是比 composition 期算好的 spans 更“短”的文本（undo/快速输入时，
+            // outputTransformation 会在重组前就被触发）。addStyle 的范围必须落在当前 buffer 长度内，
+            // 否则 TextFieldBuffer.requireValidStyleRange 抛 Expected TextRange(...) 直接崩。
+            // 逐条夹取，越界部分丢弃；下一次重算会用新 spans 重新着色。
+            for (s in latestSpans.value) {
+                val start = s.start.coerceIn(0, length)
+                val end = s.end.coerceIn(0, length)
+                if (start < end) addStyle(s.item, start, end)
+            }
+            latestLineRange.value?.let { (a, b) ->
+                val start = a.coerceIn(0, length)
+                val end = b.coerceIn(0, length)
+                if (start < end) addStyle(SpanStyle(background = latestLineBg.value), start, end)
+            }
+        }
+    }
+}
+
+/**
  * SQL 编辑器（语法高亮 + 自动补全）。
  *
  * 结构：外层自绘边框/底；左侧行号槽（Canvas 绘制、只画可视行、随滚动重绘）；内部
@@ -194,24 +237,8 @@ internal fun EditorPane(
             val le = if (leRaw < 0) content.length else leRaw
             if (le > ls) ls to le else null
         } else null
-    val outputTransformation = remember(highlightSpans, currentLineRange, lineBgColor) {
-        OutputTransformation {
-            // 重要：buffer 可能是比 composition 期算好的 spans 更“短”的文本（undo/快速输入时，
-            // outputTransformation 会在重组前就被触发）。addStyle 的范围必须落在当前 buffer 长度内，
-            // 否则 TextFieldBuffer.requireValidStyleRange 抛 Expected TextRange(...) 直接崩。
-            // 逐条夹取，越界部分丢弃；下一帧重组会用新 spans 重新着色。
-            for (s in highlightSpans) {
-                val start = s.start.coerceIn(0, length)
-                val end = s.end.coerceIn(0, length)
-                if (start < end) addStyle(s.item, start, end)
-            }
-            currentLineRange?.let { (a, b) ->
-                val start = a.coerceIn(0, length)
-                val end = b.coerceIn(0, length)
-                if (start < end) addStyle(SpanStyle(background = lineBgColor), start, end)
-            }
-        }
-    }
+    // outputTransformation 必须稳定（换新对象会 reset 文本域的指针手势，见 rememberHighlightTransformation）。
+    val outputTransformation = rememberHighlightTransformation(highlightSpans, currentLineRange, lineBgColor)
 
     // 鼠标按在补全弹层外（左侧树 / 结果区 / 工具栏 / 其它控制台标签…）→ 收起弹层：语义就是
     // “不要这个提示了”。弹层是编辑器内 overlay，收不到别处的点击，由 Main 根布局的窗口级
