@@ -209,6 +209,8 @@ fun WindowScope.EditorArea(
     onManageThemes: () -> Unit,
     /** 编辑器外观设置（字体族 / 字号）。 */
     editorSettings: EditorSettings,
+    /** 控制台标签多行换行；false = 单行横向滚动。 */
+    multiRowTabs: Boolean = false,
     onOpenSettings: () -> Unit,
     /** 主窗口状态：自定义标题栏的最小化/最大化/还原用。 */
     mainWindowState: WindowState,
@@ -368,6 +370,7 @@ fun WindowScope.EditorArea(
         ConsoleTabBar(
             consoles = consoles,
             activeConsole = activeConsole,
+            multiRowTabs = multiRowTabs,
             dirtyConsoleIds = dirtyConsoleIds,
             pendingEditCounts = pendingEditCounts,
             profilesById = profilesById,

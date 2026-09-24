@@ -85,6 +85,8 @@ enum class Str {
     SettingsPreview,
     SettingsUiScale,
     SettingsUiScaleHint,
+    SettingsTabMultiRow,
+    SettingsTabMultiRowHint,
 
     // ── 通用设置：诊断 ──
     SettingsDiagnostics,

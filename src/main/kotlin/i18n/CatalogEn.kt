@@ -75,6 +75,8 @@ internal fun en(key: Str): String = when (key) {
     Str.SettingsPreview -> "Preview"
     Str.SettingsUiScale -> "UI scale ({0}%)"
     Str.SettingsUiScaleHint -> "Scales the entire UI (text, icons, borders). Applies immediately; cancelling reverts."
+    Str.SettingsTabMultiRow -> "Multi-row console tabs"
+    Str.SettingsTabMultiRowHint -> "Wrap tabs onto multiple rows; off keeps a single row scrolled by the mouse wheel"
 
     // ── General: diagnostics ──
     Str.SettingsDiagnostics -> "Diagnostics"

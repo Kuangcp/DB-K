@@ -27,6 +27,7 @@ import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Slider
+import androidx.compose.material.Switch
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.TextFieldColors
@@ -82,6 +83,8 @@ data class SettingsSnapshot(
     val uiScale: Float = UiScalePrefs.DEFAULT_SCALE,
     /** 活模板（含内置，整份保存）；保存后即时生效。无默认值，强制调用方传入避免误清空。 */
     val liveTemplates: List<LiveTemplate>,
+    /** 控制台标签多行换行；false = 单行横向滚动。 */
+    val multiRowTabs: Boolean = false,
 )
 
 /**
@@ -149,6 +152,7 @@ private fun SettingsBody(
     var languagePref by remember { mutableStateOf(initial.language) }
     var uiScale by remember { mutableFloatStateOf(initial.uiScale) }
     var liveTemplates by remember { mutableStateOf(initial.liveTemplates) }
+    var multiRowTabs by remember { mutableStateOf(initial.multiRowTabs) }
 
     Column(
         modifier = Modifier
@@ -193,6 +197,8 @@ private fun SettingsBody(
                             onUiScaleChange = { uiScale = it; onUiScalePreview(it) },
                             languagePref = languagePref,
                             onLanguageChange = { languagePref = it },
+                            multiRowTabs = multiRowTabs,
+                            onMultiRowTabsChange = { multiRowTabs = it },
                             onManageThemes = onManageThemes,
                         )
                         DiagnosticsSection()
@@ -228,6 +234,7 @@ private fun SettingsBody(
                         language = languagePref,
                         uiScale = uiScale,
                         liveTemplates = liveTemplates,
+                        multiRowTabs = multiRowTabs,
                     ),
                 )
             }) {
@@ -266,6 +273,8 @@ private fun GeneralSection(
     onUiScaleChange: (Float) -> Unit,
     languagePref: Lang?,
     onLanguageChange: (Lang?) -> Unit,
+    multiRowTabs: Boolean,
+    onMultiRowTabsChange: (Boolean) -> Unit,
     onManageThemes: () -> Unit,
 ) {
     Text(
@@ -337,6 +346,21 @@ private fun GeneralSection(
         style = MaterialTheme.typography.caption,
         color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
     )
+    Text(
+        t(Str.SettingsTabMultiRow),
+        style = MaterialTheme.typography.subtitle2,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Switch(checked = multiRowTabs, onCheckedChange = onMultiRowTabsChange)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            t(Str.SettingsTabMultiRowHint),
+            style = MaterialTheme.typography.caption,
+            color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+            modifier = Modifier.weight(1f),
+        )
+    }
     Text(
         t(Str.SettingsLanguage),
         style = MaterialTheme.typography.subtitle2,

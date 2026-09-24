@@ -79,6 +79,7 @@ import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
 import app.settings.ThemesStore
 import app.settings.TreeExpandPrefs
+import app.settings.TabBarPrefs
 import app.settings.UiScalePrefs
 import app.settings.WindowPrefs
 import app.state.CommitPreviewRequest
@@ -412,6 +413,8 @@ private fun WindowScope.AppBody(
     }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
+    // 控制台标签布局（多行换行 / 单行横滚）：设置窗口保存后即写盘并即时生效
+    var multiRowTabs by remember { mutableStateOf(TabBarPrefs.load()) }
     // 打开设置时的缩放快照：用于「取消」回退；实时预览改的是 UiScaleState
     var settingsInitialScale by remember { mutableStateOf(UiScaleState.scale) }
     // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
@@ -1440,6 +1443,7 @@ private fun WindowScope.AppBody(
                         onSelectTheme = ::selectTheme,
                         onManageThemes = { dialogState.showThemeDialog = true },
                         editorSettings = editorSettings,
+                        multiRowTabs = multiRowTabs,
                         onOpenSettings = {
                             settingsInitialScale = UiScaleState.scale
                             // 打开设置时重读文件：手改 live-templates.json 后无需重启即可看到/生效
@@ -1468,7 +1472,7 @@ private fun WindowScope.AppBody(
                     visible = dialogState.showSettings,
                     theme = activeTheme,
                     language = effectiveLang,
-                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale, liveTemplates),
+                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale, liveTemplates, multiRowTabs),
                     onDismiss = {
                         // 取消/关闭：回退实时预览的缩放，不落盘
                         UiScaleState.set(settingsInitialScale)
@@ -1476,6 +1480,8 @@ private fun WindowScope.AppBody(
                     },
                     onSave = { snapshot ->
                         editorSettings = snapshot.editor
+                        multiRowTabs = snapshot.multiRowTabs
+                        TabBarPrefs.save(snapshot.multiRowTabs)
                         keymap = snapshot.keymap
                         languagePref = snapshot.language
                         // 非 UI 层读的是全局 I18n.lang；与 snapshot 同步更新，避免一帧旧语言

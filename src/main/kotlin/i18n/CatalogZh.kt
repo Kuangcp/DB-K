@@ -75,6 +75,8 @@ internal fun zh(key: Str): String = when (key) {
     Str.SettingsPreview -> "预览"
     Str.SettingsUiScale -> "界面缩放（{0}%）"
     Str.SettingsUiScaleHint -> "放大整个界面（字体、图标、边框），即时生效，取消不改"
+    Str.SettingsTabMultiRow -> "多行控制台标签"
+    Str.SettingsTabMultiRowHint -> "标签自动换行显示；关闭则单行、用滚轮左右滚动"
 
     // ── 通用设置：诊断 ──
     Str.SettingsDiagnostics -> "诊断"
