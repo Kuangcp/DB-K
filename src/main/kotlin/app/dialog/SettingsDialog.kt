@@ -52,6 +52,7 @@ import app.i18n.ProvideI18n
 import app.i18n.t
 import app.settings.EditorSettings
 import app.settings.Keymap
+import app.settings.LiveTemplatesStore
 import app.settings.UiScalePrefs
 import app.state.UiScaleState
 import app.ui.LocalThemeColors
@@ -409,6 +410,30 @@ private fun DiagnosticsSection() {
         }
         TextButton(onClick = { openOrCopy(dataDir, dataLabel) { hint = it } }) {
             Text(t(Str.SettingsOpenDataDir))
+        }
+    }
+    val templateFile = remember { LiveTemplatesStore.templateFile() }
+    val templateLabel = t(Str.SettingsLiveTemplates)
+    val templateCreateLabel = t(Str.SettingsLiveTemplatesCreate)
+    Text(
+        templateLabel,
+        style = MaterialTheme.typography.body2,
+        color = MaterialTheme.colors.onSurface,
+    )
+    Text(
+        templateFile.toString(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = {
+            runCatching { LiveTemplatesStore.createSample(templateFile) }
+            val dir = templateFile.parentFile ?: AppPaths.dataDirectory().toFile()
+            openOrCopy(dir.toPath(), templateLabel) { hint = it }
+        }) {
+            Text(templateCreateLabel)
         }
     }
     hint?.let {
