@@ -94,6 +94,14 @@ enum class Str {
     SettingsOpenDataDir,
     SettingsLiveTemplates,
     SettingsLiveTemplatesCreate,
+    SettingsSectionLiveTemplates,
+    SettingsLiveTemplatesHint,
+    SettingsLiveTemplatesColAbbr,
+    SettingsLiveTemplatesColBody,
+    SettingsLiveTemplatesColDesc,
+    SettingsLiveTemplatesAdd,
+    SettingsLiveTemplatesReset,
+    SettingsLiveTemplatesWarn,
     SettingsOpenFailed,
 
     // ── 控制台命名弹窗 ──

@@ -1,7 +1,6 @@
 package app.settings
 
 import app.ui.LiveTemplate
-import app.ui.LiveTemplateContext
 import app.ui.defaultLiveTemplates
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -22,24 +21,14 @@ class LiveTemplatesStoreTest {
     }
 
     @Test
-    fun `user entry overrides builtin by abbreviation`() {
+    fun `existing file is the source of truth and deletion of builtins persists`() {
         file().writeText(
             """{"fileVersion":1,"templates":[{"abbreviation":"SEL","body":"SELECT 1","description":"mine"}]}""",
         )
         val loaded = LiveTemplatesStore.load(file())
-        val sel = loaded.first { it.abbreviation.equals("sel", ignoreCase = true) }
-        assertEquals("SELECT 1", sel.body)
-        assertEquals("mine", sel.description)
-        // 数量不变（同名覆盖，不追加）
-        assertEquals(defaultLiveTemplates().size, loaded.size)
-    }
-
-    @Test
-    fun `user entry appends unknown abbreviation`() {
-        file().writeText("""{"templates":[{"abbreviation":"zzz","body":"SELECT ${'$'}x${'$'}"}]}""")
-        val loaded = LiveTemplatesStore.load(file())
-        assertTrue(loaded.any { it.abbreviation == "zzz" })
-        assertEquals(defaultLiveTemplates().size + 1, loaded.size)
+        assertEquals(listOf("SEL"), loaded.map { it.abbreviation })
+        assertEquals("SELECT 1", loaded[0].body)
+        assertEquals("mine", loaded[0].description)
     }
 
     @Test
@@ -61,24 +50,39 @@ class LiveTemplatesStoreTest {
     }
 
     @Test
-    fun `createSample writes a loadable file once`() {
+    fun `createSample seeds the full default list once`() {
         val f = file()
         LiveTemplatesStore.createSample(f)
         assertTrue(f.exists())
         val loaded = LiveTemplatesStore.load(f)
-        assertTrue(loaded.any { it.abbreviation == "sel2" })
+        assertEquals(defaultLiveTemplates().map { it.abbreviation }, loaded.map { it.abbreviation })
         // 已存在时不覆盖
         LiveTemplatesStore.createSample(f)
         assertEquals(loaded, LiveTemplatesStore.load(f))
     }
 
     @Test
-    fun `overlay keeps builtin order and appends user entries`() {
-        val out = overlayTemplates(
-            listOf(LiveTemplate("a", "A"), LiveTemplate("b", "B")),
-            listOf(LiveTemplate("b", "B2", context = LiveTemplateContext.SQL), LiveTemplate("c", "C")),
+    fun `save then load roundtrips the full list`() {
+        val f = file()
+        val full = defaultLiveTemplates() + LiveTemplate("zzz", "SELECT 1")
+        LiveTemplatesStore.save(f, full)
+        assertEquals(full.map { it.abbreviation }, LiveTemplatesStore.load(f).map { it.abbreviation })
+    }
+
+    @Test
+    fun `save sanitizes blank bodies and duplicate abbreviations`() {
+        val f = file()
+        LiveTemplatesStore.save(
+            f,
+            listOf(
+                LiveTemplate("", "SELECT 1"),
+                LiveTemplate("a", ""),
+                LiveTemplate("A", "SELECT 2"),
+                LiveTemplate("a", "SELECT 3"),
+            ),
         )
-        assertEquals(listOf("a", "b", "c"), out.map { it.abbreviation })
-        assertEquals("B2", out[1].body)
+        val loaded = LiveTemplatesStore.load(f)
+        assertTrue(loaded.any { it.abbreviation == "A" && it.body == "SELECT 2" })
+        assertEquals(1, loaded.count { it.abbreviation.equals("a", ignoreCase = true) })
     }
 }

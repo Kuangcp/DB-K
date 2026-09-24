@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.ContentAlpha
+import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.Divider
 import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
@@ -28,6 +31,8 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.TextFieldColors
 import androidx.compose.material.TextFieldDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -56,7 +61,9 @@ import app.settings.LiveTemplatesStore
 import app.settings.UiScalePrefs
 import app.state.UiScaleState
 import app.ui.LocalThemeColors
+import app.ui.LiveTemplate
 import app.ui.ScaledDialogWindow
+import app.ui.defaultLiveTemplates
 import app.ui.ThemeSpec
 import app.ui.editorFontFamily
 import app.ui.scaledSize
@@ -73,6 +80,8 @@ data class SettingsSnapshot(
     val language: Lang? = null,
     /** 全局界面缩放；1.0 = 100%。 */
     val uiScale: Float = UiScalePrefs.DEFAULT_SCALE,
+    /** 活模板（含内置，整份保存）；保存后即时生效。无默认值，强制调用方传入避免误清空。 */
+    val liveTemplates: List<LiveTemplate>,
 )
 
 /**
@@ -139,6 +148,7 @@ private fun SettingsBody(
     var keymap by remember { mutableStateOf(initial.keymap) }
     var languagePref by remember { mutableStateOf(initial.language) }
     var uiScale by remember { mutableFloatStateOf(initial.uiScale) }
+    var liveTemplates by remember { mutableStateOf(initial.liveTemplates) }
 
     Column(
         modifier = Modifier
@@ -157,6 +167,7 @@ private fun SettingsBody(
             ) {
                 SettingsNavRow(label = t(Str.SettingsSectionGeneral), selected = section == 0) { section = 0 }
                 SettingsNavRow(label = t(Str.SettingsSectionShortcuts), selected = section == 1) { section = 1 }
+                SettingsNavRow(label = t(Str.SettingsSectionLiveTemplates), selected = section == 2) { section = 2 }
             }
             Divider(
                 modifier = Modifier.width(1.dp).fillMaxHeight(),
@@ -190,6 +201,10 @@ private fun SettingsBody(
                         keymap = keymap,
                         onKeymapChange = { keymap = it },
                     )
+                    2 -> LiveTemplatesSection(
+                        templates = liveTemplates,
+                        onChange = { liveTemplates = it },
+                    )
                 }
             }
         }
@@ -212,6 +227,7 @@ private fun SettingsBody(
                         keymap = keymap,
                         language = languagePref,
                         uiScale = uiScale,
+                        liveTemplates = liveTemplates,
                     ),
                 )
             }) {
@@ -444,6 +460,102 @@ private fun DiagnosticsSection() {
             modifier = Modifier.fillMaxWidth(),
         )
     }
+}
+
+/**
+ * Live Templates 表格：缩写 / 模板体 / 描述，可增删改；配合底部「保存」即时生效。
+ * 空缩写/空模板体/重复缩写会在行内标红，实际保存前由 [LiveTemplatesStore] 清洗丢弃。
+ */
+@Composable
+private fun LiveTemplatesSection(
+    templates: List<LiveTemplate>,
+    onChange: (List<LiveTemplate>) -> Unit,
+) {
+    val lower = templates.map { it.abbreviation.trim().lowercase() }
+    fun isDup(t: LiveTemplate) = t.abbreviation.trim().let { a -> a.isNotEmpty() && lower.count { it == a.lowercase() } > 1 }
+
+    Text(
+        t(Str.SettingsLiveTemplatesHint),
+        style = MaterialTheme.typography.caption,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        HeaderCell(t(Str.SettingsLiveTemplatesColAbbr), Modifier.width(110.dp))
+        HeaderCell(t(Str.SettingsLiveTemplatesColBody), Modifier.weight(1f))
+        HeaderCell(t(Str.SettingsLiveTemplatesColDesc), Modifier.width(130.dp))
+        Spacer(Modifier.width(36.dp))
+    }
+    templates.forEachIndexed { index, tmpl ->
+        val invalid = tmpl.abbreviation.trim().isEmpty() || tmpl.body.isEmpty() || isDup(tmpl)
+        Row(verticalAlignment = Alignment.Top) {
+            OutlinedTextField(
+                value = tmpl.abbreviation,
+                onValueChange = { v ->
+                    onChange(templates.toMutableList().also { it[index] = tmpl.copy(abbreviation = v) })
+                },
+                modifier = Modifier.width(110.dp),
+                singleLine = true,
+                isError = invalid,
+                textStyle = MaterialTheme.typography.body2,
+                colors = settingsFieldColors(),
+            )
+            Spacer(Modifier.width(6.dp))
+            OutlinedTextField(
+                value = tmpl.body,
+                onValueChange = { v ->
+                    onChange(templates.toMutableList().also { it[index] = tmpl.copy(body = v) })
+                },
+                modifier = Modifier.weight(1f),
+                maxLines = 4,
+                textStyle = MaterialTheme.typography.body2.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                ),
+                colors = settingsFieldColors(),
+            )
+            Spacer(Modifier.width(6.dp))
+            OutlinedTextField(
+                value = tmpl.description ?: "",
+                onValueChange = { v ->
+                    onChange(templates.toMutableList().also { it[index] = tmpl.copy(description = v.ifEmpty { null }) })
+                },
+                modifier = Modifier.width(130.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.body2,
+                colors = settingsFieldColors(),
+            )
+            IconButton(onClick = { onChange(templates.toMutableList().also { it.removeAt(index) }) }) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+    if (templates.any { it.abbreviation.trim().isEmpty() || it.body.isEmpty() || isDup(it) }) {
+        Text(t(Str.SettingsLiveTemplatesWarn), fontSize = 11.sp, color = MaterialTheme.colors.error)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = { onChange(templates + LiveTemplate("", "", null)) }) {
+            Text(t(Str.SettingsLiveTemplatesAdd))
+        }
+        TextButton(onClick = { onChange(defaultLiveTemplates()) }) {
+            Text(t(Str.SettingsLiveTemplatesReset))
+        }
+    }
+}
+
+/** 表格表头单元。 */
+@Composable
+private fun HeaderCell(label: String, modifier: Modifier) {
+    Text(
+        label,
+        modifier = modifier,
+        style = MaterialTheme.typography.caption,
+        color = MaterialTheme.colors.onSurface.copy(alpha = ContentAlpha.medium),
+    )
 }
 
 /** 尝试打开目录；失败则复制路径并回传提示文案（成功时清空提示）。 */

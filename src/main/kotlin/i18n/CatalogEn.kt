@@ -84,6 +84,14 @@ internal fun en(key: Str): String = when (key) {
     Str.SettingsOpenDataDir -> "Open data directory"
     Str.SettingsLiveTemplates -> "Live Templates"
     Str.SettingsLiveTemplatesCreate -> "Create sample and open folder"
+    Str.SettingsSectionLiveTemplates -> "Templates"
+    Str.SettingsLiveTemplatesHint -> "Use \$name\$ to define placeholders (e.g. \$table\$); Tab/Shift+Tab jump between them; \$END\$ is the final caret; \$\$ is a literal \$. Changes apply on save."
+    Str.SettingsLiveTemplatesColAbbr -> "Abbrev"
+    Str.SettingsLiveTemplatesColBody -> "Template"
+    Str.SettingsLiveTemplatesColDesc -> "Description"
+    Str.SettingsLiveTemplatesAdd -> "Add template"
+    Str.SettingsLiveTemplatesReset -> "Reset to defaults"
+    Str.SettingsLiveTemplatesWarn -> "Abbreviation must be non-empty and unique; blank bodies are not saved."
     Str.SettingsOpenFailed -> "Cannot open {0} automatically; path copied to clipboard"
 
     // ── Console name dialog ──

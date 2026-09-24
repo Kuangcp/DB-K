@@ -610,9 +610,9 @@ private fun WindowScope.AppBody(
             }
     }.orEmpty()
     val completionIdentifiers: List<String> = completionTables.map { it.name }.distinct().sorted()
-    // Live Templates：内置 + 用户 live-templates.json 叠加；读失败回落内置。
-    val liveTemplates = remember {
-        runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
+    // Live Templates：内置 + 用户 live-templates.json 叠加；快照状态，设置窗保存后即时生效。
+    var liveTemplates by remember {
+        mutableStateOf(runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() })
     }
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
     val completionFunctions: List<String> = activeProfile?.let { p ->
@@ -1442,6 +1442,8 @@ private fun WindowScope.AppBody(
                         editorSettings = editorSettings,
                         onOpenSettings = {
                             settingsInitialScale = UiScaleState.scale
+                            // 打开设置时重读文件：手改 live-templates.json 后无需重启即可看到/生效
+                            liveTemplates = runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
                             dialogState.showSettings = true
                         },
                         mainWindowState = mainWindowState,
@@ -1466,7 +1468,7 @@ private fun WindowScope.AppBody(
                     visible = dialogState.showSettings,
                     theme = activeTheme,
                     language = effectiveLang,
-                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale),
+                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale, liveTemplates),
                     onDismiss = {
                         // 取消/关闭：回退实时预览的缩放，不落盘
                         UiScaleState.set(settingsInitialScale)
@@ -1484,6 +1486,9 @@ private fun WindowScope.AppBody(
                         EditorPrefs.save(snapshot.editor)
                         KeymapPrefs.save(snapshot.keymap)
                         LanguagePrefs.save(snapshot.language)
+                        // 活模板：即时生效 + 整份落盘
+                        liveTemplates = snapshot.liveTemplates
+                        LiveTemplatesStore.save(snapshot.liveTemplates)
                         dialogState.showSettings = false
                     },
                     onManageThemes = { dialogState.showThemeDialog = true },

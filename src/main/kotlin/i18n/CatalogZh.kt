@@ -84,6 +84,14 @@ internal fun zh(key: Str): String = when (key) {
     Str.SettingsOpenDataDir -> "打开数据目录"
     Str.SettingsLiveTemplates -> "Live Templates"
     Str.SettingsLiveTemplatesCreate -> "生成示例并打开目录"
+    Str.SettingsSectionLiveTemplates -> "模板"
+    Str.SettingsLiveTemplatesHint -> "用 \$名称\$ 定义占位符（如 \$table\$），Tab/Shift+Tab 依次跳转；\$END\$ 为最终光标位；\$\$ 表示字面量 \$。保存后即时生效。"
+    Str.SettingsLiveTemplatesColAbbr -> "缩写"
+    Str.SettingsLiveTemplatesColBody -> "模板体"
+    Str.SettingsLiveTemplatesColDesc -> "描述"
+    Str.SettingsLiveTemplatesAdd -> "新增模板"
+    Str.SettingsLiveTemplatesReset -> "恢复默认"
+    Str.SettingsLiveTemplatesWarn -> "缩写不能为空且不能重复；空模板体不会保存。"
     Str.SettingsOpenFailed -> "当前环境无法自动打开{0}，已复制路径到剪贴板"
 
     // ── 控制台命名弹窗 ──

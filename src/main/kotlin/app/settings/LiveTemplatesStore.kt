@@ -38,30 +38,42 @@ object LiveTemplatesStore {
     fun load(): List<LiveTemplate> = load(templateFile())
 
     internal fun load(f: File): List<LiveTemplate> {
-        val builtins = defaultLiveTemplates()
-        if (!f.exists()) return builtins
+        if (!f.exists()) return defaultLiveTemplates()
         val parsed = runCatching { json.decodeFromString<TemplatesFile>(f.readText()) }
             .onFailure { Logger.error(it, "live-templates.json unreadable; using built-ins") }
-            .getOrNull() ?: return builtins
-        return overlayTemplates(builtins, parsed.templates.mapNotNull { it.toModel() })
+            .getOrNull() ?: return defaultLiveTemplates()
+        // 文件一旦存在即为权威（整份列表）：允许用户删除内置模板。
+        // 空/全部非法条目 → 回落内置，避免误清空。
+        return parsed.templates.mapNotNull { it.toModel() }.ifEmpty { defaultLiveTemplates() }
     }
 
-    /** 生成示例文件（已存在则不动）；诊断区「生成示例并打开目录」用。 */
-    internal fun createSample(f: File) {
-        if (f.exists()) return
-        val sample = TemplatesFile(
-            templates = listOf(
-                EntryDto(
-                    abbreviation = "sel2",
-                    body = "SELECT \$columns\$\nFROM \$table\$\nLIMIT \$n\$",
-                    description = "Sample: select with limit",
-                ),
-            ),
-        )
+    /** 保存整份列表（清洗后原子写），供设置窗表格用。 */
+    fun save(templates: List<LiveTemplate>) = save(templateFile(), templates)
+
+    internal fun save(f: File, templates: List<LiveTemplate>) {
+        val dto = TemplatesFile(templates = sanitizeTemplates(templates).map { it.toDto() })
         runCatching {
             f.parentFile?.mkdirs()
             val tmp = File(f.parentFile, f.name + ".tmp")
-            tmp.writeText(json.encodeToString(TemplatesFile.serializer(), sample))
+            tmp.writeText(json.encodeToString(TemplatesFile.serializer(), dto))
+            Files.move(
+                tmp.toPath(), f.toPath(),
+                StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
+            )
+        }.onFailure { Logger.error(it, "live-templates.json save failed") }
+    }
+
+    private fun LiveTemplate.toDto(): EntryDto =
+        EntryDto(abbreviation = abbreviation, body = body, description = description, context = context.token)
+
+    /** 种子文件（不存在时写入完整内置列表）；诊断区「生成示例并打开目录」用。 */
+    internal fun createSample(f: File) {
+        if (f.exists()) return
+        val seed = TemplatesFile(templates = defaultLiveTemplates().map { it.toDto() })
+        runCatching {
+            f.parentFile?.mkdirs()
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(json.encodeToString(TemplatesFile.serializer(), seed))
             Files.move(
                 tmp.toPath(), f.toPath(),
                 StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
@@ -79,14 +91,15 @@ object LiveTemplatesStore {
     }
 }
 
-/** 内置叠加用户：按 `context|缩写(小写)` 去重，用户覆盖同名，新名追加到末尾并保持内置顺序。 */
-internal fun overlayTemplates(
-    builtins: List<LiveTemplate>,
-    user: List<LiveTemplate>,
-): List<LiveTemplate> {
-    fun key(t: LiveTemplate) = "${t.context.token}|${t.abbreviation.lowercase()}"
-    val map = LinkedHashMap<String, LiveTemplate>()
-    for (t in builtins) map[key(t)] = t
-    for (t in user) map[key(t)] = t
-    return map.values.toList()
+/** 清洗：去首尾空白、丢空缩写/空模板体、按 (context, 缩写小写) 去重（保留先出现者）。 */
+internal fun sanitizeTemplates(templates: List<LiveTemplate>): List<LiveTemplate> {
+    val seen = HashSet<String>()
+    val out = ArrayList<LiveTemplate>(templates.size)
+    for (t in templates) {
+        val abbrev = t.abbreviation.trim()
+        if (abbrev.isEmpty() || t.body.isEmpty()) continue
+        if (!seen.add("${t.context.token}|${abbrev.lowercase()}")) continue
+        out.add(t.copy(abbreviation = abbrev))
+    }
+    return out
 }
