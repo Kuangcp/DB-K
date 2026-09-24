@@ -74,6 +74,7 @@ import app.i18n.LocalLang
 import app.settings.EditorPrefs
 import app.settings.KeymapPrefs
 import app.settings.LanguagePrefs
+import app.settings.LiveTemplatesStore
 import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
 import app.settings.ThemesStore
@@ -112,6 +113,7 @@ import app.ui.ResultEdits
 import app.ui.MAX_RESULT_FRAC
 import app.ui.MIN_RESULT_FRAC
 import app.ui.EditorArea
+import app.ui.defaultLiveTemplates
 import app.ui.LocalThemeColors
 import app.ui.ProvideUiScale
 import app.ui.defaultThemeId
@@ -608,6 +610,10 @@ private fun WindowScope.AppBody(
             }
     }.orEmpty()
     val completionIdentifiers: List<String> = completionTables.map { it.name }.distinct().sorted()
+    // Live Templates：内置 + 用户 live-templates.json 叠加；读失败回落内置。
+    val liveTemplates = remember {
+        runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
+    }
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
     val completionFunctions: List<String> = activeProfile?.let { p ->
         connectionsState.schemasOf(p.id).orEmpty()
@@ -1410,6 +1416,7 @@ private fun WindowScope.AppBody(
                             toastState.show(I18n.t(Str.MainHistoryCleared))
                         },
                         completionIdentifiers = completionIdentifiers,
+                        liveTemplates = liveTemplates,
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
                         completionEnabled = activeProfile?.let {
