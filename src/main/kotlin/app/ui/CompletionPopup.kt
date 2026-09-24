@@ -133,4 +133,5 @@ private fun completionKindColor(kind: CompletionKind): Color = when (kind) {
     CompletionKind.TABLE -> Color(0xFF26A69A)
     CompletionKind.KEYWORD -> Color(0xFFFFB300)
     CompletionKind.EXPAND -> Color(0xFF43A047)
+    CompletionKind.TEMPLATE -> Color(0xFF5C6BC0)
 }

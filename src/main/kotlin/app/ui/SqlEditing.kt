@@ -71,7 +71,7 @@ private fun isInsideCommentOrString(before: String): Boolean {
 }
 
 /** 补全候选类别（弹层前缀点用；色取语义色板，文字仍走主题色）。 */
-enum class CompletionKind { COLUMN, ALIAS, FUNCTION, TABLE, KEYWORD, EXPAND }
+enum class CompletionKind { COLUMN, ALIAS, FUNCTION, TABLE, KEYWORD, EXPAND, TEMPLATE }
 
 /** 一条补全候选：文本 + 右侧详情（列类型 / 别名指向表 / 表所属 schema）+ 类别。
  * [insertText] 非空时上屏写它（如 `*` 展开为列清单），否则写 [text]。 */
@@ -90,6 +90,7 @@ data class CompletionItem(
 fun completionItems(
     word: String,
     expands: List<CompletionItem> = emptyList(),
+    templates: List<LiveTemplate> = emptyList(),
     columns: List<CompletionItem> = emptyList(),
     aliases: List<CompletionItem> = emptyList(),
     functions: List<CompletionItem> = emptyList(),
@@ -97,8 +98,8 @@ fun completionItems(
     includeKeywords: Boolean = true,
 ): List<CompletionItem> {
     val prefix = word.lowercase()
-    if (prefix.isEmpty() && expands.isEmpty() && columns.isEmpty() && aliases.isEmpty() &&
-        functions.isEmpty() && objects.isEmpty()
+    if (prefix.isEmpty() && expands.isEmpty() && templates.isEmpty() && columns.isEmpty() &&
+        aliases.isEmpty() && functions.isEmpty() && objects.isEmpty()
     ) {
         return emptyList()
     }
@@ -107,6 +108,19 @@ fun completionItems(
         for (item in items) if (matchesPrefix(item.text, prefix)) out.add(item)
     }
     add(expands)
+    // 模板：按缩写前缀匹配（含相等），缩写字面敲全后仍保留候选
+    for (tmpl in templates) {
+        if (prefix.isEmpty() || tmpl.abbreviation.lowercase().startsWith(prefix)) {
+            out.add(
+                CompletionItem(
+                    text = tmpl.abbreviation,
+                    detail = tmpl.description ?: I18n.t(Str.EditorCompletionTemplate),
+                    kind = CompletionKind.TEMPLATE,
+                    insertText = expandTemplate(tmpl.body).text,
+                ),
+            )
+        }
+    }
     add(columns)
     add(aliases)
     add(functions)
