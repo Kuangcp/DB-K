@@ -578,7 +578,7 @@ internal fun EditorPane(
         starPos != null -> expandItems
         sqlWord != null -> completionItems(
             word = sqlWord.text,
-            templates = if (editorLanguage == EditorLanguage.SQL) liveTemplates else emptyList(),
+            templates = if (editorLanguage == EditorLanguage.SQL && qualified == null) liveTemplates else emptyList(),
             columns = columnItems,
             aliases = aliasItems,
             functions = functionItems,
@@ -999,7 +999,7 @@ internal fun EditorPane(
                             }
                             // Live Templates：会话内 Tab/Shift+Tab/Esc；无会话时「精确缩写 + Tab」展开。
                             // 精确缩写优先于补全上屏（DataGrip 语义）；其余 Tab 放行到下面的弹层分支。
-                            if (editorLanguage == EditorLanguage.SQL) {
+                            if (editorLanguage == EditorLanguage.SQL && multiCursors.isEmpty()) {
                                 val session = templateSession
                                 if (session != null) {
                                     when (e.key) {
