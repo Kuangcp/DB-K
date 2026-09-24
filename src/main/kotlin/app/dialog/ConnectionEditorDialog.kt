@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import app.state.ConnectionEditorRequest
 import app.i18n.t
 import app.state.SessionFactory
@@ -170,6 +171,9 @@ fun ConnectionEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        // 连接表单字段多、重填成本高：点弹窗外一律不关闭，只能显式「取消 / 保存」。
+        // 桌面端 AlertDialog 只由 scrim 点击触发 onDismissRequest，关掉即不会再误触丢失输入。
+        properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)) },
         text = {
             // 表单默认按内容撑高（独立弹窗，高度随内容自适应），把底部「测试连接」等一次展示完；
