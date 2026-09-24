@@ -82,6 +82,8 @@ internal fun zh(key: Str): String = when (key) {
     Str.SettingsDataDir -> "数据目录"
     Str.SettingsOpenLogDir -> "打开日志目录"
     Str.SettingsOpenDataDir -> "打开数据目录"
+    Str.SettingsLiveTemplates -> "Live Templates"
+    Str.SettingsLiveTemplatesCreate -> "生成示例并打开目录"
     Str.SettingsOpenFailed -> "当前环境无法自动打开{0}，已复制路径到剪贴板"
 
     // ── 控制台命名弹窗 ──
@@ -286,6 +288,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.EditorCompletionSubquery -> "子查询"
     Str.EditorCompletionFunction -> "函数"
     Str.EditorCompletionExpandColumns -> "展开为 {0} 列"
+    Str.EditorCompletionTemplate -> "模板"
     Str.EditorEsPlaceholder -> "输入 ES JSON DSL，如 {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space 补全键/查询类型/字段名"
     Str.EditorSqlPlaceholder -> "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）"
     Str.EditorDirty -> "● 未保存 · Ctrl+S 保存"

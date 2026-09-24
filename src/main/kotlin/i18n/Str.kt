@@ -92,6 +92,8 @@ enum class Str {
     SettingsDataDir,
     SettingsOpenLogDir,
     SettingsOpenDataDir,
+    SettingsLiveTemplates,
+    SettingsLiveTemplatesCreate,
     SettingsOpenFailed,
 
     // ── 控制台命名弹窗 ──
@@ -293,6 +295,7 @@ enum class Str {
     EditorCompletionSubquery,
     EditorCompletionFunction,
     EditorCompletionExpandColumns,
+    EditorCompletionTemplate,
     EditorEsPlaceholder,
     EditorSqlPlaceholder,
     EditorDirty,

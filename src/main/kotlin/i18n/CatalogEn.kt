@@ -82,6 +82,8 @@ internal fun en(key: Str): String = when (key) {
     Str.SettingsDataDir -> "Data directory"
     Str.SettingsOpenLogDir -> "Open log directory"
     Str.SettingsOpenDataDir -> "Open data directory"
+    Str.SettingsLiveTemplates -> "Live Templates"
+    Str.SettingsLiveTemplatesCreate -> "Create sample and open folder"
     Str.SettingsOpenFailed -> "Cannot open {0} automatically; path copied to clipboard"
 
     // ── Console name dialog ──
@@ -287,6 +289,7 @@ internal fun en(key: Str): String = when (key) {
     Str.EditorCompletionSubquery -> "subquery"
     Str.EditorCompletionFunction -> "function"
     Str.EditorCompletionExpandColumns -> "Expand to {0} columns"
+    Str.EditorCompletionTemplate -> "Template"
     Str.EditorEsPlaceholder -> "Enter ES JSON DSL, e.g. {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space completes keys / query types / fields"
     Str.EditorSqlPlaceholder -> "Type SQL…\nSelect a statement and press Ctrl+Enter (nothing selected = no run)"
     Str.EditorDirty -> "● Unsaved · Ctrl+S to save"
