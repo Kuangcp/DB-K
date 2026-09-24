@@ -105,3 +105,57 @@ class LiveTemplateSessionTest {
         assertEquals(7 to 7, selB)
     }
 }
+
+class LiveTemplateReconcileTest {
+
+    /** 以 "sel" 展开 `SELECT $columns$ FROM $table$` 为基准：columns=[7,7], table=[13,13] */
+    private fun base() = beginSession("sel", 0 until 3, "SELECT \$columns\$ FROM \$table\$").second
+
+    @Test
+    fun `unchanged text keeps session`() {
+        val s = base()
+        assertEquals(s, reconcileSession(s, s.lastText))
+    }
+
+    @Test
+    fun `typing into a collapsed placeholder grows it and shifts later stops`() {
+        val s = reconcileSession(base(), "SELECT a FROM ")!!
+        assertEquals(7 to 8, activeStop(s)!!.let { it.start to it.end })
+        assertEquals(14, s.stops[1].start)
+        assertEquals(14, s.endOffset)
+    }
+
+    @Test
+    fun `deleting inside placeholder shrinks it`() {
+        val s1 = reconcileSession(base(), "SELECT a FROM ")!!
+        val s2 = reconcileSession(s1, "SELECT  FROM ")!!
+        assertEquals(7 to 7, activeStop(s2)!!.let { it.start to it.end })
+        assertEquals(13, s2.stops[1].start)
+        assertEquals(13, s2.endOffset)
+    }
+
+    @Test
+    fun `edit before template invalidates session`() {
+        // anchorStart=2 时删掉锚点前的空格：公共前缀 p=1 < 2
+        val s = beginSession("x sel", 2 until 5, "SELECT \$c\$").second
+        assertEquals(null, reconcileSession(s, "xSELECT "))
+    }
+
+    @Test
+    fun `select-all replace of a stop keeps valid ranges`() {
+        val s1 = reconcileSession(base(), "SELECT abc FROM ")!!
+        // 选中 columns 占位 [7,10) 换成 "xy"
+        val s2 = reconcileSession(s1, "SELECT xy FROM ")!!
+        assertEquals(7 to 9, activeStop(s2)!!.let { it.start to it.end })
+        assertEquals(15, s2.stops[1].start)
+    }
+
+    @Test
+    fun `editing at or after stops keeps ranges consistent`() {
+        val s1 = reconcileSession(base(), "SELECT a FROM ")!!
+        // 在末尾（恰好是 table 空占位处）追加 " t"
+        val s2 = reconcileSession(s1, "SELECT a FROM  t")!!
+        assertEquals(7 to 8, s2.stops[0].let { it.start to it.end })
+        assertEquals(14, s2.stops[1].start)
+    }
+}

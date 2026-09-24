@@ -129,3 +129,49 @@ fun sessionPrev(session: TemplateSession): Pair<TemplateSession, Pair<Int, Int>>
     val s = session.stops[prev]
     return session.copy(activeIndex = prev) to (s.start to s.end)
 }
+
+/**
+ * 文本变化后重算占位区间：对 old/new 求最长公共前缀 `p` 与最长公共后缀 `s`，得到改动区间
+ * `[p, old.length - s)` 与长度差 `delta`，把停靠点边界按下述约定映射。返回 null 表示
+ * 会话失效（模板锚点之前被删、或区间非法），调用方应清空会话。
+ *
+ * 边界映射：位于改动区间之前的原样保留；位于之后的整体平移；恰好落在区间边界时，
+ * 起点贴到 `p`、终点贴到改动后的区间末尾——这样「在空占位符处输入」表现为占位符增长。
+ */
+fun reconcileSession(session: TemplateSession, newText: String): TemplateSession? {
+    val old = session.lastText
+    if (newText == old) return session
+
+    var p = 0
+    val maxP = minOf(old.length, newText.length)
+    while (p < maxP && old[p] == newText[p]) p++
+
+    var s = 0
+    val maxS = minOf(old.length - p, newText.length - p)
+    while (s < maxS && old[old.length - 1 - s] == newText[newText.length - 1 - s]) s++
+
+    if (p < session.anchorStart) return null
+
+    val oldEditEnd = old.length - s
+    val delta = newText.length - old.length
+    val newEditEnd = oldEditEnd + delta
+
+    fun mapBoundary(pos: Int, isEnd: Boolean): Int = when {
+        pos < p -> pos
+        pos > oldEditEnd -> pos + delta
+        isEnd -> (pos + delta).coerceIn(p, maxOf(p, newEditEnd))
+        else -> p
+    }
+
+    val stops = session.stops.map { st ->
+        val ns = mapBoundary(st.start, isEnd = false)
+        val ne = mapBoundary(st.end, isEnd = true).coerceAtLeast(ns)
+        TemplateStop(st.name, ns, ne)
+    }
+    if (stops.any { it.start < session.anchorStart || it.end < it.start }) return null
+    return session.copy(
+        lastText = newText,
+        stops = stops,
+        endOffset = mapBoundary(session.endOffset, isEnd = true).coerceAtLeast(session.anchorStart),
+    )
+}
