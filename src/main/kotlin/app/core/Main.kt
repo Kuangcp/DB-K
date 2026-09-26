@@ -105,6 +105,7 @@ import app.state.TreeState
 import app.state.ToastState
 import app.state.UiScaleState
 import app.ui.CompletionTable
+import app.ui.ThemeSpec
 import app.ui.CompletionDismissSignal
 import app.ui.LocalCompletionDismiss
 import app.ui.LocalCtrlHeld
@@ -1461,6 +1462,8 @@ private fun WindowScope.AppBody(
                     connectionsState = connectionsState,
                     consoleState = consoleState,
                     profiles = profiles,
+                    theme = activeTheme,
+                    language = effectiveLang,
                     onCopyText = { text, label ->
                         writeClipboardText(text)
                         toastState.show(label)
@@ -1523,6 +1526,8 @@ private fun DialogHost(
     connectionsState: ConnectionsState,
     consoleState: ConsoleState,
     profiles: List<ConnectionProfile>,
+    theme: ThemeSpec,
+    language: Lang,
     onCopyText: (String, String) -> Unit = { _, _ -> },
     toastState: ToastState,
 ) {
@@ -1589,6 +1594,8 @@ private fun DialogHost(
         ConnectionEditorDialog(
             request = request,
             folders = treeState.folders,
+            theme = theme,
+            language = language,
             onDismiss = { dialogState.connectionEditor = null },
             onSubmit = { profile ->
                 when (request) {
