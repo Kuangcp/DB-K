@@ -1,8 +1,10 @@
 package app.dialog
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -35,10 +37,12 @@ import androidx.compose.material.IconButton
 import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedButton
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -49,20 +53,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogWindow
+import androidx.compose.ui.window.DialogWindowScope
 import androidx.compose.ui.window.rememberDialogState
 import app.state.ConnectionEditorRequest
 import app.i18n.ProvideI18n
@@ -71,7 +80,7 @@ import app.state.SessionFactory
 import app.state.friendlySqlError
 import app.ui.DbIcons
 import app.ui.LocalThemeColors
-import app.ui.ScaledDialogWindow
+import app.ui.ProvideUiScale
 import app.ui.ThemeSpec
 import app.ui.scaledSize
 import db.DbCategory
@@ -84,7 +93,10 @@ import i18n.Str
 import jdbc.ExternalDrivers
 import tree.TypeBadge
 import java.awt.FileDialog
+import java.awt.Point
+import java.awt.Rectangle
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -199,15 +211,16 @@ fun ConnectionEditorDialog(
     }
     val bodyHeight = maxFormHeight.coerceAtMost(480.dp)
     val title = t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)
-    // 显式尺寸的 DialogWindow（undecorated + transparent，视觉同 AlertDialog 自绘圆角），
-    // 避开 AlertDialog 桌面端的 pack-to-content：滚动条出现时窗口会被撑成内容全高（大片留白）。
-    val dialogState = rememberDialogState(size = scaledSize(768.dp, bodyHeight + 100.dp))
-    // 显式尺寸的装饰窗口（原生标题栏，可拖动/缩放）；避免 AlertDialog 的 pack-to-content 撑高问题。
-    ScaledDialogWindow(
+    // 自绘窗口：DialogWindow(undecorated + transparent) + 显式尺寸；自绘标题栏（可拖动）、圆角 + 边框、
+    // 右/下/右下角缩放把手；避开 AlertDialog 的 pack-to-content 撑高问题。
+    val dialogState = rememberDialogState(size = scaledSize(768.dp, bodyHeight + 136.dp))
+    DialogWindow(
         onCloseRequest = onDismiss,
         state = dialogState,
         title = title,
-        resizable = true,
+        undecorated = true,
+        transparent = true,
+        resizable = false,
         onPreviewKeyEvent = { e ->
             if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
                 onDismiss()
@@ -217,30 +230,40 @@ fun ConnectionEditorDialog(
             }
         },
     ) {
-        ProvideI18n(language) {
-            MaterialTheme(colors = theme.colors.toMaterialColors()) {
-                CompositionLocalProvider(
-                    LocalContentColor provides MaterialTheme.colors.onSurface,
-                    LocalThemeColors provides theme.colors,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colors.background)
-                            .padding(20.dp),
+        ProvideUiScale {
+            ProvideI18n(language) {
+                MaterialTheme(colors = theme.colors.toMaterialColors()) {
+                    CompositionLocalProvider(
+                        LocalContentColor provides MaterialTheme.colors.onSurface,
+                        LocalThemeColors provides theme.colors,
                     ) {
-                        DialogBody(
-                            maxHeight = bodyHeight,
-                            dbType = dbType,
-                            onSelectType = { next ->
-                                // 切换类型时若端口还是旧默认值则跟随新默认
-                                if (port == null || port == dbType.defaultPort) {
-                                    portText = next.defaultPort.toString()
-                                }
-                                dbType = next
-                            },
-                        ) {
-                            FormRow(t(Str.CommonName)) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Surface(
+                                modifier = Modifier.fillMaxSize(),
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colors.background,
+                                border = BorderStroke(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.35f)),
+                            ) {
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    WindowTitleBar(title = title, onClose = onDismiss)
+                                    Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.18f))
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(20.dp),
+                                    ) {
+                                        DialogBody(
+                                            maxHeight = bodyHeight,
+                                            dbType = dbType,
+                                            onSelectType = { next ->
+                                                // 切换类型时若端口还是旧默认值则跟随新默认
+                                                if (port == null || port == dbType.defaultPort) {
+                                                    portText = next.defaultPort.toString()
+                                                }
+                                                dbType = next
+                                            },
+                                        ) {
+                                            FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
                 }
                 val ungroupedLabel = t(Str.ConnUngrouped)
@@ -421,10 +444,117 @@ fun ConnectionEditorDialog(
                     TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
                 }
             }
+            }
         }
+        ResizeHandle(
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp),
+            resizeWidth = true,
+            resizeHeight = false,
+        )
+        ResizeHandle(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(6.dp),
+            resizeWidth = false,
+            resizeHeight = true,
+        )
+        ResizeHandle(
+            modifier = Modifier.align(Alignment.BottomEnd).size(20.dp),
+            resizeWidth = true,
+            resizeHeight = true,
+            grip = true,
+        )
     }
 }
 }
+}
+}
+}
+}
+
+/** 自绘标题栏：整条可拖动窗口（拖动标题栏 = 移动窗口），右侧关闭按钮。 */
+@Composable
+private fun DialogWindowScope.WindowTitleBar(title: String, onClose: () -> Unit) {
+    var startLoc by remember { mutableStateOf(Point(0, 0)) }
+    var startPtr by remember { mutableStateOf(Offset.Zero) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        startLoc = window.location
+                        startPtr = offset
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        val d = change.position - startPtr
+                        window.location = Point(startLoc.x + d.x.roundToInt(), startLoc.y + d.y.roundToInt())
+                    },
+                )
+            },
+    ) {
+        Text(
+            title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colors.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 14.dp).weight(1f),
+        )
+        IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = t(Str.CommonCancel),
+                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+/** 窗口边缘/角落缩放把手：拖动按 [resizeWidth]/[resizeHeight] 改变窗口尺寸（无边框窗口需自绘）。 */
+@Composable
+private fun DialogWindowScope.ResizeHandle(
+    modifier: Modifier,
+    resizeWidth: Boolean,
+    resizeHeight: Boolean,
+    grip: Boolean = false,
+) {
+    var startBounds by remember { mutableStateOf(Rectangle(0, 0, 0, 0)) }
+    var startPtr by remember { mutableStateOf(Offset.Zero) }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier.pointerInput(Unit) {
+            detectDragGestures(
+                onDragStart = { offset ->
+                    startBounds = window.bounds
+                    startPtr = offset
+                },
+                onDrag = { change, _ ->
+                    change.consume()
+                    val d = change.position - startPtr
+                    val w = if (resizeWidth) (startBounds.width + d.x.roundToInt()).coerceAtLeast(560) else startBounds.width
+                    val h = if (resizeHeight) (startBounds.height + d.y.roundToInt()).coerceAtLeast(360) else startBounds.height
+                    window.setBounds(startBounds.x, startBounds.y, w, h)
+                },
+            )
+        },
+    ) {
+        if (grip) {
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                repeat(3) { i ->
+                    Box(
+                        Modifier
+                            .width((13 - i * 4).dp)
+                            .height(2.dp)
+                            .background(MaterialTheme.colors.onSurface.copy(alpha = 0.35f)),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** 弹窗主体：左侧按大类分组的类型导航 + 右侧配置表单（各自独立滚动）。 */
