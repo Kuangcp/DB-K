@@ -67,11 +67,11 @@ gradle smokeEs             # Elasticsearch 后端自检（需可连的 ES，否�
 gradle createDistributable   # 免安装目录 build/compose/binaries/main/app/db-k
 gradle packageDeb            # Linux Deb
 gradle makeAppImage          # Linux 单文件 .AppImage（需 appimagetool，见下）
-gradle packageMsi            # Windows MSI（仅在 Windows + WiX 上构建）
+gradle packageExe            # Windows EXE（仅在 Windows + WiX 上构建）
 ```
 
 - AppImage：下载 [appimagetool](https://github.com/AppImage/appimagetool/releases) 放到 `tools/`，或 `-Pappimagetool=<path>` / 环境变量 `APPIMAGETOOL`。产物 `build/compose/binaries/main/appimage/db-k-<ver>-x86_64.AppImage`。
-- MSI 只能在 Windows 上构建（jpackage 不支持交叉打包），需 JDK 25 + Gradle 9.4.1 + WiX Toolset 3.x。
+- EXE 只能在 Windows 上构建（jpackage 不支持交叉打包），需 JDK 25 + Gradle 9.4.1 + WiX Toolset 3.x。
 - 平台构建矩阵、前置条件与 glibc 兼容下限见 **[doc/PACKAGING.md](doc/PACKAGING.md)**。
 
 ## 数据与存储
