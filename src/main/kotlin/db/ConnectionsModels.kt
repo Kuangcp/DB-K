@@ -3,6 +3,20 @@ package db
 import engine.Protocol
 
 /**
+ * 数据源大类（仅用于 UI 分组，不持久化）：连接弹窗左侧按此分栏。
+ */
+enum class DbCategory {
+    /** 本地文件库（嵌入式，无服务端）。 */
+    LOCAL,
+
+    /** 关系型数据库（SQL / 表模型，含服务端与列式分析型）。 */
+    RELATIONAL,
+
+    /** 非关系型数据库（KV / 搜索等非 JDBC 后端）。 */
+    NON_RELATIONAL,
+}
+
+/**
  * 目标数据库类型。存储层枚举，连接档案持久化用其 name；
  * jdbc 层的方言注册表与 UI 层的徽章展示都依赖它。
  */
@@ -44,6 +58,14 @@ enum class DbType(
             REDIS -> Protocol.REDIS
             ELASTICSEARCH -> Protocol.ELASTICSEARCH
             else -> Protocol.JDBC
+        }
+
+    /** 连接弹窗左侧分类：本地文件库 / 关系型 / 非关系型。穷尽 when，新增类型漏归类编译不过。 */
+    val category: DbCategory
+        get() = when (this) {
+            SQLITE, H2LOCAL -> DbCategory.LOCAL
+            POSTGRES, MYSQL, MARIADB, H2, CLICKHOUSE, SQLSERVER, ORACLE -> DbCategory.RELATIONAL
+            REDIS, ELASTICSEARCH -> DbCategory.NON_RELATIONAL
         }
 }
 

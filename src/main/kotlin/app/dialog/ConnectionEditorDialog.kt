@@ -1,5 +1,6 @@
 package app.dialog
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
@@ -63,12 +64,14 @@ import app.i18n.t
 import app.state.SessionFactory
 import app.state.friendlySqlError
 import app.ui.DbIcons
+import db.DbCategory
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
 import i18n.I18n
 import i18n.Str
 import jdbc.ExternalDrivers
+import tree.TypeBadge
 import java.awt.FileDialog
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -118,15 +121,6 @@ fun ConnectionEditorDialog(
 
     val isEmbedded = dbType == DbType.SQLITE || dbType == DbType.H2LOCAL
     val port = portText.toIntOrNull()
-
-    // 类型下拉文案：H2 双形态需区分服务端(tcp)与本文件；其余类型用品牌名（不翻译）
-    val h2Label = t(Str.ConnTypeH2)
-    val h2LocalLabel = t(Str.ConnTypeH2Local)
-    fun typeLabel(type: DbType): String = when (type) {
-        DbType.H2 -> h2Label
-        DbType.H2LOCAL -> h2LocalLabel
-        else -> type.label
-    }
 
     fun build(): ConnectionProfile = ConnectionProfile(
         id = initial?.id ?: "",
@@ -189,8 +183,7 @@ fun ConnectionEditorDialog(
         properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)) },
         text = {
-            // 表单默认按内容撑高（独立弹窗，高度随内容自适应），把底部「测试连接」等一次展示完；
-            // 上限按屏幕可用高度推算，只有屏幕真装不下时才滚动，并显示右侧滚动条。
+            // 左侧类型导航 + 右侧配置表单（固定 720dp 宽、高度不超屏幕可用高）；两栏各自滚动
             val density = LocalDensity.current
             val maxFormHeight = remember(density) {
                 val usablePx = runCatching {
@@ -199,36 +192,19 @@ fun ConnectionEditorDialog(
                 }.getOrDefault(900)
                 (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(280.dp)
             }
-            FormBody(maxFormHeight) {
+            DialogBody(
+                maxHeight = maxFormHeight,
+                dbType = dbType,
+                onSelectType = { next ->
+                    // 切换类型时若端口还是旧默认值则跟随新默认
+                    if (port == null || port == dbType.defaultPort) {
+                        portText = next.defaultPort.toString()
+                    }
+                    dbType = next
+                },
+            ) {
                 FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
-                }
-                FormRow(t(Str.TreeKeyTypeLabel)) {
-                    DropdownField(
-                        label = typeLabel(dbType),
-                        options = DbType.entries.map { typeLabel(it) },
-                        onSelect = { idx ->
-                            val next = DbType.entries[idx]
-                            // 切换类型时若端口还是旧默认值则跟随新默认
-                            if (port == null || port == dbType.defaultPort) {
-                                portText = next.defaultPort.toString()
-                            }
-                            dbType = next
-                        },
-                    )
-                }
-                if (dbType.externalDriver) {
-                    val ready = ExternalDrivers.isAvailable(dbType.driverClass)
-                    Text(
-                        if (ready) {
-                            t(Str.ConnExternalDriverLoaded, dbType.driverClass)
-                        } else {
-                            t(Str.ConnExternalDriverMissing, dbType.label, ExternalDrivers.driversDir())
-                        },
-                        style = MaterialTheme.typography.caption,
-                        color = if (ready) MaterialTheme.colors.onSurface.copy(alpha = 0.55f) else Color(0xFFFFB300),
-                        modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
-                    )
                 }
                 val ungroupedLabel = t(Str.ConnUngrouped)
                 FormRow(t(Str.TreePillFolder)) {
@@ -407,32 +383,131 @@ fun ConnectionEditorDialog(
     )
 }
 
-/**
- * 连接表单本体：宽度 480dp、高度随内容自适应（独立弹窗），把底部「测试连接」等一次展示完。
- * 仅当内容超过 [maxHeight]（由屏幕可用高度推算）时才滚动，并在右侧显示可见滚动条，
- * 避免「必须滚动才能看到底部、又没有滚动条」的隐性截断。
- */
+/** 弹窗主体：左侧按大类分组的类型导航 + 右侧配置表单（各自独立滚动）。 */
 @Composable
-private fun FormBody(maxHeight: Dp, content: @Composable ColumnScope.() -> Unit) {
-    val scrollState = rememberScrollState()
-    Box(modifier = Modifier.width(480.dp)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = maxHeight)
-                .verticalScroll(scrollState)
-                .padding(end = if (scrollState.maxValue > 0) 12.dp else 0.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-            content = content,
+private fun DialogBody(
+    maxHeight: Dp,
+    dbType: DbType,
+    onSelectType: (DbType) -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    // 固定高度（上限取屏幕可用高），左右两栏各自滚动；点窗外不关，只能取消/保存
+    val height = maxHeight.coerceAtMost(480.dp)
+    Row(modifier = Modifier.width(720.dp).height(height)) {
+        TypeNavColumn(current = dbType, onSelect = onSelectType)
+        Divider(
+            modifier = Modifier.width(1.dp).fillMaxHeight(),
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.12f),
         )
-        if (scrollState.maxValue > 0) {
-            VerticalScrollbar(
-                adapter = rememberScrollbarAdapter(scrollState),
-                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                style = viewerScrollbarStyle(),
-            )
+        val scrollState = rememberScrollState()
+        Box(modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 6.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(start = 18.dp, end = if (scrollState.maxValue > 0) 12.dp else 0.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                TypeHeader(dbType)
+                content()
+            }
+            if (scrollState.maxValue > 0) {
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(scrollState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                    style = viewerScrollbarStyle(),
+                )
+            }
         }
     }
+}
+
+/** 右侧表单顶部的「类型头」：徽章 + 名称（类型由左侧导航选择）；外部驱动未就绪时给提示。 */
+@Composable
+private fun TypeHeader(dbType: DbType) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TypeBadge(dbType)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            typeLabel(dbType),
+            style = MaterialTheme.typography.subtitle2,
+            color = MaterialTheme.colors.onSurface,
+        )
+    }
+    if (dbType.externalDriver) {
+        val ready = ExternalDrivers.isAvailable(dbType.driverClass)
+        Text(
+            if (ready) {
+                t(Str.ConnExternalDriverLoaded, dbType.driverClass)
+            } else {
+                t(Str.ConnExternalDriverMissing, dbType.label, ExternalDrivers.driversDir())
+            },
+            style = MaterialTheme.typography.caption,
+            color = if (ready) MaterialTheme.colors.onSurface.copy(alpha = 0.55f) else Color(0xFFFFB300),
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+/** 左侧类型导航：按大类分段，每类下是各数据源（选中项高亮）。 */
+@Composable
+private fun TypeNavColumn(current: DbType, onSelect: (DbType) -> Unit) {
+    Column(
+        modifier = Modifier
+            .width(176.dp)
+            .fillMaxHeight()
+            .background(MaterialTheme.colors.surface)
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+    ) {
+        DbCategory.entries.forEach { category ->
+            Text(
+                categoryLabel(category),
+                style = MaterialTheme.typography.caption,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 4.dp),
+            )
+            DbType.entries.filter { it.category == category }.forEach { type ->
+                TypeNavRow(type = type, selected = type == current) { onSelect(type) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TypeNavRow(type: DbType, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) MaterialTheme.colors.primary.copy(alpha = 0.18f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        TypeBadge(type)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            typeLabel(type),
+            fontSize = 12.5.sp,
+            color = if (selected) MaterialTheme.colors.onSurface
+            else MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 类型展示名：H2 双形态区分服务端/本地文件，其余用品牌名（不翻译）。 */
+private fun typeLabel(type: DbType): String = when (type) {
+    DbType.H2 -> I18n.t(Str.ConnTypeH2)
+    DbType.H2LOCAL -> I18n.t(Str.ConnTypeH2Local)
+    else -> type.label
+}
+
+private fun categoryLabel(category: DbCategory): String = when (category) {
+    DbCategory.LOCAL -> I18n.t(Str.ConnCategoryLocal)
+    DbCategory.RELATIONAL -> I18n.t(Str.ConnCategoryRelational)
+    DbCategory.NON_RELATIONAL -> I18n.t(Str.ConnCategoryNonRelational)
 }
 
 /** 单行：左标签 + 全宽内容。 */
