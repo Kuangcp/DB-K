@@ -78,6 +78,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -89,6 +90,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import app.i18n.t
 import app.ui.DbIcons
+import app.ui.brandIcon
 import db.ConnectionProfile
 import db.ConsoleRecord
 import db.DbType
@@ -1054,7 +1056,7 @@ private fun TreeRowView(
                 TreeRowKind.CONNECTION -> {
                     // 连接入口：未连接/失败时双击整行连接（箭头位仅占位保持对齐，无丑按钮）
                     if (canExpand) ExpandArrow(row.expanded, onToggle) else Spacer(Modifier.width(16.dp))
-                    row.profile?.let { TypeBadge(it.dbType) }
+                    row.profile?.let { TypeBadge(it.dbType, 15.dp) }
                     RowName(row.name, Modifier.padding(start = 5.dp).weight(1f), 13.sp, highlight = highlight)
                     if (!row.expanded && row.childCount > 0) CountBadge(row.childCount)
                     // 搜索命中且未连接：结果来自本地缓存，标「缓存」+ 灰点，避免与实时结果混淆
@@ -1534,23 +1536,19 @@ fun ObjectKindBadge(kind: ObjectKind?) {
     }
 }
 
-/** 数据库类型徽章：底色圆角方块 + 白字短名。 */
+/**
+ * 数据库类型徽章：品牌色手绘矢量图标（见 `app/ui/DbTypeIcons.kt`）。
+ *
+ * 不再使用「底色方块 + 缩写字母」：小尺寸下字母识别度低（同色方块无法区分数据源），
+ * 图标按各产品的经典意象重绘，统一 24x24 光学尺寸，[size] 控制实际显示边长。
+ * 颜色取 [DbType.badgeColor] 品牌色；无障碍文案用 [DbType.label]。
+ */
 @Composable
-fun TypeBadge(dbType: DbType) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(17.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(Color(dbType.badgeColor)),
-    ) {
-        Text(
-            dbType.badge,
-            color = Color.White,
-            fontSize = 8.sp,
-            // 同 ObjectKindBadge：固定 17dp 徽章显式压行高，避免继承 24sp 行高后垂直偏移。
-            lineHeight = 10.sp,
-            maxLines = 1,
-        )
-    }
+fun TypeBadge(dbType: DbType, size: Dp = 16.dp) {
+    Icon(
+        imageVector = dbType.brandIcon,
+        contentDescription = dbType.label,
+        tint = Color(dbType.badgeColor),
+        modifier = Modifier.size(size),
+    )
 }

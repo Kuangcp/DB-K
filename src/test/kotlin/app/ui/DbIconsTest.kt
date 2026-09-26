@@ -1,6 +1,8 @@
 package app.ui
 
+import db.DbType
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -30,5 +32,16 @@ class DbIconsTest {
             assertTrue(icon.defaultWidth.value > 0f, "图标 $name 未能解析出有效尺寸")
             assertTrue(icon.defaultHeight.value > 0f, "图标 $name 未能解析出有效尺寸")
         }
+    }
+
+    /** 数据源图标守卫：每个 DbType 都要有可解析的品牌图标（漏一个即编译不过）。 */
+    @Test
+    fun everyDbTypeHasBrandIcon() {
+        DbType.entries.forEach { type ->
+            val icon = type.brandIcon
+            assertTrue(icon.defaultWidth.value > 0f, "数据源 ${type.name} 的品牌图标未能解析出有效尺寸")
+            assertTrue(icon.defaultHeight.value > 0f, "数据源 ${type.name} 的品牌图标未能解析出有效尺寸")
+        }
+        assertEquals(DbType.entries.size, DbType.entries.map { it.brandIcon }.distinct().size, "数据源图标不可重复")
     }
 }
