@@ -35,7 +35,6 @@ import androidx.compose.material.IconButton
 import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedButton
-import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
@@ -64,7 +63,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import app.state.ConnectionEditorRequest
 import app.i18n.ProvideI18n
@@ -73,7 +71,7 @@ import app.state.SessionFactory
 import app.state.friendlySqlError
 import app.ui.DbIcons
 import app.ui.LocalThemeColors
-import app.ui.ProvideUiScale
+import app.ui.ScaledDialogWindow
 import app.ui.ThemeSpec
 import app.ui.scaledSize
 import db.DbCategory
@@ -203,13 +201,12 @@ fun ConnectionEditorDialog(
     val title = t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)
     // 显式尺寸的 DialogWindow（undecorated + transparent，视觉同 AlertDialog 自绘圆角），
     // 避开 AlertDialog 桌面端的 pack-to-content：滚动条出现时窗口会被撑成内容全高（大片留白）。
-    val dialogState = rememberDialogState(size = scaledSize(768.dp, bodyHeight + 152.dp))
-    DialogWindow(
+    val dialogState = rememberDialogState(size = scaledSize(768.dp, bodyHeight + 100.dp))
+    // 显式尺寸的装饰窗口（原生标题栏，可拖动/缩放）；避免 AlertDialog 的 pack-to-content 撑高问题。
+    ScaledDialogWindow(
         onCloseRequest = onDismiss,
         state = dialogState,
         title = title,
-        undecorated = true,
-        transparent = true,
         resizable = true,
         onPreviewKeyEvent = { e ->
             if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
@@ -220,43 +217,30 @@ fun ConnectionEditorDialog(
             }
         },
     ) {
-        ProvideUiScale {
-            ProvideI18n(language) {
-                MaterialTheme(colors = theme.colors.toMaterialColors()) {
-                    CompositionLocalProvider(
-                        LocalContentColor provides MaterialTheme.colors.onSurface,
-                        LocalThemeColors provides theme.colors,
+        ProvideI18n(language) {
+            MaterialTheme(colors = theme.colors.toMaterialColors()) {
+                CompositionLocalProvider(
+                    LocalContentColor provides MaterialTheme.colors.onSurface,
+                    LocalThemeColors provides theme.colors,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colors.background)
+                            .padding(20.dp),
                     ) {
-                        Surface(
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colors.surface,
+                        DialogBody(
+                            maxHeight = bodyHeight,
+                            dbType = dbType,
+                            onSelectType = { next ->
+                                // 切换类型时若端口还是旧默认值则跟随新默认
+                                if (port == null || port == dbType.defaultPort) {
+                                    portText = next.defaultPort.toString()
+                                }
+                                dbType = next
+                            },
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 24.dp, vertical = 20.dp),
-                            ) {
-                                Text(
-                                    title,
-                                    style = MaterialTheme.typography.subtitle1,
-                                    color = MaterialTheme.colors.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(Modifier.height(16.dp))
-                                DialogBody(
-                                    maxHeight = bodyHeight,
-                                    dbType = dbType,
-                                    onSelectType = { next ->
-                                        // 切换类型时若端口还是旧默认值则跟随新默认
-                                        if (port == null || port == dbType.defaultPort) {
-                                            portText = next.defaultPort.toString()
-                                        }
-                                        dbType = next
-                                    },
-                                ) {
-                                    FormRow(t(Str.CommonName)) {
+                            FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
                 }
                 val ungroupedLabel = t(Str.ConnUngrouped)
@@ -439,8 +423,6 @@ fun ConnectionEditorDialog(
             }
         }
     }
-}
-}
 }
 }
 }
