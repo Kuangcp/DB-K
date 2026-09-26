@@ -10,9 +10,9 @@
 | app-image（免安装目录，当前自用方式） | 任意 | `gradle createDistributable` | 无 |
 | Deb | Linux | `gradle packageDeb` | jpackage；部分发行版需 `dpkg`/`fakeroot` |
 | **AppImage**（单文件） | Linux | `gradle makeAppImage` | `appimagetool`（+ FUSE2 或 `APPIMAGE_EXTRACT_AND_RUN=1`） |
-| **MSI** | **仅 Windows** | `gradle packageMsi` | WiX Toolset 3.x |
+| **EXE** | **仅 Windows** | `gradle packageExe` | WiX Toolset 3.x |
 
-**交叉打包不支持**：jpackage 不能在 Linux 上产出 MSI/EXE，反之亦然。所以 MSI 必须在 Windows 上构建。
+**交叉打包不支持**：jpackage 不能在 Linux 上产出 EXE，反之亦然。所以 EXE 必须在 Windows 上构建。
 
 ---
 
@@ -53,15 +53,14 @@ AppImage 是"自包含"但**不是静态链接**：native ELF（JRE、Skiko、la
 
 ---
 
-## MSI（Windows 构建）
+## EXE（Windows 构建）
 
 配置在 `build.gradle.kts` 的 `nativeDistributions.windows { … }`，字段与 `api-x` 同源：
 
 ```kotlin
-targetFormats(TargetFormat.Deb, TargetFormat.Msi)
+targetFormats(TargetFormat.Deb, TargetFormat.Exe)
 windows {
     upgradeUuid = "ab0abd13-bf35-4b79-8898-fbb9cfdc0f82" // 永久固定，改动会导致无法升级
-    msiPackageVersion = appVersion                        // 1.0.1
     menu = true
     menuGroup = "DB-K"
     shortcut = true
@@ -76,10 +75,9 @@ windows {
 1. **JDK 25**（JBR 或 Temurin，需含 MSI bundler；本机 Linux JBR 的 `jdk.jpackage` 就不含）。
 2. **Gradle 9.4.1**（项目无 wrapper，用系统 gradle）。
 3. **WiX Toolset 3.x**（jpackage 调 `candle.exe`/`light.exe`），装好并加入 `PATH`。Compose 的 `windows {}` DSL 未暴露 wix 目录，走 PATH 即可。
-4. `gradle packageMsi` → `build/compose/binaries/main/msi/db-k-1.0.1.msi`。
+4. `gradle packageExe` → `build/compose/binaries/main/exe/db-k-1.0.3.exe`。
 
 ### 注意
 
-- **版本号 major 不能为 0**：jpackage/WiX 对 MSI 要求 major ≥ 1；现统一为 `1.0.1`。若 Windows 上仍报版本错，把 `msiPackageVersion` 单独调大即可。
 - `upgradeUuid` 一旦发布就不要再改，否则新版本不会被识别为升级。
-- 未做代码签名（自签证书过不了杀软，故不配置 `signMsi`）。
+- 未做代码签名（自签证书过不了杀软，故不配置签名）。

@@ -161,8 +161,8 @@ compose.desktop {
         mainClass = "app.core.DbkMainKt"
 
         nativeDistributions {
-            // Deb 在 Linux 构建；Msi 只能在 Windows 构建（jpackage 不支持交叉打包）
-            targetFormats(TargetFormat.Deb, TargetFormat.Msi)
+            // Deb 在 Linux 构建；Exe 只能在 Windows 构建（jpackage 不支持交叉打包）
+            targetFormats(TargetFormat.Deb, TargetFormat.Exe, TargetFormat.Msi)
             packageName = "db-k"
             packageVersion = appVersion
             // JDBC 驱动需要这些模块（jlink 默认运行时未包含）；java.net.http 供 Elasticsearch 后端；
@@ -175,12 +175,11 @@ compose.desktop {
             windows {
                 // 永久固定：Windows 安装器据此识别「同一应用的升级」，改动会导致升级失败
                 upgradeUuid = "ab0abd13-bf35-4b79-8898-fbb9cfdc0f82"
-                msiPackageVersion = appVersion
                 menu = true
                 menuGroup = "DB-K"
                 shortcut = true
                 dirChooser = true
-                perUserInstall = false
+                perUserInstall = true
                 iconFile.set(project.file("icon/db-k.ico"))
             }
         }
