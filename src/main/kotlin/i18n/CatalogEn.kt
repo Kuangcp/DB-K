@@ -75,6 +75,8 @@ internal fun en(key: Str): String = when (key) {
     Str.SettingsPreview -> "Preview"
     Str.SettingsUiScale -> "UI scale ({0}%)"
     Str.SettingsUiScaleHint -> "Scales the entire UI (text, icons, borders). Applies immediately; cancelling reverts."
+    Str.SettingsTabMultiRow -> "Multi-row console tabs"
+    Str.SettingsTabMultiRowHint -> "Wrap tabs onto multiple rows; off keeps a single row scrolled by the mouse wheel"
 
     // ── General: diagnostics ──
     Str.SettingsDiagnostics -> "Diagnostics"
@@ -82,6 +84,16 @@ internal fun en(key: Str): String = when (key) {
     Str.SettingsDataDir -> "Data directory"
     Str.SettingsOpenLogDir -> "Open log directory"
     Str.SettingsOpenDataDir -> "Open data directory"
+    Str.SettingsLiveTemplates -> "Live Templates"
+    Str.SettingsLiveTemplatesCreate -> "Create sample and open folder"
+    Str.SettingsSectionLiveTemplates -> "Templates"
+    Str.SettingsLiveTemplatesHint -> "Use \$name\$ to define placeholders (e.g. \$table\$); Tab/Shift+Tab jump between them; \$END\$ is the final caret; \$\$ is a literal \$. Changes apply on save."
+    Str.SettingsLiveTemplatesColAbbr -> "Abbrev"
+    Str.SettingsLiveTemplatesColBody -> "Template"
+    Str.SettingsLiveTemplatesColDesc -> "Description"
+    Str.SettingsLiveTemplatesAdd -> "Add template"
+    Str.SettingsLiveTemplatesReset -> "Reset to defaults"
+    Str.SettingsLiveTemplatesWarn -> "Abbreviation must be non-empty and unique; blank bodies are not saved."
     Str.SettingsOpenFailed -> "Cannot open {0} automatically; path copied to clipboard"
 
     // ── Console name dialog ──
@@ -287,6 +299,7 @@ internal fun en(key: Str): String = when (key) {
     Str.EditorCompletionSubquery -> "subquery"
     Str.EditorCompletionFunction -> "function"
     Str.EditorCompletionExpandColumns -> "Expand to {0} columns"
+    Str.EditorCompletionTemplate -> "Template"
     Str.EditorEsPlaceholder -> "Enter ES JSON DSL, e.g. {\"index\":\"my-index\",\"query\":{\"match_all\":{}}}\nCtrl+Space completes keys / query types / fields"
     Str.EditorSqlPlaceholder -> "Type SQL…\nSelect a statement and press Ctrl+Enter (nothing selected = no run)"
     Str.EditorDirty -> "● Unsaved · Ctrl+S to save"

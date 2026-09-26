@@ -8,14 +8,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,7 +33,10 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -38,6 +44,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,36 +88,86 @@ internal fun ConsoleTabBar(
     onCreateWorkspace: () -> Unit = {},
     onRenameWorkspace: (WorkspaceRecord) -> Unit = {},
     onDeleteWorkspace: (WorkspaceRecord) -> Unit = {},
+    /** 标签多行换行（自动换行）；false = 单行横向滚动。 */
+    multiRowTabs: Boolean = false,
 ) {
     var createMenuOpen by remember { mutableStateOf(false) }
     // 条内出现多个数据源时，标签额外显示所属数据源名，避免同类型两个库分不清
     val multiSource = consoles.map { it.connectionId }.distinct().size > 1
+
+    // 两种布局共用同一份标签渲染（仅外层容器不同：换行 vs 横滚）
+    val renderChip: @Composable (ConsoleRecord, Modifier) -> Unit = { c, chipModifier ->
+        ConsoleChip(
+            console = c,
+            profile = profilesById[c.connectionId],
+            showSourceTag = multiSource,
+            active = c.id == activeConsole?.id,
+            dirty = c.id in dirtyConsoleIds,
+            pendingEdits = pendingEditCounts[c.id] ?: 0,
+            issue = externalIssues[c.id],
+            modifier = chipModifier,
+            onSelect = { onSelectConsole(c) },
+            onRename = { onRenameConsole(c) },
+            onDelete = { onDeleteConsole(c) },
+            onClose = { onCloseConsole(c) },
+            onCopyFilePath = { onCopyFilePath(c) },
+            onRevealFile = { onRevealFile(c) },
+            onReloadFromDisk = { onReloadFromDisk(c) },
+        )
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(38.dp).padding(start = 8.dp, end = 6.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp).padding(start = 8.dp, end = 6.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()),
-        ) {
-            consoles.forEach { c ->
-                ConsoleChip(
-                    console = c,
-                    profile = profilesById[c.connectionId],
-                    showSourceTag = multiSource,
-                    active = c.id == activeConsole?.id,
-                    dirty = c.id in dirtyConsoleIds,
-                    pendingEdits = pendingEditCounts[c.id] ?: 0,
-                    issue = externalIssues[c.id],
-                    onSelect = { onSelectConsole(c) },
-                    onRename = { onRenameConsole(c) },
-                    onDelete = { onDeleteConsole(c) },
-                    onClose = { onCloseConsole(c) },
-                    onCopyFilePath = { onCopyFilePath(c) },
-                    onRevealFile = { onRevealFile(c) },
-                    onReloadFromDisk = { onReloadFromDisk(c) },
-                )
-                Spacer(Modifier.width(5.dp))
+        if (multiRowTabs) {
+            // 多行：自动换行，不设行数上限（标签越多条越高）
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.weight(1f, fill = false).padding(vertical = 4.dp),
+            ) {
+                consoles.forEach { c -> renderChip(c, Modifier) }
+            }
+        } else {
+            // 单行：横向滚动（滚轮由 Compose 原生处理），激活 tab 自动滚入可见范围
+            val scrollState = rememberScrollState()
+            val spacingPx = with(LocalDensity.current) { 5.dp.roundToPx() }
+            val chipWidths = remember { mutableStateMapOf<String, Int>() }
+            var viewportPx by remember { mutableIntStateOf(0) }
+            val activeId = activeConsole?.id
+            LaunchedEffect(activeId, consoles.map { it.id }, chipWidths.size, viewportPx) {
+                if (activeId == null || viewportPx <= 0) return@LaunchedEffect
+                var offset = 0
+                var width = 0
+                for (c in consoles) {
+                    if (c.id == activeId) {
+                        width = chipWidths[c.id] ?: 0
+                        break
+                    }
+                    offset += (chipWidths[c.id] ?: 0) + spacingPx
+                }
+                if (width <= 0) return@LaunchedEffect
+                val start = scrollState.value
+                val end = start + viewportPx
+                val target = when {
+                    offset < start -> offset
+                    offset + width > end -> offset + width - viewportPx
+                    else -> return@LaunchedEffect
+                }
+                scrollState.animateScrollTo(target.coerceIn(0, scrollState.maxValue))
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .horizontalScroll(scrollState)
+                    .onSizeChanged { viewportPx = it.width },
+            ) {
+                consoles.forEach { c ->
+                    renderChip(c, Modifier.onSizeChanged { chipWidths[c.id] = it.width })
+                    Spacer(Modifier.width(5.dp))
+                }
             }
         }
         Spacer(Modifier.width(6.dp))
@@ -173,6 +231,7 @@ private fun ConsoleChip(
     dirty: Boolean,
     pendingEdits: Int,
     issue: ExternalFileIssue?,
+    modifier: Modifier = Modifier,
     onSelect: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -194,7 +253,8 @@ private fun ConsoleChip(
     ContextMenuArea(items = { menu }) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
+            modifier = modifier
+                .widthIn(max = 260.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(
                     if (active) MaterialTheme.colors.primary.copy(alpha = 0.16f)

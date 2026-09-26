@@ -1,4 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 plugins {
     kotlin("jvm")
@@ -11,6 +14,52 @@ group = "dev.dbk"
 version = "1.0.3"
 val appVersion = project.version.toString()
 
+// ---------- sqlite-jdbc 按平台裁剪 ----------
+// org.xerial:sqlite-jdbc 的 fat jar 内嵌 18 种平台/架构的原生库（~14MB）；这里按**构建机**平台
+// 重打一个只含当前 OS/arch native 的 jar（class 全部保留），AppImage / Deb / MSI 都受益。
+val sqliteVersion = "3.47.2.0"
+fun sqliteNativePrefix(): String {
+    val os = System.getProperty("os.name").orEmpty().lowercase()
+    val arch = System.getProperty("os.arch").orEmpty().lowercase()
+    val a = when {
+        arch.contains("aarch64") || arch.contains("arm64") -> "aarch64"
+        arch.contains("amd64") || arch.contains("x86_64") || arch.contains("x64") -> "x86_64"
+        arch.contains("x86") || arch.contains("i386") || arch.contains("i686") -> "x86"
+        else -> arch
+    }
+    val platform = when {
+        os.contains("win") -> "Windows"
+        os.contains("mac") || os.contains("darwin") -> "Mac"
+        else -> "Linux"
+    }
+    return "org/sqlite/native/$platform/$a/"
+}
+val sqliteFullJar = configurations.detachedConfiguration(
+    dependencies.create("org.xerial:sqlite-jdbc:$sqliteVersion"),
+).apply { isTransitive = false }
+val trimmedSqliteJar = layout.buildDirectory.file("trimmed/sqlite-jdbc-$sqliteVersion-trimmed.jar")
+val trimSqliteJdbc by tasks.registering {
+    inputs.files(sqliteFullJar)
+    outputs.file(trimmedSqliteJar)
+    doLast {
+        val src = sqliteFullJar.singleFile
+        val keep = sqliteNativePrefix()
+        val out = trimmedSqliteJar.get().asFile
+        out.parentFile.mkdirs()
+        ZipFile(src).use { zin ->
+            ZipOutputStream(out.outputStream()).use { zout ->
+                zin.entries().asSequence().forEach { e ->
+                    val drop = e.name.startsWith("org/sqlite/native/") && !e.name.startsWith(keep)
+                    if (drop) return@forEach
+                    zout.putNextEntry(ZipEntry(e.name))
+                    zin.getInputStream(e).copyTo(zout)
+                    zout.closeEntry()
+                }
+            }
+        }
+    }
+}
+
 repositories {
     mavenCentral()
     maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
@@ -21,7 +70,8 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material:material-icons-core:1.7.3")
     // 应用自身元数据存储（连接档案/文件夹/SQL 历史），与目标库无关
-    implementation("org.xerial:sqlite-jdbc:3.47.2.0")
+    // sqlite-jdbc 用「按构建机平台裁剪后的 jar」替代全平台 fat jar（只删非本平台 native，class 不变）
+    implementation(files(trimmedSqliteJar).builtBy(trimSqliteJdbc))
     // 目标库 JDBC 驱动（轻量客户端直接放 classpath；新增库只需在下方加一行 + 实现方言）
     implementation("org.postgresql:postgresql:42.7.4")
     implementation("com.mysql:mysql-connector-j:9.1.0")

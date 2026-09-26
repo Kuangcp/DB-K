@@ -85,6 +85,8 @@ enum class Str {
     SettingsPreview,
     SettingsUiScale,
     SettingsUiScaleHint,
+    SettingsTabMultiRow,
+    SettingsTabMultiRowHint,
 
     // ── 通用设置：诊断 ──
     SettingsDiagnostics,
@@ -92,6 +94,16 @@ enum class Str {
     SettingsDataDir,
     SettingsOpenLogDir,
     SettingsOpenDataDir,
+    SettingsLiveTemplates,
+    SettingsLiveTemplatesCreate,
+    SettingsSectionLiveTemplates,
+    SettingsLiveTemplatesHint,
+    SettingsLiveTemplatesColAbbr,
+    SettingsLiveTemplatesColBody,
+    SettingsLiveTemplatesColDesc,
+    SettingsLiveTemplatesAdd,
+    SettingsLiveTemplatesReset,
+    SettingsLiveTemplatesWarn,
     SettingsOpenFailed,
 
     // ── 控制台命名弹窗 ──
@@ -293,6 +305,7 @@ enum class Str {
     EditorCompletionSubquery,
     EditorCompletionFunction,
     EditorCompletionExpandColumns,
+    EditorCompletionTemplate,
     EditorEsPlaceholder,
     EditorSqlPlaceholder,
     EditorDirty,

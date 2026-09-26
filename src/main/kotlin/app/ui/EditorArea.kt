@@ -185,6 +185,8 @@ fun WindowScope.EditorArea(
     completionTables: List<CompletionTable> = emptyList(),
     /** 编辑器补全用函数/过程/聚合名（PG 等能探测到的数据源；其余为空）。 */
     completionFunctions: List<String> = emptyList(),
+    /** Live Templates（内置 + 用户文件叠加），透传给编辑器。 */
+    liveTemplates: List<LiveTemplate> = emptyList(),
     /** 是否启用 SQL 补全（非 SQL 后端如 Redis 关掉，避免弹 SQL 关键字）。 */
     completionEnabled: Boolean = true,
     /** 编辑器语言：决定高亮（SQL / JSON DSL / Redis 命令）。 */
@@ -207,6 +209,8 @@ fun WindowScope.EditorArea(
     onManageThemes: () -> Unit,
     /** 编辑器外观设置（字体族 / 字号）。 */
     editorSettings: EditorSettings,
+    /** 控制台标签多行换行；false = 单行横向滚动。 */
+    multiRowTabs: Boolean = false,
     onOpenSettings: () -> Unit,
     /** 主窗口状态：自定义标题栏的最小化/最大化/还原用。 */
     mainWindowState: WindowState,
@@ -366,6 +370,7 @@ fun WindowScope.EditorArea(
         ConsoleTabBar(
             consoles = consoles,
             activeConsole = activeConsole,
+            multiRowTabs = multiRowTabs,
             dirtyConsoleIds = dirtyConsoleIds,
             pendingEditCounts = pendingEditCounts,
             profilesById = profilesById,
@@ -528,6 +533,7 @@ fun WindowScope.EditorArea(
                             completionIdentifiers = completionIdentifiers,
                             completionTables = completionTables,
                             completionFunctions = completionFunctions,
+                            liveTemplates = liveTemplates,
                             completionEnabled = completionEnabled,
                             editorLanguage = editorLanguage,
                             columnCatalog = columnCatalog,

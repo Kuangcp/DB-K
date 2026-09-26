@@ -74,10 +74,12 @@ import app.i18n.LocalLang
 import app.settings.EditorPrefs
 import app.settings.KeymapPrefs
 import app.settings.LanguagePrefs
+import app.settings.LiveTemplatesStore
 import app.settings.ShortcutCommand
 import app.settings.ThemePrefs
 import app.settings.ThemesStore
 import app.settings.TreeExpandPrefs
+import app.settings.TabBarPrefs
 import app.settings.UiScalePrefs
 import app.settings.WindowPrefs
 import app.state.CommitPreviewRequest
@@ -112,6 +114,7 @@ import app.ui.ResultEdits
 import app.ui.MAX_RESULT_FRAC
 import app.ui.MIN_RESULT_FRAC
 import app.ui.EditorArea
+import app.ui.defaultLiveTemplates
 import app.ui.LocalThemeColors
 import app.ui.ProvideUiScale
 import app.ui.defaultThemeId
@@ -410,6 +413,8 @@ private fun WindowScope.AppBody(
     }
     // 编辑器外观（字体/字号）：设置窗口保存后即写盘并即时生效
     var editorSettings by remember { mutableStateOf(EditorPrefs.load()) }
+    // 控制台标签布局（多行换行 / 单行横滚）：设置窗口保存后即写盘并即时生效
+    var multiRowTabs by remember { mutableStateOf(TabBarPrefs.load()) }
     // 打开设置时的缩放快照：用于「取消」回退；实时预览改的是 UiScaleState
     var settingsInitialScale by remember { mutableStateOf(UiScaleState.scale) }
     // 快捷键（扩展业务功能可配置；基础编辑键固定）：设置窗口保存后写盘并即时生效
@@ -608,6 +613,10 @@ private fun WindowScope.AppBody(
             }
     }.orEmpty()
     val completionIdentifiers: List<String> = completionTables.map { it.name }.distinct().sorted()
+    // Live Templates：内置 + 用户 live-templates.json 叠加；快照状态，设置窗保存后即时生效。
+    var liveTemplates by remember {
+        mutableStateOf(runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() })
+    }
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
     val completionFunctions: List<String> = activeProfile?.let { p ->
         connectionsState.schemasOf(p.id).orEmpty()
@@ -1410,6 +1419,7 @@ private fun WindowScope.AppBody(
                             toastState.show(I18n.t(Str.MainHistoryCleared))
                         },
                         completionIdentifiers = completionIdentifiers,
+                        liveTemplates = liveTemplates,
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
                         completionEnabled = activeProfile?.let {
@@ -1433,8 +1443,11 @@ private fun WindowScope.AppBody(
                         onSelectTheme = ::selectTheme,
                         onManageThemes = { dialogState.showThemeDialog = true },
                         editorSettings = editorSettings,
+                        multiRowTabs = multiRowTabs,
                         onOpenSettings = {
                             settingsInitialScale = UiScaleState.scale
+                            // 打开设置时重读文件：手改 live-templates.json 后无需重启即可看到/生效
+                            liveTemplates = runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
                             dialogState.showSettings = true
                         },
                         mainWindowState = mainWindowState,
@@ -1459,7 +1472,7 @@ private fun WindowScope.AppBody(
                     visible = dialogState.showSettings,
                     theme = activeTheme,
                     language = effectiveLang,
-                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale),
+                    initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale, liveTemplates, multiRowTabs),
                     onDismiss = {
                         // 取消/关闭：回退实时预览的缩放，不落盘
                         UiScaleState.set(settingsInitialScale)
@@ -1467,6 +1480,8 @@ private fun WindowScope.AppBody(
                     },
                     onSave = { snapshot ->
                         editorSettings = snapshot.editor
+                        multiRowTabs = snapshot.multiRowTabs
+                        TabBarPrefs.save(snapshot.multiRowTabs)
                         keymap = snapshot.keymap
                         languagePref = snapshot.language
                         // 非 UI 层读的是全局 I18n.lang；与 snapshot 同步更新，避免一帧旧语言
@@ -1477,6 +1492,9 @@ private fun WindowScope.AppBody(
                         EditorPrefs.save(snapshot.editor)
                         KeymapPrefs.save(snapshot.keymap)
                         LanguagePrefs.save(snapshot.language)
+                        // 活模板：即时生效 + 整份落盘
+                        liveTemplates = snapshot.liveTemplates
+                        LiveTemplatesStore.save(snapshot.liveTemplates)
                         dialogState.showSettings = false
                     },
                     onManageThemes = { dialogState.showThemeDialog = true },

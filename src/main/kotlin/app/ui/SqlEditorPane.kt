@@ -112,10 +112,14 @@ internal fun rememberHighlightTransformation(
     spans: List<AnnotatedString.Range<SpanStyle>>,
     currentLineRange: Pair<Int, Int>?,
     lineBgColor: Color,
+    templateStop: Pair<Int, Int>? = null,
+    templateStopBg: Color = Color.Transparent,
 ): OutputTransformation {
     val latestSpans = rememberUpdatedState(spans)
     val latestLineRange = rememberUpdatedState(currentLineRange)
     val latestLineBg = rememberUpdatedState(lineBgColor)
+    val latestTemplateStop = rememberUpdatedState(templateStop)
+    val latestTemplateBg = rememberUpdatedState(templateStopBg)
     return remember {
         OutputTransformation {
             // 重要：buffer 可能是比 composition 期算好的 spans 更“短”的文本（undo/快速输入时，
@@ -131,6 +135,11 @@ internal fun rememberHighlightTransformation(
                 val start = a.coerceIn(0, length)
                 val end = b.coerceIn(0, length)
                 if (start < end) addStyle(SpanStyle(background = latestLineBg.value), start, end)
+            }
+            latestTemplateStop.value?.let { (a, b) ->
+                val start = a.coerceIn(0, length)
+                val end = b.coerceIn(0, length)
+                if (start < end) addStyle(SpanStyle(background = latestTemplateBg.value), start, end)
             }
         }
     }
@@ -159,6 +168,8 @@ internal fun EditorPane(
     completionIdentifiers: List<String>,
     completionTables: List<CompletionTable>,
     completionFunctions: List<String>,
+    /** Live Templates：SQL 语言下 Tab 展开 + 补全候选。 */
+    liveTemplates: List<LiveTemplate> = emptyList(),
     completionEnabled: Boolean = true,
     /** 编辑器语言：决定语法高亮（SQL 关键字 / JSON DSL）。 */
     editorLanguage: EditorLanguage = EditorLanguage.SQL,
@@ -200,11 +211,13 @@ internal fun EditorPane(
     // “多光标批量编辑造成的文本变化”（保留多光标）与其它来源（格式化/预览插入等）→ 自动退出。
     var multiCursors by remember { mutableStateOf<List<CursorSel>>(emptyList()) }
     var expectedMultiText by remember { mutableStateOf<String?>(null) }
+    // Live Template 会话：展开后 Tab/Shift+Tab 在 $占位符$ 间跳转，Esc 结束。切控制台由 key(consoleId) 重置。
+    var templateSession by remember { mutableStateOf<TemplateSession?>(null) }
     LaunchedEffect(state) {
         var lastText = state.text.toString()
         snapshotFlow { state.text.toString() to state.selection }
             .drop(1)
-            .collect { (text, _) ->
+            .collect { (text, selection) ->
                 val typed = text != lastText
                 lastText = text
                 if (typed) {
@@ -212,6 +225,18 @@ internal fun EditorPane(
                     else { editing = true; forceComplete = false }
                 } else {
                     editing = false
+                }
+                val session = templateSession
+                if (session != null) {
+                    if (typed) {
+                        templateSession = reconcileSession(session, text)
+                    } else {
+                        val lo = session.anchorStart
+                        val hi = session.stops.lastOrNull()?.end ?: session.endOffset
+                        val s = minOf(selection.start, selection.end)
+                        val e = maxOf(selection.start, selection.end)
+                        if (s < lo || e > hi) templateSession = null
+                    }
                 }
                 if (multiCursors.isNotEmpty() && text != expectedMultiText) {
                     multiCursors = emptyList()
@@ -238,7 +263,11 @@ internal fun EditorPane(
             if (le > ls) ls to le else null
         } else null
     // outputTransformation 必须稳定（换新对象会 reset 文本域的指针手势，见 rememberHighlightTransformation）。
-    val outputTransformation = rememberHighlightTransformation(highlightSpans, currentLineRange, lineBgColor)
+    val templateStopBg = MaterialTheme.colors.primary.copy(alpha = 0.25f)
+    val templateStopSel = templateSession?.let { activeStop(it) }?.let { it.start to it.end }
+    val outputTransformation = rememberHighlightTransformation(
+        highlightSpans, currentLineRange, lineBgColor, templateStopSel, templateStopBg,
+    )
 
     // 鼠标按在补全弹层外（左侧树 / 结果区 / 工具栏 / 其它控制台标签…）→ 收起弹层：语义就是
     // “不要这个提示了”。弹层是编辑器内 overlay，收不到别处的点击，由 Main 根布局的窗口级
@@ -549,6 +578,7 @@ internal fun EditorPane(
         starPos != null -> expandItems
         sqlWord != null -> completionItems(
             word = sqlWord.text,
+            templates = if (editorLanguage == EditorLanguage.SQL && qualified == null) liveTemplates else emptyList(),
             columns = columnItems,
             aliases = aliasItems,
             functions = functionItems,
@@ -579,8 +609,35 @@ internal fun EditorPane(
     var dismissed by remember(word?.start, word?.end, shown.size) { mutableStateOf(false) }
     val popupOpen = shown.isNotEmpty() && !dismissed
 
+    /** 用模板替换 [wordStart, wordEnd) 并进入会话（选区落到第一个占位符；无占位符只落 endOffset）。 */
+    fun startTemplate(tmpl: LiveTemplate, wordStart: Int, wordEnd: Int) {
+        val (newText, session) = beginSession(content, wordStart until wordEnd, tmpl.body)
+        suppressTextActivation = true
+        editing = false
+        state.edit {
+            replace(0, length, newText)
+            val stop = activeStop(session)
+            selection = if (stop != null) TextRange(stop.start, stop.end) else TextRange(session.endOffset)
+        }
+        templateSession = session.takeIf { it.stops.isNotEmpty() }
+    }
+
+    /** 光标前单词精确等于某模板缩写则展开；否则 false，交回原逻辑。 */
+    fun expandTemplateAtWord(): Boolean {
+        if (editorLanguage != EditorLanguage.SQL) return false
+        val w = sqlCompletionWord(content, sel.start) ?: return false
+        val tmpl = liveTemplates.firstOrNull { it.abbreviation.equals(w.text, ignoreCase = true) } ?: return false
+        startTemplate(tmpl, w.start, w.end)
+        return true
+    }
+
     fun accept(item: CompletionItem) {
         val w = word ?: return
+        if (item.kind == CompletionKind.TEMPLATE) {
+            liveTemplates.firstOrNull { it.abbreviation.equals(item.text, ignoreCase = true) }
+                ?.let { startTemplate(it, w.start, w.end) }
+            return
+        }
         val insert = item.insertText ?: item.text
         // 抑制“本次文本变化”重新激活补全，接受后不自动重开（等下一次敲键或 Ctrl+Space）
         suppressTextActivation = true
@@ -939,6 +996,32 @@ internal fun EditorPane(
                                 editing = false
                                 onSwitchConsole(-1)
                                 return@onPreviewKeyEvent true
+                            }
+                            // Live Templates：会话内 Tab/Shift+Tab/Esc；无会话时「精确缩写 + Tab」展开。
+                            // 精确缩写优先于补全上屏（DataGrip 语义）；其余 Tab 放行到下面的弹层分支。
+                            if (editorLanguage == EditorLanguage.SQL && multiCursors.isEmpty()) {
+                                val session = templateSession
+                                if (session != null) {
+                                    when (e.key) {
+                                        Key.Tab -> {
+                                            if (e.isShiftPressed) {
+                                                val (ns, target) = sessionPrev(session)
+                                                templateSession = ns
+                                                state.edit { selection = TextRange(target.first, target.second) }
+                                            } else {
+                                                val (ns, target) = sessionNext(session)
+                                                templateSession = ns
+                                                state.edit { selection = TextRange(target.first, target.second) }
+                                            }
+                                            return@onPreviewKeyEvent true
+                                        }
+                                        Key.Escape -> { templateSession = null; return@onPreviewKeyEvent true }
+                                    }
+                                } else if (e.key == Key.Tab && !e.isShiftPressed && !e.isCtrlPressed &&
+                                    !e.isAltPressed && sel.collapsed
+                                ) {
+                                    if (expandTemplateAtWord()) return@onPreviewKeyEvent true
+                                }
                             }
                             // 多光标列编辑：Alt+Shift+↑/↓ 加光标；Shift+←/→ 横向扩展；Esc / 普通方向键退出
                             if (e.isAltPressed && e.isShiftPressed && !e.isCtrlPressed) {

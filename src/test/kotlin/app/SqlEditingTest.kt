@@ -420,4 +420,23 @@ class SqlEditingTest {
         assertFalse(isReadOnlySql("EXPLAIN ANALYZE INSERT INTO t VALUES (1)"))
         assertFalse(isReadOnlySql(""))
     }
+
+    @Test
+    fun `template candidate shows on prefix and on exact abbreviation`() {
+        val templates = listOf(LiveTemplate("sel", "SELECT \$c\$ FROM \$t\$", "my select"))
+        val byPrefix = completionItems(word = "se", templates = templates)
+        assertEquals(CompletionKind.TEMPLATE, byPrefix.first { it.text == "sel" }.kind)
+        // 缩写字面敲全后模板仍在（区别于其它候选「已输完整即隐藏」）
+        val exact = completionItems(word = "sel", templates = templates)
+        assertTrue(exact.any { it.text == "sel" && it.kind == CompletionKind.TEMPLATE })
+        // 关键词 SELECT 同时仍在
+        assertTrue(exact.any { it.text == "SELECT" })
+    }
+
+    @Test
+    fun `template insertText is expanded without markers`() {
+        val templates = listOf(LiveTemplate("sel", "SELECT \$c\$ FROM \$t\$"))
+        val item = completionItems(word = "sel", templates = templates).first { it.kind == CompletionKind.TEMPLATE }
+        assertEquals("SELECT  FROM ", item.insertText)
+    }
 }
