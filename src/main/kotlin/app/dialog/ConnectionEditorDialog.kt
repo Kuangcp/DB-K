@@ -53,7 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -93,10 +92,10 @@ import i18n.Str
 import jdbc.ExternalDrivers
 import tree.TypeBadge
 import java.awt.FileDialog
+import java.awt.MouseInfo
 import java.awt.Point
 import java.awt.Rectangle
 import java.io.File
-import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -473,8 +472,8 @@ fun ConnectionEditorDialog(
 /** 自绘标题栏：整条可拖动窗口（拖动标题栏 = 移动窗口），右侧关闭按钮。 */
 @Composable
 private fun DialogWindowScope.WindowTitleBar(title: String, onClose: () -> Unit) {
-    var startLoc by remember { mutableStateOf(Point(0, 0)) }
-    var startPtr by remember { mutableStateOf(Offset.Zero) }
+    var startWindow by remember { mutableStateOf(Point(0, 0)) }
+    var startMouse by remember { mutableStateOf(Point(0, 0)) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -482,14 +481,18 @@ private fun DialogWindowScope.WindowTitleBar(title: String, onClose: () -> Unit)
             .height(42.dp)
             .pointerInput(Unit) {
                 detectDragGestures(
-                    onDragStart = { offset ->
-                        startLoc = window.location
-                        startPtr = offset
+                    onDragStart = {
+                        startWindow = window.location
+                        startMouse = MouseInfo.getPointerInfo().location
                     },
                     onDrag = { change, _ ->
                         change.consume()
-                        val d = change.position - startPtr
-                        window.location = Point(startLoc.x + d.x.roundToInt(), startLoc.y + d.y.roundToInt())
+                        // 全程用 AWT 屏幕像素坐标（避免 Compose dp 与 window.location px 混用 + 坐标反馈）
+                        val mouse = MouseInfo.getPointerInfo().location
+                        window.location = Point(
+                            startWindow.x + (mouse.x - startMouse.x),
+                            startWindow.y + (mouse.y - startMouse.y),
+                        )
                     },
                 )
             },
@@ -514,7 +517,8 @@ private fun DialogWindowScope.WindowTitleBar(title: String, onClose: () -> Unit)
     }
 }
 
-/** 窗口边缘/角落缩放把手：拖动按 [resizeWidth]/[resizeHeight] 改变窗口尺寸（无边框窗口需自绘）。 */
+/** 窗口边缘/角落缩放把手：拖动按 [resizeWidth]/[resizeHeight] 改变窗口尺寸。
+ *  全程用 AWT 屏幕像素坐标（window.bounds + MouseInfo），避开 Compose dp 与 px 混用导致的坐标反馈。 */
 @Composable
 private fun DialogWindowScope.ResizeHandle(
     modifier: Modifier,
@@ -523,20 +527,22 @@ private fun DialogWindowScope.ResizeHandle(
     grip: Boolean = false,
 ) {
     var startBounds by remember { mutableStateOf(Rectangle(0, 0, 0, 0)) }
-    var startPtr by remember { mutableStateOf(Offset.Zero) }
+    var startMouse by remember { mutableStateOf(Point(0, 0)) }
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier.pointerInput(Unit) {
             detectDragGestures(
-                onDragStart = { offset ->
+                onDragStart = {
                     startBounds = window.bounds
-                    startPtr = offset
+                    startMouse = MouseInfo.getPointerInfo().location
                 },
                 onDrag = { change, _ ->
                     change.consume()
-                    val d = change.position - startPtr
-                    val w = if (resizeWidth) (startBounds.width + d.x.roundToInt()).coerceAtLeast(560) else startBounds.width
-                    val h = if (resizeHeight) (startBounds.height + d.y.roundToInt()).coerceAtLeast(360) else startBounds.height
+                    val mouse = MouseInfo.getPointerInfo().location
+                    val dx = mouse.x - startMouse.x
+                    val dy = mouse.y - startMouse.y
+                    val w = if (resizeWidth) (startBounds.width + dx).coerceAtLeast(560) else startBounds.width
+                    val h = if (resizeHeight) (startBounds.height + dy).coerceAtLeast(360) else startBounds.height
                     window.setBounds(startBounds.x, startBounds.y, w, h)
                 },
             )
