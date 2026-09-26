@@ -134,6 +134,35 @@ grep -rn "Color.Black\|Color.White" src/main/kotlin --include=*.kt | grep -v "Ap
 - 树操作回调由 `Main` 层 `rememberCoroutineScope` 调度，`app/state` 的 suspend 动作内部
   已切 `Dispatchers.IO`。
 
+## 自绘弹窗（无边框窗口，可拖动/缩放）★ 必读
+
+参考实现：`app/dialog/ConnectionEditorDialog.kt`（`WindowTitleBar` / `ResizeHandle` / `DialogBody`）。
+
+### 组件选型（按需挑，别再用 AlertDialog 做会滚动的弹窗）
+
+| 组件 | 拖动/缩放 | 外观 | 结论 |
+|---|---|---|---|
+| `AlertDialog`（M2） | 无 | 圆角自绘 | **pack-to-content**：内容出现滚动条/滚动节点时窗口被撑成内容全高（标题区大片留白）。只适合内容固定、无需拖动缩放的小弹窗 |
+| `DialogWindow`（装饰版） | 系统原生（标题栏拖动+缩放） | 原生标题栏，与应用不统一 | 功能稳但外观不统一 |
+| `DialogWindow(undecorated=true, transparent=true)` | **自绘** | 自绘圆角+边框，可统一 | 自绘弹窗的正确底座；拖动/缩放要自己实现 |
+
+### 自绘弹窗的标准做法
+
+- `DialogWindow(undecorated = true, transparent = true, resizable = false)` + `rememberDialogState(size = ...)` **显式尺寸**（避开 pack-to-content）。
+- 内容画一个 `Surface(shape = RoundedCornerShape, color = background, border = BorderStroke)`，圆角靠 transparent 透出。
+- **独立窗口是独立 composition**，必须自行提供：`ProvideUiScale` + `ProvideI18n(language)` +
+  `MaterialTheme(colors = ...)` + `CompositionLocalProvider(LocalContentColor provides onSurface, LocalThemeColors provides ...)`。
+- 标题栏自绘：`DialogWindowScope.window`（`ComposeDialog`）可编程移动/改尺寸；关闭按钮 + `onPreviewKeyEvent` 里 Esc → onDismiss。
+
+### 拖动/缩放的坐标坑（★ 别踩）
+
+- `window.location` / `window.bounds` 是 **AWT 屏幕物理像素**；`PointerInputChange.position` 是 **Compose 逻辑坐标**，两者直接加减在 HiDPI/缩放屏会越拖越歪。
+- 用 `change.position` 且「固定起点」推导会导致**坐标反馈**：窗口一动，节点局部坐标跟着变，每一步都在补上一次移动 → 位置/大小乱飞。
+- **正确姿势：全程 AWT 屏幕像素**：
+  - 拖动：按下时记 `window.location` + `MouseInfo.getPointerInfo().location`；拖动中 `window.location = 起点 + (当前鼠标屏幕坐标 - 按下鼠标屏幕坐标)`。
+  - 缩放：按下时记 `window.bounds` + `MouseInfo…location`；拖动中 `window.setBounds(start.x, start.y, startW+dx, startH+dy)`，夹最小尺寸。
+- 官方 `UndecoratedWindowResizer` 在 Compose 1.12 是 `internal`，**外部不可用**，别引用（会编译报 `internal in file`）。
+
 ## 持久化分层（新增需要落盘的状态时先看这里）★ 必读
 
 判断口诀：**删掉实体时该不该跟着消失 / 要不要按它查询？** 是 → SQLite；否则 → properties。
