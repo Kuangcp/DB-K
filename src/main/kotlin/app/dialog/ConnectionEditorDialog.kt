@@ -606,7 +606,7 @@ private fun DialogBody(
 @Composable
 private fun TypeHeader(dbType: DbType) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        TypeBadge(dbType)
+        TypeBadge(dbType, 22.dp)
         Spacer(Modifier.width(8.dp))
         Text(
             typeLabel(dbType),
@@ -664,7 +664,7 @@ private fun TypeNavRow(type: DbType, selected: Boolean, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
     ) {
-        TypeBadge(type)
+        TypeBadge(type, 18.dp)
         Spacer(Modifier.width(8.dp))
         Text(
             typeLabel(type),

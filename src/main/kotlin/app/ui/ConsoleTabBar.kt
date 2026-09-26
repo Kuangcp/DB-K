@@ -264,7 +264,7 @@ private fun ConsoleChip(
                 .padding(start = if (profile != null) 5.dp else 9.dp, end = 9.dp, top = 4.dp, bottom = 4.dp),
         ) {
             if (profile != null) {
-                TypeBadge(profile.dbType)
+                TypeBadge(profile.dbType, 15.dp)
                 Spacer(Modifier.width(6.dp))
             }
             if (dirty) {

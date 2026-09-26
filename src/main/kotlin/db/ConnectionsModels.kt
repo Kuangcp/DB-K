@@ -26,7 +26,7 @@ enum class DbType(
     val badge: String,
     val defaultPort: Int,
     val driverClass: String,
-    /** 徽章底色 ARGB。 */
+    /** 品牌色 ARGB：数据源图标 tint（[app.ui.brandIcon]），取各产品官方色。 */
     val badgeColor: Long,
     /**
      * 驱动不在内置 classpath：需把 jar 放入 `<dataDir>/drivers`，由 [jdbc.ExternalDrivers]
@@ -47,7 +47,7 @@ enum class DbType(
     SQLSERVER("SQL Server", "MS", 1433, "com.microsoft.sqlserver.jdbc.SQLServerDriver", 0xFFCC2927, externalDriver = true),
     ORACLE("Oracle", "OR", 1521, "oracle.jdbc.OracleDriver", 0xFFC74634, externalDriver = true),
     // 非 JDBC：Redis 后端（N5），driverClass 不适用
-    REDIS("Redis", "RD", 6379, "", 0xFFD82C20),
+    REDIS("Redis", "RD", 6379, "", 0xFFFF4438),
     // 非 JDBC：Elasticsearch 后端（N6），HTTP/REST，driverClass 不适用
     ELASTICSEARCH("Elasticsearch", "ES", 9200, "", 0xFF00897B),
     ;
