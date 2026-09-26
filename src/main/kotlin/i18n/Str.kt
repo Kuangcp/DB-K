@@ -480,6 +480,7 @@ enum class Str {
     ConnTypeH2,
     ConnTypeH2Local,
     ConnH2LocalPathPlaceholder,
+    ConnPickFile,
     FormDbIndex,
     FormDefaultIndex,
     FormDatabase,

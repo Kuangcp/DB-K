@@ -474,6 +474,7 @@ internal fun en(key: Str): String = when (key) {
     Str.ConnTypeH2 -> "H2 (server / TCP)"
     Str.ConnTypeH2Local -> "H2 (local file)"
     Str.ConnH2LocalPathPlaceholder -> "~/demo-h2"
+    Str.ConnPickFile -> "Choose database file"
     Str.FormDbIndex -> "DB index"
     Str.FormDefaultIndex -> "Default index (optional)"
     Str.FormDatabase -> "Database"

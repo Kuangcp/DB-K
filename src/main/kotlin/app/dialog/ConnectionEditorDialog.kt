@@ -31,6 +31,7 @@ import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedButton
 import androidx.compose.material.Text
@@ -61,12 +62,15 @@ import app.state.ConnectionEditorRequest
 import app.i18n.t
 import app.state.SessionFactory
 import app.state.friendlySqlError
+import app.ui.DbIcons
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
 import i18n.I18n
 import i18n.Str
 import jdbc.ExternalDrivers
+import java.awt.FileDialog
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -275,7 +279,23 @@ fun ConnectionEditorDialog(
                             isEs -> t(Str.ConnEsIndexPlaceholder)
                             else -> dbType.label.lowercase()
                         },
+                        modifier = if (isEmbedded) Modifier.weight(1f) else Modifier,
                     )
+                    // 本地库（SQLite / H2 本地）：原生文件选择器定/选文件路径（新建时可输入新文件名）
+                    if (isEmbedded) {
+                        Spacer(Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { pickDatabaseFile(dbType, database)?.let { database = it } },
+                            modifier = Modifier.size(FieldHeight),
+                        ) {
+                            Icon(
+                                DbIcons.Folder,
+                                contentDescription = t(Str.ConnPickFile),
+                                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
                 }
                 if (isRedis) {
                     FormRow(t(Str.FormKeySeparator)) {
@@ -470,13 +490,14 @@ private fun CompactField(
     onValueChange: (String) -> Unit,
     placeholder: String? = null,
     isPassword: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth().height(FieldHeight),
+        modifier = modifier.fillMaxWidth().height(FieldHeight),
         singleLine = true,
         textStyle = FieldTextStyle.copy(color = MaterialTheme.colors.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colors.primary),
@@ -545,4 +566,36 @@ private fun DropdownField(
             }
         }
     }
+}
+
+/**
+ * 原生文件选择（AWT `FileDialog`）：用 SAVE 模式，既能挑已有库文件，也能进入目录 + 输入新文件名
+ * 来**新建**本地库（SELECT/LOAD 模式无法选择不存在的文件）。返回绝对路径；取消返回 null。
+ *
+ * H2 本地库磁盘后缀为 `.mv.db`（旧版 `.h2.db`），若用户点到这类文件，剥掉后缀作为基名，
+ * 避免 URL 拼成 `xxx.mv.db` 后再生成 `xxx.mv.db.mv.db`。
+ */
+private fun pickDatabaseFile(dbType: DbType, current: String): String? {
+    val suggested = current.trim().takeIf { it.isNotEmpty() }
+        ?.let { runCatching { File(it).absoluteFile }.getOrNull() }
+    val fd = FileDialog(null as java.awt.Frame?, I18n.t(Str.ConnPickFile), FileDialog.SAVE)
+    if (suggested != null && suggested.parent != null) {
+        fd.directory = suggested.parent
+        fd.file = suggested.name
+    } else {
+        fd.file = if (dbType == DbType.H2LOCAL) "demo-h2" else "demo.db"
+    }
+    fd.isVisible = true
+    val dir = fd.directory ?: return null
+    val name = fd.file ?: return null
+    var path = File(dir, name).absolutePath
+    if (dbType == DbType.H2LOCAL) {
+        for (suffix in listOf(".mv.db", ".h2.db")) {
+            if (path.endsWith(suffix, ignoreCase = true)) {
+                path = path.dropLast(suffix.length)
+                break
+            }
+        }
+    }
+    return path
 }

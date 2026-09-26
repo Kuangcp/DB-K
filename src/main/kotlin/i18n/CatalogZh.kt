@@ -473,6 +473,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.ConnTypeH2 -> "H2（服务端 / TCP）"
     Str.ConnTypeH2Local -> "H2（本地文件）"
     Str.ConnH2LocalPathPlaceholder -> "~/demo-h2"
+    Str.ConnPickFile -> "选择数据库文件"
     Str.FormDbIndex -> "DB 序号"
     Str.FormDefaultIndex -> "默认索引（可空）"
     Str.FormDatabase -> "数据库"
