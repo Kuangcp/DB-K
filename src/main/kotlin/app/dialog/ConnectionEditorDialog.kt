@@ -26,20 +26,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.AlertDialog
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
+import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedButton
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +52,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -58,17 +64,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindow
+import androidx.compose.ui.window.rememberDialogState
 import app.state.ConnectionEditorRequest
+import app.i18n.ProvideI18n
 import app.i18n.t
 import app.state.SessionFactory
 import app.state.friendlySqlError
 import app.ui.DbIcons
+import app.ui.LocalThemeColors
+import app.ui.ProvideUiScale
+import app.ui.ThemeSpec
+import app.ui.scaledSize
 import db.DbCategory
 import db.ConnectionProfile
 import db.DbType
 import db.FolderRow
 import i18n.I18n
+import i18n.Lang
 import i18n.Str
 import jdbc.ExternalDrivers
 import tree.TypeBadge
@@ -101,6 +114,8 @@ private fun fieldOutline(focused: Boolean) =
 fun ConnectionEditorDialog(
     request: ConnectionEditorRequest,
     folders: List<FolderRow>,
+    theme: ThemeSpec,
+    language: Lang,
     onDismiss: () -> Unit,
     onSubmit: (ConnectionProfile) -> Unit,
 ) {
@@ -176,34 +191,72 @@ fun ConnectionEditorDialog(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        // 连接表单字段多、重填成本高：点弹窗外一律不关闭，只能显式「取消 / 保存」。
-        // 桌面端 AlertDialog 只由 scrim 点击触发 onDismissRequest，关掉即不会再误触丢失输入。
-        properties = DialogProperties(dismissOnClickOutside = false),
-        title = { Text(t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)) },
-        text = {
-            // 左侧类型导航 + 右侧配置表单（固定 720dp 宽、高度不超屏幕可用高）；两栏各自滚动
-            val density = LocalDensity.current
-            val maxFormHeight = remember(density) {
-                val usablePx = runCatching {
-                    java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
-                        .maximumWindowBounds.height
-                }.getOrDefault(900)
-                (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(280.dp)
+    val density = LocalDensity.current
+    val maxFormHeight = remember(density) {
+        val usablePx = runCatching {
+            java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .maximumWindowBounds.height
+        }.getOrDefault(900)
+        (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(280.dp)
+    }
+    val bodyHeight = maxFormHeight.coerceAtMost(480.dp)
+    val title = t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)
+    // 显式尺寸的 DialogWindow（undecorated + transparent，视觉同 AlertDialog 自绘圆角），
+    // 避开 AlertDialog 桌面端的 pack-to-content：滚动条出现时窗口会被撑成内容全高（大片留白）。
+    val dialogState = rememberDialogState(size = scaledSize(768.dp, bodyHeight + 152.dp))
+    DialogWindow(
+        onCloseRequest = onDismiss,
+        state = dialogState,
+        title = title,
+        undecorated = true,
+        transparent = true,
+        resizable = true,
+        onPreviewKeyEvent = { e ->
+            if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
+                onDismiss()
+                true
+            } else {
+                false
             }
-            DialogBody(
-                maxHeight = maxFormHeight,
-                dbType = dbType,
-                onSelectType = { next ->
-                    // 切换类型时若端口还是旧默认值则跟随新默认
-                    if (port == null || port == dbType.defaultPort) {
-                        portText = next.defaultPort.toString()
-                    }
-                    dbType = next
-                },
-            ) {
-                FormRow(t(Str.CommonName)) {
+        },
+    ) {
+        ProvideUiScale {
+            ProvideI18n(language) {
+                MaterialTheme(colors = theme.colors.toMaterialColors()) {
+                    CompositionLocalProvider(
+                        LocalContentColor provides MaterialTheme.colors.onSurface,
+                        LocalThemeColors provides theme.colors,
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colors.surface,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                            ) {
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.subtitle1,
+                                    color = MaterialTheme.colors.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                DialogBody(
+                                    maxHeight = bodyHeight,
+                                    dbType = dbType,
+                                    onSelectType = { next ->
+                                        // 切换类型时若端口还是旧默认值则跟随新默认
+                                        if (port == null || port == dbType.defaultPort) {
+                                            portText = next.defaultPort.toString()
+                                        }
+                                        dbType = next
+                                    },
+                                ) {
+                                    FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
                 }
                 val ungroupedLabel = t(Str.ConnUngrouped)
@@ -372,15 +425,24 @@ fun ConnectionEditorDialog(
                         modifier = Modifier.padding(start = 12.dp).weight(1f),
                     )
                 }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
-        },
-    )
+        }
+    }
+}
+}
+}
+}
 }
 
 /** 弹窗主体：左侧按大类分组的类型导航 + 右侧配置表单（各自独立滚动）。 */
