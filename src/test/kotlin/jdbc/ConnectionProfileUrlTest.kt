@@ -57,6 +57,19 @@ class ConnectionProfileUrlTest {
     }
 
     @Test
+    fun `h2local always builds file url and ignores params`() {
+        assertEquals(
+            "jdbc:h2:/tmp/local",
+            profile(
+                DbType.H2LOCAL,
+                host = "ignored",
+                database = "/tmp/local",
+                extraParams = "DB_CLOSE_DELAY=-1",
+            ).urlPreview(),
+        )
+    }
+
+    @Test
     fun `clickhouse injects compress=0 unless user set it`() {
         assertEquals(
             "jdbc:clickhouse://localhost:8123/default?compress=0",

@@ -112,8 +112,17 @@ fun ConnectionEditorDialog(
     var extra by remember(request) { mutableStateOf(initial?.extraParams ?: "") }
     var keySeparator by remember(request) { mutableStateOf(initial?.keySeparator ?: ":") }
 
-    val isEmbedded = dbType == DbType.SQLITE
+    val isEmbedded = dbType == DbType.SQLITE || dbType == DbType.H2LOCAL
     val port = portText.toIntOrNull()
+
+    // 类型下拉文案：H2 双形态需区分服务端(tcp)与本文件；其余类型用品牌名（不翻译）
+    val h2Label = t(Str.ConnTypeH2)
+    val h2LocalLabel = t(Str.ConnTypeH2Local)
+    fun typeLabel(type: DbType): String = when (type) {
+        DbType.H2 -> h2Label
+        DbType.H2LOCAL -> h2LocalLabel
+        else -> type.label
+    }
 
     fun build(): ConnectionProfile = ConnectionProfile(
         id = initial?.id ?: "",
@@ -192,8 +201,8 @@ fun ConnectionEditorDialog(
                 }
                 FormRow(t(Str.TreeKeyTypeLabel)) {
                     DropdownField(
-                        label = dbType.label,
-                        options = DbType.entries.map { it.label },
+                        label = typeLabel(dbType),
+                        options = DbType.entries.map { typeLabel(it) },
                         onSelect = { idx ->
                             val next = DbType.entries[idx]
                             // 切换类型时若端口还是旧默认值则跟随新默认
@@ -260,6 +269,7 @@ fun ConnectionEditorDialog(
                         value = database,
                         onValueChange = { database = it },
                         placeholder = when {
+                            dbType == DbType.H2LOCAL -> t(Str.ConnH2LocalPathPlaceholder)
                             isEmbedded -> "/path/to/demo.db"
                             isRedis -> "0"
                             isEs -> t(Str.ConnEsIndexPlaceholder)
@@ -316,7 +326,7 @@ fun ConnectionEditorDialog(
                         )
                     }
                 }
-                if (!isEmbedded) {
+                if (!isEmbedded || dbType == DbType.H2LOCAL) {
                     Text(
                         when {
                             isRedis -> t(Str.ConnUrlPreviewRedis, build().urlPreview())

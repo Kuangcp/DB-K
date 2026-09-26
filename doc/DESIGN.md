@@ -9,7 +9,7 @@
 
 **形态**：单窗口桌面工具，左树 + 右上 SQL 编辑器 + 右下结果区（传统 DB 客户端布局）。
 
-**已支持数据库**：PostgreSQL / MySQL / MariaDB / SQLite / H2 / ClickHouse（内置驱动，全部走 JDBC）。
+**已支持数据库**：PostgreSQL / MySQL / MariaDB / SQLite / H2（服务端 + 本地文件）/ ClickHouse（内置驱动，全部走 JDBC）。
 SQL Server / Oracle 走**外部驱动目录** `<dataDir>/drivers`（Oracle 驱动 license 限制，见 §5）。
 
 **应用自身元数据**（连接、分组文件夹、SQL 历史）持久化在本地 SQLite，与目标库无关。
@@ -78,7 +78,7 @@ src/main/kotlin/
 ### 4.1 存储模型（SQLite 行 → data class）
 
 ```kotlin
-enum class DbType { POSTGRES, MYSQL, MARIADB, SQLITE, H2, CLICKHOUSE, SQLSERVER, ORACLE }
+enum class DbType { POSTGRES, MYSQL, MARIADB, SQLITE, H2, H2LOCAL, CLICKHOUSE, SQLSERVER, ORACLE }
 
 data class ConnectionProfile(
     val id: String,

@@ -79,11 +79,12 @@ interface DbDialect {
 | Oracle | 是（防火墙/IDLE_TIME profile） | `SELECT 1 FROM DUAL` | ojdbc8+ ✅ | 老驱动回落校验语句 |
 | SQL Server | 少见（Azure 有 idle resiliency） | `SELECT 1` | ✅ | 驱动 `connectRetryCount/Interval` 为补充 |
 | ClickHouse | HTTP 短连接，基本无 | `SELECT 1` | 视驱动 | 可不做 |
-| H2 | 仅 `jdbc:h2:tcp://` | `SELECT 1` | ✅ | 嵌入式（`host` 空）返回 `null` |
+| H2 服务端 | 仅 `jdbc:h2:tcp://` | `SELECT 1` | ✅ | 嵌入式（`host` 空）返回 `null` |
+| H2 本地文件 | 否（本地文件） | — | — | `H2LocalDialect.healthFor` 返回 `null` |
 | SQLite | 否（本地文件） | — | — | `healthFor` 返回 `null` |
 
 > 默认实现：`GenericDialect.healthFor` 返回 `ConnectionHealth()`（网络库通用）；
-> `SQLiteDialect` 返回 `null`；`H2Dialect` 按 `profile.host.isBlank()` 决定。
+> `SQLiteDialect` 返回 `null`；`H2Dialect` 按 `profile.host.isBlank()` 决定；`H2LocalDialect`（本地文件）恒 `null`。
 
 ### 3.3 `LiveConnection` 生命周期
 

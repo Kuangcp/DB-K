@@ -42,7 +42,7 @@ JDBC 没有统一的「服务端游标」开关，各驱动机制不同。结论
 | **Oracle** | ojdbc（外部驱动） | `fetchSize` = **行预取**（row prefetch），前向流式；无对外 REF CURSOR | `PREFETCH` | 1000 |
 | **ClickHouse** | clickhouse-jdbc | HTTP 响应本身流式；`fetchSize` 控制批 | `PREFETCH` | 1000 |
 | **SQLite** | xerial | 无服务端；本地文件顺序扫描，结果集不物化整表 | `NONE` | 1000 |
-| **H2** | h2 | 内嵌/本地为主；`fetchSize` 仅提示。| `NONE` | 1000 |
+| **H2** | h2 | 服务端 `tcp://` 与本地文件（`H2LOCAL`）两种形态；`fetchSize` 仅提示。| `NONE` | 1000 |
 
 补充：
 - **PostgreSQL 是唯一必须显式开事务**的（`autoCommit=true` 时 pgjdbc 会把整个结果集拉进内存）。`StreamingQuery` 在 `finally` 里 `rollback` 并恢复 `autoCommit`，只读导出无副作用。

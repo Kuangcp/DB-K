@@ -25,6 +25,8 @@ enum class DbType(
     MARIADB("MariaDB", "MA", 3306, "org.mariadb.jdbc.Driver", 0xFF5B3A8E),
     SQLITE("SQLite", "SQ", 0, "org.sqlite.JDBC", 0xFF0F80CC),
     H2("H2", "H2", 9092, "org.h2.Driver", 0xFF2E7D32),
+    // H2 本地文件（嵌入式，读写本地文件磁盘上的库）：与 H2 服务端(tcp)形态区分
+    H2LOCAL("H2 (Local)", "HL", 0, "org.h2.Driver", 0xFF388E3C),
     // ClickHouse 徽章白字需深黄底：官方黄 #FFCC00 对比度过低，取暗金黄
     CLICKHOUSE("ClickHouse", "CH", 8123, "com.clickhouse.jdbc.ClickHouseDriver", 0xFFB8860B),
     // 外部驱动：官方红底白字
@@ -74,6 +76,8 @@ data class ConnectionProfile(
             DbType.SQLITE -> "jdbc:sqlite:$database"
             // host 为空 → 本地文件模式（database 即文件路径）；否则 tcp 远程
             DbType.H2 -> if (host.isBlank()) "jdbc:h2:$database" else "jdbc:h2:tcp://$host:$p/$database"
+            // H2 本地文件（嵌入式）：database 即文件路径（含 ~/ 或相对路径）
+            DbType.H2LOCAL -> "jdbc:h2:$database"
             DbType.CLICKHOUSE -> "jdbc:clickhouse://$host:$p/$database"
             // SQL Server 用 `;` 分隔属性；database 即 databaseName
             DbType.SQLSERVER -> "jdbc:sqlserver://$host:$p;databaseName=$database"
@@ -84,7 +88,7 @@ data class ConnectionProfile(
             // Elasticsearch HTTP 端点（实际请求走 HttpClient；scheme/path 由附加参数控制）
             DbType.ELASTICSEARCH -> "http://$host:$p"
         }
-        if (dbType == DbType.SQLITE || dbType == DbType.REDIS || dbType == DbType.ELASTICSEARCH) return base
+        if (dbType == DbType.SQLITE || dbType == DbType.H2LOCAL || dbType == DbType.REDIS || dbType == DbType.ELASTICSEARCH) return base
         // 拼接参数；ClickHouse 默认关 HTTP 压缩：驱动默认 compress=true，期望 ClickHouse-LZ4
         // 帧（0x82…），但经反代/网关/内网转发链路常返回未压缩体导致 “Magic is not correct”。
         // 用户在“附加参数”显式写 compress=… 时尊重其选择。

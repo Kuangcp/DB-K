@@ -228,33 +228,33 @@ private fun smokeSqlite(dir: Path) {
 }
 
 private fun smokeH2(dir: Path) {
-    // H2 file 模式（host 留空 → urlPreview 拼 jdbc:h2:<path>），连接即建库
+    // H2 本地文件（DbType.H2LOCAL → urlPreview 拼 jdbc:h2:<path>），连接即建库
     val profile = ConnectionProfile(
-        id = "smoke-h2", name = "smoke", dbType = DbType.H2, host = "",
+        id = "smoke-h2", name = "smoke", dbType = DbType.H2LOCAL, host = "",
         database = dir.resolve("demo-h2").toString(), user = "sa", password = "",
     )
-    H2Dialect.openConnection(profile).use { conn ->
+    H2LocalDialect.openConnection(profile).use { conn ->
         conn.createStatement().use { st ->
             st.execute("CREATE TABLE account (id INT PRIMARY KEY, balance DECIMAL)")
             st.execute("CREATE TABLE tx_log (id INT PRIMARY KEY, account_id INT, delta DECIMAL)")
             st.execute("CREATE VIEW big_balances AS SELECT id, balance FROM account WHERE balance > 1000")
         }
-        val schemas = H2Dialect.loadSchemas(conn)
-        Logger.info("[H2] url={} schemas={}", profile.urlPreview(), schemas.map { it.displayName })
+        val schemas = H2LocalDialect.loadSchemas(conn)
+        Logger.info("[H2Local] url={} schemas={}", profile.urlPreview(), schemas.map { it.displayName })
         check(schemas.map { it.displayName }.contains("PUBLIC"))
-        val objects = H2Dialect.loadObjects(conn, schemas.first { it.displayName == "PUBLIC" })
-        Logger.info("[H2] tables={}", objects.tables)
-        Logger.info("[H2] views={}", objects.views)
+        val objects = H2LocalDialect.loadObjects(conn, schemas.first { it.displayName == "PUBLIC" })
+        Logger.info("[H2Local] tables={}", objects.tables)
+        Logger.info("[H2Local] views={}", objects.views)
         check(objects.tables.any { it.equals("account", ignoreCase = true) })
         check(objects.views.any { it.equals("big_balances", ignoreCase = true) })
         check(objects.objects.keys == setOf(ObjectKind.TABLE, ObjectKind.VIEW))
-        Logger.info("[H2] previewSql: {}", H2Dialect.previewSelect(schemas.first(), "account"))
-        val cols = H2Dialect.loadColumns(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
-        Logger.info("[H2] columns={}", cols.map { "${it.name}:${it.typeName}" })
+        Logger.info("[H2Local] previewSql: {}", H2LocalDialect.previewSelect(schemas.first(), "account"))
+        val cols = H2LocalDialect.loadColumns(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
+        Logger.info("[H2Local] columns={}", cols.map { "${it.name}:${it.typeName}" })
         check(cols.map { it.name.lowercase() } == listOf("id", "balance"))
         // 对象定义：H2 无内置 SHOW CREATE，走通用重建（列名/类型/NOT NULL）
-        val h2Ddl = H2Dialect.tableDdl(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
-        Logger.info("[H2] tableDdl: {}", h2Ddl)
+        val h2Ddl = H2LocalDialect.tableDdl(conn, schemas.first { it.displayName == "PUBLIC" }, "account")
+        Logger.info("[H2Local] tableDdl: {}", h2Ddl)
         check(h2Ddl != null && h2Ddl.contains("CREATE TABLE") && h2Ddl.contains("ID", ignoreCase = true))
     }
 }

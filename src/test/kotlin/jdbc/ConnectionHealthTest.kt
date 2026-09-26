@@ -49,6 +49,8 @@ class ConnectionHealthTest {
         val embedded = profile(DbType.H2, host = "")
         assertNull(DialectRegistry.forType(DbType.H2).healthFor(embedded))
         assertNotNull(DialectRegistry.forType(DbType.H2).healthFor(profile(DbType.H2, host = "localhost", port = 9092)))
+        // H2LOCAL 恒为嵌入式本地文件，即使 host 非空也不探活
+        assertNull(DialectRegistry.forType(DbType.H2LOCAL).healthFor(profile(DbType.H2LOCAL, host = "localhost")))
     }
 
     @Test

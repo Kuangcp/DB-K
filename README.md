@@ -28,7 +28,8 @@
 | MySQL | 内置驱动 | |
 | MariaDB | 内置驱动 | |
 | SQLite | 内置驱动 | |
-| H2 | 内置驱动 | |
+| H2 | 内置驱动 | 服务端形态 `jdbc:h2:tcp://host:port/db`（填 host/端口/账号） |
+| H2（本地文件） | 内置驱动 | 嵌入式读写本地文件，只需填文件路径 |
 | ClickHouse | 内置驱动（HTTP，默认端口 8123） | 默认关压缩，兼容反向代理链路 |
 | SQL Server | **外部驱动**（`drivers/`） | `mssql-jdbc` jar 放入数据目录 `drivers/` |
 | Oracle | **外部驱动**（`drivers/`） | `ojdbc` jar 放入数据目录 `drivers/`（license 限制，不内置） |

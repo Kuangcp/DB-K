@@ -59,6 +59,7 @@ class DbDialectTest {
         assertEquals("USE `mydb`", MariaDbDialect.sessionContextSql(SchemaMeta("mydb", null)))
         assertEquals("USE `mydb`", ClickHouseDialect.sessionContextSql(SchemaMeta("mydb", null)))
         assertEquals("SET SCHEMA \"PUBLIC\"", H2Dialect.sessionContextSql(SchemaMeta(null, "PUBLIC")))
+        assertEquals("SET SCHEMA \"PUBLIC\"", H2LocalDialect.sessionContextSql(SchemaMeta(null, "PUBLIC")))
         assertEquals(
             "ALTER SESSION SET CURRENT_SCHEMA = \"HR\"",
             OracleDialect.sessionContextSql(SchemaMeta(null, "HR")),
@@ -76,6 +77,7 @@ class DbDialectTest {
         assertTrue(PostgresDialect.supportsTargetSwitch)
         assertTrue(MySqlDialect.supportsTargetSwitch)
         assertTrue(H2Dialect.supportsTargetSwitch)
+        assertTrue(H2LocalDialect.supportsTargetSwitch)
         assertTrue(ClickHouseDialect.supportsTargetSwitch)
         assertTrue(OracleDialect.supportsTargetSwitch)
     }
@@ -150,12 +152,13 @@ class DbDialectTest {
     }
 
     @Test
-    fun `registry maps all eight types to singletons`() {
+    fun `registry maps all types to singletons`() {
         assertSame(PostgresDialect, DialectRegistry.forType(DbType.POSTGRES))
         assertSame(MySqlDialect, DialectRegistry.forType(DbType.MYSQL))
         assertSame(MariaDbDialect, DialectRegistry.forType(DbType.MARIADB))
         assertSame(SQLiteDialect, DialectRegistry.forType(DbType.SQLITE))
         assertSame(H2Dialect, DialectRegistry.forType(DbType.H2))
+        assertSame(H2LocalDialect, DialectRegistry.forType(DbType.H2LOCAL))
         assertSame(ClickHouseDialect, DialectRegistry.forType(DbType.CLICKHOUSE))
         assertSame(SqlServerDialect, DialectRegistry.forType(DbType.SQLSERVER))
         assertSame(OracleDialect, DialectRegistry.forType(DbType.ORACLE))
@@ -173,5 +176,6 @@ class DbDialectTest {
         assertEquals(CursorStrategy.PREFETCH, ClickHouseDialect.cursorStrategy)
         assertEquals(CursorStrategy.NONE, SQLiteDialect.cursorStrategy)
         assertEquals(CursorStrategy.NONE, H2Dialect.cursorStrategy)
+        assertEquals(CursorStrategy.NONE, H2LocalDialect.cursorStrategy)
     }
 }

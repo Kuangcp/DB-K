@@ -276,6 +276,7 @@ object DialectRegistry {
         DbType.MARIADB to MariaDbDialect,
         DbType.SQLITE to SQLiteDialect,
         DbType.H2 to H2Dialect,
+        DbType.H2LOCAL to H2LocalDialect,
         DbType.CLICKHOUSE to ClickHouseDialect,
         DbType.SQLSERVER to SqlServerDialect,
         DbType.ORACLE to OracleDialect,
