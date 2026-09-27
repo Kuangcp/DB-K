@@ -66,7 +66,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
@@ -246,23 +245,29 @@ fun ConnectionEditorDialog(
                                 Column(modifier = Modifier.fillMaxSize()) {
                                     WindowTitleBar(title = title, onClose = onDismiss)
                                     Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.18f))
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(20.dp),
+                                    DialogBody(
+                                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                                        dbType = dbType,
+                                        onSelectType = { next ->
+                                            // 切换类型时若端口还是旧默认值则跟随新默认
+                                            if (port == null || port == dbType.defaultPort) {
+                                                portText = next.defaultPort.toString()
+                                            }
+                                            dbType = next
+                                        },
+                                        footer = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.End,
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
+                                                Spacer(Modifier.width(8.dp))
+                                                TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
+                                            }
+                                        },
                                     ) {
-                                        DialogBody(
-                                            maxHeight = bodyHeight,
-                                            dbType = dbType,
-                                            onSelectType = { next ->
-                                                // 切换类型时若端口还是旧默认值则跟随新默认
-                                                if (port == null || port == dbType.defaultPort) {
-                                                    portText = next.defaultPort.toString()
-                                                }
-                                                dbType = next
-                                            },
-                                        ) {
-                                            FormRow(t(Str.CommonName)) {
+                                        FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
                 }
                 val ungroupedLabel = t(Str.ConnUngrouped)
@@ -432,17 +437,6 @@ fun ConnectionEditorDialog(
                     )
                 }
                 }
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
-                }
-            }
             }
         }
         ResizeHandle(
@@ -563,41 +557,49 @@ private fun DialogWindowScope.ResizeHandle(
     }
 }
 
-/** 弹窗主体：左侧按大类分组的类型导航 + 右侧配置表单（各自独立滚动）。 */
+/** 弹窗主体：左侧类型导航（撑满高度）+ 右侧配置表单 + 底部操作（footer）。 */
 @Composable
 private fun DialogBody(
-    maxHeight: Dp,
+    modifier: Modifier = Modifier,
     dbType: DbType,
     onSelectType: (DbType) -> Unit,
+    footer: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    // 固定高度（上限取屏幕可用高），左右两栏各自滚动；点窗外不关，只能取消/保存
-    val height = maxHeight.coerceAtMost(480.dp)
-    Row(modifier = Modifier.width(720.dp).height(height)) {
+    Row(modifier = modifier.fillMaxWidth()) {
         TypeNavColumn(current = dbType, onSelect = onSelectType)
         Divider(
             modifier = Modifier.width(1.dp).fillMaxHeight(),
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.12f),
         )
-        val scrollState = rememberScrollState()
-        Box(modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 6.dp)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .padding(start = 18.dp, end = if (scrollState.maxValue > 0) 12.dp else 0.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                TypeHeader(dbType)
-                content()
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(start = 18.dp, end = 6.dp, top = 20.dp, bottom = 20.dp),
+        ) {
+            val scrollState = rememberScrollState()
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .padding(end = if (scrollState.maxValue > 0) 12.dp else 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    TypeHeader(dbType)
+                    content()
+                }
+                if (scrollState.maxValue > 0) {
+                    VerticalScrollbar(
+                        adapter = rememberScrollbarAdapter(scrollState),
+                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                        style = viewerScrollbarStyle(),
+                    )
+                }
             }
-            if (scrollState.maxValue > 0) {
-                VerticalScrollbar(
-                    adapter = rememberScrollbarAdapter(scrollState),
-                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                    style = viewerScrollbarStyle(),
-                )
-            }
+            Spacer(Modifier.height(16.dp))
+            footer()
         }
     }
 }
