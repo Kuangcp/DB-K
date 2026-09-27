@@ -484,6 +484,8 @@ enum class Str {
     ConnCategoryLocal,
     ConnCategoryRelational,
     ConnCategoryNonRelational,
+    ConnTargetFolderRoot,
+    ConnTargetFolder,
     FormDbIndex,
     FormDefaultIndex,
     FormDatabase,

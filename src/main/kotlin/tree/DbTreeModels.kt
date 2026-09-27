@@ -146,6 +146,19 @@ fun flattenFolderTree(folders: List<FolderRow>): List<Pair<FolderRow, Int>> {
     return out
 }
 
+/** 返回某文件夹的完整路径（如 A/B/C）；[folderId] 为 null 表示根目录，返回空串。 */
+fun folderPath(folders: List<FolderRow>, folderId: String?): String {
+    if (folderId == null) return ""
+    val byId = folders.associateBy { it.id }
+    val names = mutableListOf<String>()
+    var cur: FolderRow? = byId[folderId]
+    while (cur != null) {
+        names.add(0, cur.name)
+        cur = cur.parentId?.let { byId[it] }
+    }
+    return names.joinToString("/")
+}
+
 /**
  * 依据 folders + connections + 运行时状态生成扁平行。
  * 顺序：文件夹（展开后带其下连接）→ 根级（未分组）连接；

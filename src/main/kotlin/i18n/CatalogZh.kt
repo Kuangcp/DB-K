@@ -477,6 +477,8 @@ internal fun zh(key: Str): String = when (key) {
     Str.ConnCategoryLocal -> "本地数据库"
     Str.ConnCategoryRelational -> "关系型数据库"
     Str.ConnCategoryNonRelational -> "非关系型数据库"
+    Str.ConnTargetFolderRoot -> "将放入根目录（未分组）"
+    Str.ConnTargetFolder -> "将放入文件夹：{0}"
     Str.FormDbIndex -> "DB 序号"
     Str.FormDefaultIndex -> "默认索引（可空）"
     Str.FormDatabase -> "数据库"

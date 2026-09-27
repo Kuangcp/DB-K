@@ -478,6 +478,8 @@ internal fun en(key: Str): String = when (key) {
     Str.ConnCategoryLocal -> "Local databases"
     Str.ConnCategoryRelational -> "Relational databases"
     Str.ConnCategoryNonRelational -> "Non-relational databases"
+    Str.ConnTargetFolderRoot -> "Will be placed at the root (ungrouped)"
+    Str.ConnTargetFolder -> "Will be placed in folder: {0}"
     Str.FormDbIndex -> "DB index"
     Str.FormDefaultIndex -> "Default index (optional)"
     Str.FormDatabase -> "Database"

@@ -28,8 +28,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
-import androidx.compose.material.DropdownMenu
-import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
@@ -37,7 +35,6 @@ import androidx.compose.material.OutlinedButton
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,7 +74,7 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import tree.flattenFolderTree
+import tree.folderPath
 
 /** 字段统一紧凑高度 + 圆角 + 字号。 */
 private val FieldHeight = 40.dp
@@ -222,25 +219,6 @@ fun ConnectionEditorDialog(
             FormRow(t(Str.CommonName)) {
                     CompactField(value = name, onValueChange = { name = it })
                 }
-                val ungroupedLabel = t(Str.ConnUngrouped)
-                FormRow(t(Str.TreePillFolder)) {
-                    val flatFolders = remember(folders) { flattenFolderTree(folders) }
-                    val options = remember(folders, ungroupedLabel) {
-                        listOf(ungroupedLabel) + flatFolders.map { (f, depth) ->
-                            buildString {
-                                repeat(depth) { append("    ") }
-                                append(f.name)
-                            }
-                        }
-                    }
-                    DropdownField(
-                        label = folderId?.let { fid -> folders.firstOrNull { it.id == fid }?.name } ?: ungroupedLabel,
-                        options = options,
-                        onSelect = { idx ->
-                            folderId = if (idx == 0) null else flatFolders[idx - 1].first.id
-                        },
-                    )
-                }
                 if (!isEmbedded) {
                     PairRow(
                         labelA = t(Str.FormHost),
@@ -350,6 +328,14 @@ fun ConnectionEditorDialog(
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
+                // 目标文件夹提示：新建默认根目录，右键文件夹新建则在对应文件夹下；这里不提供改，靠树内拖拽调整
+                val targetPath = folderPath(folders, folderId)
+                Text(
+                    if (folderId == null) t(Str.ConnTargetFolderRoot) else t(Str.ConnTargetFolder, targetPath),
+                    style = MaterialTheme.typography.caption,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
                 // 测试连接（底部）
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -616,48 +602,6 @@ private fun CompactField(
             }
         },
     )
-}
-
-/** 只读下拉框：与 CompactField 同高、同边框风格的展示框 + DropdownMenu。 */
-@Composable
-private fun DropdownField(
-    label: String,
-    options: List<String>,
-    onSelect: (Int) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxWidth().height(FieldHeight)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(FieldCorner)
-                .border(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.45f), FieldCorner)
-                .clickable { expanded = true }
-                .padding(start = 10.dp, end = 2.dp),
-        ) {
-            Text(
-                label,
-                style = FieldTextStyle.copy(color = MaterialTheme.colors.onSurface),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                Icons.Filled.ArrowDropDown,
-                contentDescription = t(Str.ConnSelect),
-                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEachIndexed { index, option ->
-                DropdownMenuItem(onClick = { onSelect(index); expanded = false }) {
-                    Text(option, fontSize = 13.sp)
-                }
-            }
-        }
-    }
 }
 
 /**
