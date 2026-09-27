@@ -50,6 +50,7 @@ import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
 import app.core.NativeMemory
 import app.ui.decodeBase64Bytes
+import app.ui.FramelessDialog
 import app.ui.ScaledDialogWindow
 import app.ui.scaledSize
 import app.ui.humanSize
@@ -60,6 +61,7 @@ import app.ui.looksLikeJson
 import app.ui.md5Hex
 import app.ui.parseJsonDocument
 import app.ui.sqlHighlightKeywordSet
+import app.i18n.LocalLang
 import app.ui.sqlHighlightSpans
 import app.ui.jsonHighlightSpans
 import app.ui.sqlSyntaxPalette
@@ -498,17 +500,18 @@ fun CellViewerDialog(
         }
     }
 
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
-        state = rememberDialogState(size = scaledSize(VIEWER_WINDOW_SIZE)),
+    FramelessDialog(
         title = title,
-        resizable = true,
-        onPreviewKeyEvent = escapeCloses(onDismiss),
+        width = VIEWER_WINDOW_SIZE.width,
+        height = VIEWER_WINDOW_SIZE.height,
+        colors = LocalThemeColors.current,
+        language = LocalLang.current,
+        onCloseRequest = onDismiss,
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background)
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(12.dp),
         ) {
             // 副标题（左）+ 工具（右）

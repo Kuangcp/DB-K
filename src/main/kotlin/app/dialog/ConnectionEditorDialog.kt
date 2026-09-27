@@ -190,7 +190,7 @@ fun ConnectionEditorDialog(
         title = title,
         width = 768.dp,
         height = bodyHeight + 136.dp,
-        theme = theme,
+        colors = theme.colors,
         language = language,
         onCloseRequest = onDismiss,
     ) {

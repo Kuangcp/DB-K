@@ -99,7 +99,7 @@ fun SettingsDialog(
         title = t(Str.SettingsTitle),
         width = 760.dp,
         height = 520.dp,
-        theme = theme,
+        colors = theme.colors,
         language = language,
         onCloseRequest = onDismiss,
     ) {

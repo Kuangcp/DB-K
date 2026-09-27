@@ -73,7 +73,7 @@ fun FramelessDialog(
     title: String,
     width: Dp,
     height: Dp,
-    theme: ThemeSpec,
+    colors: ThemeColors,
     language: Lang,
     onCloseRequest: () -> Unit,
     resizable: Boolean = true,
@@ -102,10 +102,10 @@ fun FramelessDialog(
     ) {
         ProvideUiScale {
             ProvideI18n(language) {
-                MaterialTheme(colors = theme.colors.toMaterialColors()) {
+                MaterialTheme(colors = colors.toMaterialColors()) {
                     CompositionLocalProvider(
                         LocalContentColor provides MaterialTheme.colors.onSurface,
-                        LocalThemeColors provides theme.colors,
+                        LocalThemeColors provides colors,
                     ) {
                         Box(modifier = Modifier.fillMaxSize()) {
                             Surface(
