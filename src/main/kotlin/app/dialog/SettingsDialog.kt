@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -23,7 +22,6 @@ import androidx.compose.material.ContentAlpha
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Divider
-import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Slider
@@ -35,8 +33,6 @@ import androidx.compose.material.TextFieldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -50,24 +46,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.rememberDialogState
 import app.build.Version
 import app.core.openDirectory
 import app.core.writeClipboardText
-import app.i18n.ProvideI18n
 import app.i18n.t
 import app.settings.EditorSettings
 import app.settings.Keymap
 import app.settings.LiveTemplatesStore
 import app.settings.UiScalePrefs
-import app.state.UiScaleState
-import app.ui.LocalThemeColors
-import app.ui.LiveTemplate
-import app.ui.ScaledDialogWindow
-import app.ui.defaultLiveTemplates
 import app.ui.ThemeSpec
+import app.ui.defaultLiveTemplates
 import app.ui.editorFontFamily
-import app.ui.scaledSize
+import app.ui.FramelessDialog
+import app.ui.LiveTemplate
 import db.AppPaths
 import i18n.I18n
 import i18n.Lang
@@ -104,41 +95,28 @@ fun SettingsDialog(
     onUiScalePreview: (Float) -> Unit = {},
 ) {
     if (!visible) return
-    // 实时预览会改 UiScaleState；`rememberDialogState` 只在首次组合取 size，
-    // 故用 LaunchedEffect 把原生窗口尺寸同步到当前缩放，避免从 100% 拖大后设置窗内容溢出。
-    val scale = UiScaleState.scale
-    val dialogState = rememberDialogState(size = scaledSize(760.dp, 520.dp, scale))
-    LaunchedEffect(scale) {
-        dialogState.size = scaledSize(760.dp, 520.dp, scale)
-    }
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
+    FramelessDialog(
         title = t(Str.SettingsTitle),
-        state = dialogState,
+        width = 760.dp,
+        height = 520.dp,
+        theme = theme,
+        language = language,
+        onCloseRequest = onDismiss,
     ) {
-        // DialogWindow 是独立 composition，不继承主窗口的 CompositionLocal → 自行提供语言
-        ProvideI18n(language) {
-            MaterialTheme(colors = theme.colors.toMaterialColors()) {
-                // 独立窗口是另一棵 composition：M2 MaterialTheme 不设 LocalContentColor，需同样兜底
-                CompositionLocalProvider(
-                    LocalContentColor provides MaterialTheme.colors.onSurface,
-                    LocalThemeColors provides theme.colors,
-                ) {
-                    SettingsBody(
-                        initial = initial,
-                        onCancel = onDismiss,
-                        onSave = onSave,
-                        onManageThemes = onManageThemes,
-                        onUiScalePreview = onUiScalePreview,
-                    )
-                }
-            }
-        }
+        SettingsBody(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            initial = initial,
+            onCancel = onDismiss,
+            onSave = onSave,
+            onManageThemes = onManageThemes,
+            onUiScalePreview = onUiScalePreview,
+        )
     }
 }
 
 @Composable
 private fun SettingsBody(
+    modifier: Modifier = Modifier,
     initial: SettingsSnapshot,
     onCancel: () -> Unit,
     onSave: (SettingsSnapshot) -> Unit,
@@ -155,8 +133,7 @@ private fun SettingsBody(
     var multiRowTabs by remember { mutableStateOf(initial.multiRowTabs) }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .background(MaterialTheme.colors.background)
             .padding(16.dp),
     ) {
