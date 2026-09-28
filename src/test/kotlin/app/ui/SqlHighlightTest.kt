@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -141,5 +142,21 @@ class SqlHighlightTest {
         assertEquals(pal.comment, colorAt(b, 3))
         val c = highlight("/* unterminated")
         assertEquals(pal.comment, colorAt(c, 3))
+    }
+
+    /**
+     * 大文件降级：Compose 段落排版成本 ≈ O(段数 × span 数)，超预算时编辑器会丢弃高亮 span，
+     * 否则数千行 SQL 会卡死 UI（实测 2973 行 / 5.9 万 span 首帧 ~2.8s）。
+     */
+    @Test
+    fun largeDocumentDropsHighlightWithinWorkBudget() {
+        // 预算内：正常小文件保留高亮
+        assertTrue(shouldHighlight(spans = 2_000, lineCount = 200))
+        assertTrue(shouldHighlight(spans = 20_000, lineCount = 1_000))
+        // 超预算：大文件/多 span 降级为纯文本
+        assertFalse(shouldHighlight(spans = 58_788, lineCount = 2_973))
+        assertFalse(shouldHighlight(spans = 91_952, lineCount = 12_000))
+        // 空 span 永远可保留（无高亮就是降级结果）
+        assertTrue(shouldHighlight(spans = 0, lineCount = 1_000_000))
     }
 }

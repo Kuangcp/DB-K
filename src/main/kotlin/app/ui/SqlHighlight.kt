@@ -37,6 +37,20 @@ internal fun sqlHighlightKeywordSet(): Set<String> =
     sqlHighlightKeywords().mapTo(HashSet()) { it.uppercase() }
 
 /**
+ * 语法高亮降级阈值：「段落数 × span 数」上限。
+ *
+ * Compose 的 MultiParagraph 排版会为每个段落扫描全部 spanStyles，成本近似 O(段数 × span 数)：
+ * 数千行 SQL 会产生数万 span，首帧/每次重排版可达数秒并卡死 UI（实测 2973 行 / 5.9 万 span
+ * 首帧 ~2.8s，1.2 万行 / 9.2 万 span ~7.7s）。超过预算时不再生成高亮 span，
+ * 让排版回落到与文档长度线性的纯文本排版。
+ */
+internal const val MAX_HIGHLIGHT_WORK = 20_000_000L
+
+/** 是否保留语法高亮 span：`span 数 × 段落（行）数` 在预算内才保留。[lineCount] 至少为 1。 */
+internal fun shouldHighlight(spans: Int, lineCount: Int): Boolean =
+    spans.toLong() * lineCount.coerceAtLeast(1) <= MAX_HIGHLIGHT_WORK
+
+/**
  * SQL 关键字词表（高亮与补全共用）。
  */
 internal fun sqlHighlightKeywords(): List<String> = listOf(

@@ -304,6 +304,7 @@ internal fun en(key: Str): String = when (key) {
     Str.EditorSqlPlaceholder -> "Type SQL…\nSelect a statement and press Ctrl+Enter (nothing selected = no run)"
     Str.EditorDirty -> "● Unsaved · Ctrl+S to save"
     Str.EditorSaved -> "Saved to .sql file"
+    Str.EditorHighlightOff -> "Syntax highlighting off (large file)"
     Str.EditorRunning -> " Running…"
     Str.EditorCompletionHint -> "{0} suggestions · Enter to insert · Esc to close"
 

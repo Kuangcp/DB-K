@@ -247,12 +247,17 @@ internal fun EditorPane(
 
     // 语法高亮：手写扫描出 token 区间（无正则）——`(a|b)*` 型正则在长字符串字面量上会递归爆栈，
     // 见 `SyntaxHighlight.kt`。新 API 在 outputTransformation 里把 span 贴进 TextFieldBuffer。
-    val highlightSpans = remember(content, themeColors, editorLanguage, keywords) {
-        when (editorLanguage) {
+    // 大文件降级：Compose 段落排版成本 ≈ O(段数 × span 数)，超预算时返回空 span（纯文本排版）。
+    val highlight = remember(content, themeColors, editorLanguage, keywords) {
+        val spans = when (editorLanguage) {
             EditorLanguage.JSON -> jsonHighlightSpans(content, jsonSyntaxPalette(themeColors))
             else -> sqlHighlightSpans(content, sqlSyntaxPalette(themeColors), keywords)
         }
+        if (shouldHighlight(spans.size, content.count { it == '\n' } + 1)) spans to false
+        else emptyList<AnnotatedString.Range<SpanStyle>>() to true
     }
+    val highlightSpans = highlight.first
+    val highlightDegraded = highlight.second
     val lineBgColor = MaterialTheme.colors.onSurface.copy(alpha = 0.06f)
     val currentLineRange: Pair<Int, Int>? =
         if (editing && sel.collapsed && content.isNotEmpty()) {
@@ -1160,9 +1165,12 @@ internal fun EditorPane(
                     .padding(vertical = 6.dp, horizontal = 3.dp),
                 style = dbScrollbarStyle(),
             )
-            // 编辑状态提示（● = 有未落盘改动；Ctrl+S 立即保存）
+            // 编辑状态提示（● = 有未落盘改动；Ctrl+S 立即保存）；大文件会关闭高亮，提示一下避免误会
             Text(
-                if (dirty) t(Str.EditorDirty) else t(Str.EditorSaved),
+                buildString {
+                    append(if (dirty) t(Str.EditorDirty) else t(Str.EditorSaved))
+                    if (highlightDegraded) append(" · ").append(t(Str.EditorHighlightOff))
+                },
                 fontSize = 10.sp,
                 color = if (dirty) MaterialTheme.colors.primary.copy(alpha = 0.75f)
                 else MaterialTheme.colors.onSurface.copy(alpha = 0.3f),

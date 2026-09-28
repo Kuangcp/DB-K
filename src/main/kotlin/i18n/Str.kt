@@ -310,6 +310,7 @@ enum class Str {
     EditorSqlPlaceholder,
     EditorDirty,
     EditorSaved,
+    EditorHighlightOff,
     EditorRunning,
     EditorCompletionHint,
 

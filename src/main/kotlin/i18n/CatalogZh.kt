@@ -303,6 +303,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.EditorSqlPlaceholder -> "输入 SQL…\n选中要执行的语句后 Ctrl+Enter（无选中不执行）"
     Str.EditorDirty -> "● 未保存 · Ctrl+S 保存"
     Str.EditorSaved -> "已保存到 .sql 文件"
+    Str.EditorHighlightOff -> "已关闭语法高亮（大文件）"
     Str.EditorRunning -> " 执行中…"
     Str.EditorCompletionHint -> "补全 {0} 项 · Enter 上屏 · Esc 关闭"
 
