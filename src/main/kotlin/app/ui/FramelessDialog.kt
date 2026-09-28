@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
@@ -87,6 +88,8 @@ fun FramelessDialog(
     language: Lang,
     onCloseRequest: () -> Unit,
     resizable: Boolean = true,
+    /** 额外的按键钩子；Esc 已内部处理（关闭），其余按键交给这里，返回 true 表示已消费。 */
+    onPreviewKeyEvent: (KeyEvent) -> Boolean = { false },
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val transparent = transparentWindowsSupported
@@ -104,11 +107,12 @@ fun FramelessDialog(
         transparent = transparent,
         resizable = false,
         onPreviewKeyEvent = { e ->
-            if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
-                onCloseRequest()
-                true
-            } else {
-                false
+            when {
+                e.type == KeyEventType.KeyDown && e.key == Key.Escape -> {
+                    onCloseRequest()
+                    true
+                }
+                else -> onPreviewKeyEvent(e)
             }
         },
     ) {

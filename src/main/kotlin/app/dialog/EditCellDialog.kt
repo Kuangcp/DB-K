@@ -1,6 +1,5 @@
 package app.dialog
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,9 +31,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.rememberDialogState
-import app.ui.ScaledDialogWindow
-import app.ui.scaledSize
+import app.i18n.LocalLang
+import app.ui.FramelessDialog
+import app.ui.LocalThemeColors
 import jdbc.CellValue
 import i18n.I18n
 import i18n.Str
@@ -72,30 +71,28 @@ fun EditCellDialog(
     // 尺寸只在打开时按 initial 算一次（可手动缩放）；打开后打字不再改窗口大小，避免跳变。
     val windowSize = remember(initial) { dialogSizeFor(initial) }
 
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
-        state = rememberDialogState(size = scaledSize(windowSize)),
+    FramelessDialog(
         title = title,
-        resizable = true,
+        width = windowSize.width,
+        height = windowSize.height,
+        colors = LocalThemeColors.current,
+        language = LocalLang.current,
+        onCloseRequest = onDismiss,
         onPreviewKeyEvent = { e ->
-            when {
-                e.type == KeyEventType.KeyDown && e.isCtrlPressed &&
-                    (e.key == Key.Enter || e.key == Key.NumPadEnter) -> {
-                    commit()
-                    true
-                }
-                e.type == KeyEventType.KeyDown && e.key == Key.Escape -> {
-                    onDismiss()
-                    true
-                }
-                else -> false
+            if (e.type == KeyEventType.KeyDown && e.isCtrlPressed &&
+                (e.key == Key.Enter || e.key == Key.NumPadEnter)
+            ) {
+                commit()
+                true
+            } else {
+                false
             }
         },
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background)
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
