@@ -56,6 +56,16 @@ import i18n.Str
 import java.awt.MouseInfo
 import java.awt.Point
 import java.awt.Rectangle
+import org.tinylog.Logger
+
+/**
+ * Linux 上 transparent + undecorated 窗口在部分 WM/合成器下会导致重绘卡死（已知 Compose Desktop 问题）；
+ * 默认 Linux 关闭窗口透明（回落方形圆角为 0），可用 `-Ddbk.transparentWindow=true` 强制开启。
+ */
+private val transparentWindowsSupported: Boolean by lazy {
+    val os = System.getProperty("os.name").orEmpty().lowercase()
+    System.getProperty("dbk.transparentWindow")?.toBooleanStrictOrNull() ?: !os.contains("linux")
+}
 
 /**
  * 自绘无边框弹窗（可拖动标题栏 + 边缘缩放 + 圆角统一边框），替代系统原生标题栏窗口。
@@ -79,6 +89,8 @@ fun FramelessDialog(
     resizable: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val transparent = transparentWindowsSupported
+    Logger.info("FramelessDialog open: title={} size={}x{} transparent={} os={}", title, width, height, transparent, System.getProperty("os.name"))
     val dialogState = rememberDialogState(size = scaledSize(width, height))
     // 界面缩放变化时同步窗口尺寸（与设置窗一致）
     LaunchedEffect(UiScaleState.scale) {
@@ -89,7 +101,7 @@ fun FramelessDialog(
         state = dialogState,
         title = title,
         undecorated = true,
-        transparent = true,
+        transparent = transparent,
         resizable = false,
         onPreviewKeyEvent = { e ->
             if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
@@ -110,7 +122,7 @@ fun FramelessDialog(
                         Box(modifier = Modifier.fillMaxSize()) {
                             Surface(
                                 modifier = Modifier.fillMaxSize(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = if (transparent) RoundedCornerShape(10.dp) else RoundedCornerShape(0.dp),
                                 color = MaterialTheme.colors.background,
                                 border = BorderStroke(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.35f)),
                             ) {

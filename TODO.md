@@ -6,7 +6,7 @@
 **标题栏区域**
 
 **编辑区域**
-
+update tg_assets_compare set pre_version = 8,  where id = 12026; 没有自动提示
 
 **结果编辑**
 - （可选）行锁：刷新编辑结果时用 `SELECT … FOR UPDATE`（PG/MySQL/Oracle）降低并发覆盖；需评估对只读查询的副作用（当前靠提交时 `affected==1` 检测）
