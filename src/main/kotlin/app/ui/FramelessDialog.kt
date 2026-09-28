@@ -169,42 +169,52 @@ private fun DialogWindowScope.WindowTitleBar(title: String, onClose: () -> Unit)
     var startMouse by remember { mutableStateOf(Point(0, 0)) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(42.dp)
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = {
-                        startWindow = window.location
-                        startMouse = MouseInfo.getPointerInfo().location
-                    },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        // 全程用 AWT 屏幕像素坐标（避免 Compose dp 与 window.location px 混用 + 坐标反馈）
-                        val mouse = MouseInfo.getPointerInfo().location
-                        window.location = Point(
-                            startWindow.x + (mouse.x - startMouse.x),
-                            startWindow.y + (mouse.y - startMouse.y),
-                        )
-                    },
-                )
-            },
+        modifier = Modifier.fillMaxWidth().height(44.dp),
     ) {
-        Text(
-            title,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colors.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 14.dp).weight(1f),
-        )
-        IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+        // 拖动区域只挂在标题文字上；关闭按钮不参与拖动，避免抢点击（点两下才响应）
+        Box(
+            contentAlignment = Alignment.CenterStart,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = {
+                            startWindow = window.location
+                            startMouse = MouseInfo.getPointerInfo().location
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            // 全程用 AWT 屏幕像素坐标（避免 Compose dp 与 window.location px 混用 + 坐标反馈）
+                            val mouse = MouseInfo.getPointerInfo().location
+                            window.location = Point(
+                                startWindow.x + (mouse.x - startMouse.x),
+                                startWindow.y + (mouse.y - startMouse.y),
+                            )
+                        },
+                    )
+                },
+        ) {
+            Text(
+                title,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colors.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 14.dp),
+            )
+        }
+        // 关闭按钮：独立点击区 + 右侧留白，避免太贴边难点
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.padding(end = 6.dp).size(36.dp),
+        ) {
             Icon(
                 Icons.Filled.Close,
                 contentDescription = t(Str.CommonCancel),
                 tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(18.dp),
             )
         }
     }

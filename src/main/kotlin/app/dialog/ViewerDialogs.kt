@@ -35,24 +35,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.rememberDialogState
 import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
 import app.core.NativeMemory
 import app.ui.decodeBase64Bytes
 import app.ui.FramelessDialog
-import app.ui.ScaledDialogWindow
-import app.ui.scaledSize
 import app.ui.humanSize
 import app.ui.imageFormatName
 import app.ui.jsonSyntaxPalette
@@ -263,16 +256,6 @@ private fun JsonCodeText(content: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Esc / 关闭按钮统一的关窗键盘处理。 */
-private fun escapeCloses(onClose: () -> Unit): (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
-    if (e.type == KeyEventType.KeyDown && e.key == Key.Escape) {
-        onClose()
-        true
-    } else {
-        false
-    }
-}
-
 /**
  * 对象定义（DDL）浮窗：异步取定义 → 加载态 / 正文 / 失败原因。
  * 用**显式尺寸**的 [DialogWindow]（不是 AlertDialog）：AlertDialog 的窗口会 pack-to-content，
@@ -305,17 +288,18 @@ fun DdlDialog(
     } else {
         I18n.t(Str.DdlTitleDefinition, I18n.t(request.noun), request.objectName)
     }
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
-        state = rememberDialogState(size = scaledSize(VIEWER_WINDOW_SIZE)),
+    FramelessDialog(
         title = title,
-        resizable = true,
-        onPreviewKeyEvent = escapeCloses(onDismiss),
+        width = VIEWER_WINDOW_SIZE.width,
+        height = VIEWER_WINDOW_SIZE.height,
+        colors = LocalThemeColors.current,
+        language = LocalLang.current,
+        onCloseRequest = onDismiss,
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background)
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(12.dp),
         ) {
             when {
@@ -375,17 +359,18 @@ fun TextViewerDialog(
     extraAction: Pair<String, () -> Unit>? = null,
 ) {
     val lineCount = content.count { it == '\n' } + 1
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
-        state = rememberDialogState(size = scaledSize(VIEWER_WINDOW_SIZE)),
+    FramelessDialog(
         title = title,
-        resizable = true,
-        onPreviewKeyEvent = escapeCloses(onDismiss),
+        width = VIEWER_WINDOW_SIZE.width,
+        height = VIEWER_WINDOW_SIZE.height,
+        colors = LocalThemeColors.current,
+        language = LocalLang.current,
+        onCloseRequest = onDismiss,
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background)
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(12.dp),
         ) {
             Text(
@@ -664,17 +649,18 @@ fun CommitPreviewDialog(
     onDismiss: () -> Unit,
 ) {
     val sql = remember(request) { request.statements.joinToString("\n") }
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
-        state = rememberDialogState(size = scaledSize(DpSize(720.dp, 520.dp))),
+    FramelessDialog(
         title = I18n.t(Str.CommitPreviewTitle, request.statements.size),
-        resizable = true,
-        onPreviewKeyEvent = escapeCloses(onDismiss),
+        width = 720.dp,
+        height = 520.dp,
+        colors = LocalThemeColors.current,
+        language = LocalLang.current,
+        onCloseRequest = onDismiss,
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background)
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(12.dp),
         ) {
             Text(

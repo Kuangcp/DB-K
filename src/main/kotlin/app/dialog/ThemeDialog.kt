@@ -20,13 +20,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Divider
-import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -45,14 +43,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.rememberDialogState
-import app.i18n.ProvideI18n
 import app.i18n.t
 import app.settings.ThemesStore
-import app.ui.LocalThemeColors
-import app.ui.ScaledDialogWindow
+import app.ui.FramelessDialog
 import app.ui.ThemeColors
-import app.ui.scaledSize
 import app.ui.ThemeSpec
 import app.ui.defaultThemeId
 import app.ui.sqlHighlightKeywordSet
@@ -129,33 +123,29 @@ fun ThemeDialog(
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
-    ScaledDialogWindow(
-        onCloseRequest = onDismiss,
+    FramelessDialog(
         title = t(Str.ThemeManagerTitle),
-        state = rememberDialogState(size = scaledSize(780.dp, 560.dp)),
+        width = 780.dp,
+        height = 560.dp,
+        colors = activeTheme.colors,
+        language = language,
+        onCloseRequest = onDismiss,
     ) {
-        ProvideI18n(language) {
-            MaterialTheme(colors = activeTheme.colors.toMaterialColors()) {
-                CompositionLocalProvider(
-                    LocalContentColor provides MaterialTheme.colors.onSurface,
-                    LocalThemeColors provides activeTheme.colors,
-                ) {
-                    ThemeDialogBody(
-                        themes = themes,
-                        activeTheme = activeTheme,
-                        store = store,
-                        onSelectTheme = onSelectTheme,
-                        onCustomThemesChange = onCustomThemesChange,
-                        onDismiss = onDismiss,
-                    )
-                }
-            }
-        }
+        ThemeDialogBody(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            themes = themes,
+            activeTheme = activeTheme,
+            store = store,
+            onSelectTheme = onSelectTheme,
+            onCustomThemesChange = onCustomThemesChange,
+            onDismiss = onDismiss,
+        )
     }
 }
 
 @Composable
 private fun ThemeDialogBody(
+    modifier: Modifier = Modifier,
     themes: List<ThemeSpec>,
     activeTheme: ThemeSpec,
     store: ThemesStore,
@@ -181,7 +171,7 @@ private fun ThemeDialogBody(
         onCustomThemesChange(custom)
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colors.background).padding(14.dp)) {
+    Column(modifier = modifier.background(MaterialTheme.colors.background).padding(14.dp)) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // 左：主题列表
             Column(
