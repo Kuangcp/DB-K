@@ -334,6 +334,20 @@ private val TABLE_STOP: Set<String> = setOf(
     "returning", "for", "fetch", "set", "values", "select", "from", "into",
 )
 
+/** `UPDATE` 前一个词命中这些时，它是锁定/触发器子句而非 DML 目标表，不触发目标表解析。 */
+private val UPDATE_GUARD_PREV: Set<String> =
+    setOf("for", "key", "before", "after", "instead")
+
+/** [i] 之前最近的非标点/非字面量 token 文本（小写）；无则 null。 */
+private fun prevWordToken(toks: List<SqlToken>, i: Int): String? {
+    var j = i - 1
+    while (j >= 0) {
+        if (!toks[j].punct && !toks[j].literal) return toks[j].text.lowercase()
+        j--
+    }
+    return null
+}
+
 /** 解析 WITH 子句里的 CTE 名与显式列名（仅 `WITH c(a,b) AS (…)` 可静态得知列）。 */
 private fun parseCtes(toks: List<SqlToken>): Map<String, List<String>> {
     val out = linkedMapOf<String, List<String>>()
@@ -382,8 +396,15 @@ fun parseTableRefs(statement: String): SqlScope {
             continue
         }
         if (depth != 0) { i++; continue }
-        val isFromJoin = !t.literal && (t.text.equals("from", true) || t.text.equals("join", true))
-        if (!isFromJoin) { i++; continue }
+        // FROM/JOIN 之外，DML 目标表也要登记：UPDATE <表>、INSERT INTO <表>（MERGE INTO 同理）。
+        // FOR UPDATE / ON DUPLICATE KEY UPDATE / BEFORE|AFTER UPDATE 里的 update 不是目标表，需排除。
+        val prev = prevWordToken(toks, i)
+        val startsTableList = !t.literal && when (t.text.lowercase()) {
+            "from", "join", "into" -> true
+            "update" -> prev !in UPDATE_GUARD_PREV
+            else -> false
+        }
+        if (!startsTableList) { i++; continue }
         i++
         while (i < toks.size) {
             // 派生表：FROM ( … ) alias

@@ -124,6 +124,27 @@ class SqlEditingTest {
     }
 
     @Test
+    fun `parseTableRefs reads update and insert targets`() {
+        // UPDATE 目标表（无 FROM）→ SET 前无别名
+        val update = parseTableRefs("UPDATE tg_assets_compare SET pre_version = 8, created_at = 1 WHERE id = 12026")
+        assertEquals(listOf("tg_assets_compare"), update.tables.map { it.table })
+        assertNull(update.tables[0].alias)
+        // 限定名 + 别名
+        val qualified = parseTableRefs("UPDATE public.t AS a SET a.x = 1")
+        assertEquals("public", qualified.tables[0].schema)
+        assertEquals("t", qualified.tables[0].table)
+        assertEquals("a", qualified.tables[0].alias)
+        // INSERT INTO 目标表（列清单 / VALUES / SELECT 都终止表引用）
+        assertEquals(listOf("t"), parseTableRefs("INSERT INTO t (a, b) VALUES (1, 2)").tables.map { it.table })
+        assertEquals(listOf("t"), parseTableRefs("INSERT INTO t VALUES (1, 2)").tables.map { it.table })
+        assertEquals("public", parseTableRefs("INSERT INTO public.t VALUES (1)").tables[0].schema)
+        // 锁定查询的 FOR UPDATE 不是 DML 目标表，不能顶掉 FROM 表
+        assertEquals(listOf("t"), parseTableRefs("SELECT * FROM t FOR UPDATE").tables.map { it.table })
+        // DELETE 目标已由 FROM 覆盖
+        assertEquals(listOf("t"), parseTableRefs("DELETE FROM t WHERE id = 1").tables.map { it.table })
+    }
+
+    @Test
     fun `parseTableRefs handles derived tables scoping and string literals`() {
         // 有别名派生表：记录为 derived，不再整体置 complex
         val derived = parseTableRefs("SELECT * FROM (SELECT 1 AS a) s")
