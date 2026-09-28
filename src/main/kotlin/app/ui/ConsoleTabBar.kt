@@ -121,7 +121,7 @@ internal fun ConsoleTabBar(
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp).padding(start = 8.dp, end = 6.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(start = 8.dp, end = 6.dp),
     ) {
         if (multiRowTabs) {
             // 多行：自动换行，不设行数上限（标签越多条越高）
@@ -264,7 +264,7 @@ private fun ConsoleChip(
                     else MaterialTheme.colors.onSurface.copy(alpha = 0.045f),
                 )
                 .clickable(onClick = onSelect)
-                .padding(start = if (profile != null) 5.dp else 9.dp, end = 9.dp, top = 4.dp, bottom = 4.dp),
+                .padding(start = if (profile != null) 5.dp else 9.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
         ) {
             if (profile != null) {
                 TypeBadge(profile.dbType, 15.dp)
