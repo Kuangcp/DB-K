@@ -6,6 +6,7 @@
 **标题栏区域**
 
 **编辑区域**
+- 大文件语法高亮/输入性能：已止血（超预算 `MAX_HIGHLIGHT_WORK` 关闭高亮，首帧 2.8s→0.4s）；后续方案对比见 `doc/EDITOR_HIGHLIGHT.md`（近期推荐 B 视口覆盖层恢复高亮；大文件输入延迟需靠 E Swing 编辑器或 F 自研虚拟化）
 
 **结果编辑**
 - （可选）行锁：刷新编辑结果时用 `SELECT … FOR UPDATE`（PG/MySQL/Oracle）降低并发覆盖；需评估对只读查询的副作用（当前靠提交时 `affected==1` 检测）
