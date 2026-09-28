@@ -338,6 +338,9 @@ private val TABLE_STOP: Set<String> = setOf(
 private val UPDATE_GUARD_PREV: Set<String> =
     setOf("for", "key", "before", "after", "instead")
 
+/** DDL 目标表前可出现的修饰词（`ALTER TABLE IF EXISTS t` / `CREATE INDEX ON ONLY t`）。 */
+private val DDL_TABLE_PREFIX: Set<String> = setOf("if", "exists", "only")
+
 /** [i] 之前最近的非标点/非字面量 token 文本（小写）；无则 null。 */
 private fun prevWordToken(toks: List<SqlToken>, i: Int): String? {
     var j = i - 1
@@ -346,6 +349,15 @@ private fun prevWordToken(toks: List<SqlToken>, i: Int): String? {
         j--
     }
     return null
+}
+
+/** 语句是否为 `CREATE [UNIQUE] INDEX …`（据前几个词判断，用于识别 `ON <表>` 目标）。 */
+private fun isCreateIndexStatement(toks: List<SqlToken>): Boolean {
+    val words = toks.asSequence().filter { !it.punct && !it.literal }.take(3)
+        .map { it.text.lowercase() }.toList()
+    if (words.firstOrNull() != "create") return false
+    val idx = if (words.getOrNull(1) == "unique") 2 else 1
+    return words.getOrNull(idx) == "index"
 }
 
 /** 解析 WITH 子句里的 CTE 名与显式列名（仅 `WITH c(a,b) AS (…)` 可静态得知列）。 */
@@ -384,6 +396,7 @@ private fun parseCtes(toks: List<SqlToken>): Map<String, List<String>> {
 fun parseTableRefs(statement: String): SqlScope {
     val toks = tokenizeSql(statement)
     val ctes = parseCtes(toks)
+    val createIndex = isCreateIndexStatement(toks)
     val tables = mutableListOf<TableRef>()
     var complex = false
     var depth = 0
@@ -396,16 +409,27 @@ fun parseTableRefs(statement: String): SqlScope {
             continue
         }
         if (depth != 0) { i++; continue }
-        // FROM/JOIN 之外，DML 目标表也要登记：UPDATE <表>、INSERT INTO <表>（MERGE INTO 同理）。
+        // FROM/JOIN 之外，DML/DDL 目标表也要登记：
+        //   UPDATE <表>、INSERT/MERGE INTO <表>、ALTER TABLE <表>、CREATE INDEX … ON <表>。
         // FOR UPDATE / ON DUPLICATE KEY UPDATE / BEFORE|AFTER UPDATE 里的 update 不是目标表，需排除。
         val prev = prevWordToken(toks, i)
-        val startsTableList = !t.literal && when (t.text.lowercase()) {
-            "from", "join", "into" -> true
-            "update" -> prev !in UPDATE_GUARD_PREV
+        val word = t.text.lowercase()
+        val isAlterTableTarget = word == "table" && prev == "alter"
+        val isCreateIndexOn = word == "on" && createIndex
+        val startsTableList = !t.literal && when {
+            word == "from" || word == "join" || word == "into" -> true
+            word == "update" -> prev !in UPDATE_GUARD_PREV
+            isAlterTableTarget || isCreateIndexOn -> true
             else -> false
         }
         if (!startsTableList) { i++; continue }
+        // DDL 目标表不读别名（`ALTER TABLE t ADD …` 里的 ADD 不是别名）
+        val noAlias = isAlterTableTarget || isCreateIndexOn
         i++
+        // 跳过 DDL 目标表前的修饰词（IF EXISTS / ONLY）
+        while (i < toks.size && !toks[i].punct && !toks[i].literal &&
+            toks[i].text.lowercase() in DDL_TABLE_PREFIX
+        ) i++
         while (i < toks.size) {
             // 派生表：FROM ( … ) alias
             if (toks[i].punct && toks[i].text == "(") {
@@ -438,7 +462,7 @@ fun parseTableRefs(statement: String): SqlScope {
             }
             val table = parts.last().text
             val schema = if (parts.size >= 2) parts[parts.size - 2].text else null
-            val aliasTok = readAlias(toks, i).also { i = it.second }.first
+            val aliasTok = if (noAlias) null else readAlias(toks, i).also { i = it.second }.first
             tables += TableRef(
                 qualifier = parts.joinToString(".") { it.text },
                 schema = schema,

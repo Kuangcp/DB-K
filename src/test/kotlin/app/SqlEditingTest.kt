@@ -145,6 +145,25 @@ class SqlEditingTest {
     }
 
     @Test
+    fun `parseTableRefs reads alter table and create index targets`() {
+        // ALTER TABLE 目标表（ADD INDEX / ADD COLUMN 等都在此表上补列）
+        val alter = parseTableRefs("ALTER TABLE table_mapping ADD INDEX idx(table_id)")
+        assertEquals(listOf("table_mapping"), alter.tables.map { it.table })
+        assertNull(alter.tables[0].alias) // 不能把 ADD 当别名
+        // CREATE INDEX ... ON <表>
+        assertEquals(listOf("orders"), parseTableRefs("CREATE INDEX idx_oo ON orders(user_id)").tables.map { it.table })
+        // UNIQUE / 限定名 / USING
+        val unique = parseTableRefs("CREATE UNIQUE INDEX i ON public.orders USING btree (user_id)")
+        assertEquals("public", unique.tables[0].schema)
+        assertEquals("orders", unique.tables[0].table)
+        // IF EXISTS / ONLY 修饰词
+        assertEquals(listOf("t"), parseTableRefs("ALTER TABLE IF EXISTS t ADD COLUMN x int").tables.map { it.table })
+        assertEquals(listOf("t"), parseTableRefs("CREATE INDEX i ON ONLY t (x)").tables.map { it.table })
+        // JOIN 的 ON 不能被当成索引目标表
+        assertEquals(listOf("a", "b"), parseTableRefs("SELECT * FROM a JOIN b ON a.id = b.id").tables.map { it.table })
+    }
+
+    @Test
     fun `parseTableRefs handles derived tables scoping and string literals`() {
         // 有别名派生表：记录为 derived，不再整体置 complex
         val derived = parseTableRefs("SELECT * FROM (SELECT 1 AS a) s")
