@@ -46,9 +46,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.i18n.t
@@ -307,19 +310,41 @@ private fun ConsoleChip(
                 )
                 null -> Unit
             }
-            if (showSourceTag && profile != null) {
-                Text(
-                    "${profile.name} · ",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
-                )
+            val sourceName = if (showSourceTag) profile?.name else null
+            // 主次展示：多数据源时数据源名为主（大/半粗）、控制台名为次（小/淡）；
+            // 单一数据源时控制台名升为主样式（源名冗余，省略）。用单个 AnnotatedString 保证整体省略号截断。
+            val nameText = buildAnnotatedString {
+                if (sourceName != null) {
+                    withStyle(
+                        SpanStyle(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (active) MaterialTheme.colors.primary
+                            else MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+                        ),
+                    ) { append(sourceName) }
+                    withStyle(SpanStyle(fontSize = 10.5.sp, color = MaterialTheme.colors.onSurface.copy(alpha = 0.3f))) {
+                        append(" · ")
+                    }
+                    withStyle(
+                        SpanStyle(
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = if (active) 0.6f else 0.45f),
+                        ),
+                    ) { append(console.name) }
+                } else {
+                    withStyle(
+                        SpanStyle(
+                            fontSize = 12.sp,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (active) MaterialTheme.colors.primary
+                            else MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                        ),
+                    ) { append(console.name) }
+                }
             }
             Text(
-                console.name,
-                fontSize = 12.sp,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (active) MaterialTheme.colors.primary
-                else MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                nameText,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
