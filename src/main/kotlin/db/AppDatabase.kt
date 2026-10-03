@@ -82,13 +82,24 @@ object AppDatabase {
         if (!applied.contains(13)) {
             conn.createStatement().use { st -> migrateToV13(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (13)").use { it.executeUpdate() }
+        } else {
+            // 旧代码可能记录了 v13 但列未成功添加，补检查
+            conn.createStatement().use { st -> migrateToV13(st) }
         }
     }
 
     /** v13：时间显示时区（per-connection），默认空 = 本地时区。 */
     private fun migrateToV13(st: Statement) {
-        runCatching {
-            st.executeUpdate("ALTER TABLE connections ADD COLUMN display_tz TEXT NOT NULL DEFAULT ''")
+        val has = runCatching {
+            st.executeQuery("PRAGMA table_info(connections)").use { rs ->
+                while (rs.next()) if (rs.getString("name") == "display_tz") return@use true
+                false
+            }
+        }.getOrElse { true } // 取不到元数据也视为已有（跳过 ALTER）
+        if (!has) {
+            runCatching {
+                st.executeUpdate("ALTER TABLE connections ADD COLUMN display_tz TEXT NOT NULL DEFAULT ''")
+            }
         }
     }
 
