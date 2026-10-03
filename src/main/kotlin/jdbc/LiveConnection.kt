@@ -32,6 +32,10 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
 
     private val dialect: DbDialect = DialectRegistry.forProfile(profile)
 
+    /** 时区换算上下文：在连接建立时初始化。 */
+    @Volatile
+    private var temporalCtx: TemporalContext? = null
+
     override val profileId: String = profile.id
     override val protocol: Protocol = Protocol.JDBC
 
@@ -162,6 +166,14 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
         val fresh = dialect.openConnection(profile)
         conn = fresh
         lastActivityNanos = System.nanoTime()
+        // 时区探测：失败→null（不做换算，安全失败）
+        temporalCtx = dialect.detectSessionZone(fresh)?.let { sz ->
+            TemporalContext(
+                sourceZone = sz,
+                displayZone = profile.displayZone,
+                enableTextHeuristic = profile.dbType == db.DbType.SQLITE,
+            )
+        }
         return fresh
     }
 
@@ -214,7 +226,7 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     override fun runStatement(statement: String, sessionContextSql: String?): QueryResult =
         runOnConnection({ QueryExecutor.isQueryLike(statement) }) { conn ->
             QueryExecutor.applyContext(conn, sessionContextSql)
-            QueryExecutor.execute(conn, statement) { st -> registerStatement(st) }
+            QueryExecutor.execute(conn, statement, temporalCtx) { st -> registerStatement(st) }
         }
 
     override fun paginate(statement: String, offset: Long, limit: Int): String? =
@@ -234,7 +246,8 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
         var emitted = 0L
         return runOnConnection({ emitted == 0L }) { conn ->
             QueryExecutor.applyContext(conn, sessionContextSql)
-            StreamingQuery.stream(conn, sql, dialect.cursorStrategy, dialect.streamFetchSize, onMeta) { row ->
+            StreamingQuery.stream(conn, sql, dialect.cursorStrategy, dialect.streamFetchSize,
+                temporalCtx, onMeta) { row ->
                 emitted++
                 onRow(row)
             }
@@ -244,6 +257,6 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     override fun applyWriteOps(ops: List<WriteOp>, sessionContextSql: String?): Int =
         runOnConnection({ false }) { conn ->
             QueryExecutor.applyContext(conn, sessionContextSql)
-            RowUpdater.executeWriteBatch(conn, ops, dialect) { st -> registerStatement(st) }
+            RowUpdater.executeWriteBatch(conn, ops, dialect, temporalCtx) { st -> registerStatement(st) }
         }
 }

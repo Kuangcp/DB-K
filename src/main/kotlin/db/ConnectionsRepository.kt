@@ -312,7 +312,7 @@ class ConnectionsRepository(
 
     fun getConnection(id: String): ConnectionProfile? {
         return conn.prepareStatement(
-            "SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password, extra_params, color, sort_order, key_separator FROM connections WHERE id = ?",
+            "SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password, extra_params, color, sort_order, key_separator, display_tz FROM connections WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs ->
@@ -327,8 +327,8 @@ class ConnectionsRepository(
         conn.prepareStatement(
             """
             INSERT INTO connections(id, folder_id, name, db_type, host, port, database_name, user_name,
-                password, extra_params, color, sort_order, key_separator, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                password, extra_params, color, sort_order, key_separator, display_tz, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { ps ->
             val now = System.currentTimeMillis()
@@ -345,8 +345,9 @@ class ConnectionsRepository(
             ps.setString(11, p.color)
             ps.setInt(12, nextSortOrder("connections"))
             ps.setString(13, p.keySeparator)
-            ps.setLong(14, now)
+            ps.setString(14, DisplayZone.toDb(p.displayZone))
             ps.setLong(15, now)
+            ps.setLong(16, now)
             ps.executeUpdate()
         }
         return id
@@ -357,7 +358,7 @@ class ConnectionsRepository(
             """
             UPDATE connections SET folder_id = ?, name = ?, db_type = ?, host = ?, port = ?,
                 database_name = ?, user_name = ?, password = ?, extra_params = ?, color = ?,
-                key_separator = ?, updated_at = ?
+                key_separator = ?, display_tz = ?, updated_at = ?
             WHERE id = ?
             """.trimIndent(),
         ).use { ps ->
@@ -372,8 +373,9 @@ class ConnectionsRepository(
             ps.setString(9, p.extraParams)
             ps.setString(10, p.color)
             ps.setString(11, p.keySeparator)
-            ps.setLong(12, System.currentTimeMillis())
-            ps.setString(13, p.id)
+            ps.setString(12, DisplayZone.toDb(p.displayZone))
+            ps.setLong(13, System.currentTimeMillis())
+            ps.setString(14, p.id)
             ps.executeUpdate()
         }
     }
@@ -890,6 +892,7 @@ class ConnectionsRepository(
         color = rs.getString("color"),
         sortOrder = rs.getInt("sort_order"),
         keySeparator = rs.getString("key_separator") ?: ":",
+        displayZone = DisplayZone.fromDb(rs.getString("display_tz") ?: ""),
     )
 
     private fun nextSortOrder(table: String): Int {

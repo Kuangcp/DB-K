@@ -31,6 +31,8 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
     override fun sessionContextSql(schema: SchemaMeta): String? =
         schema.catalog?.let { "USE ${quoteIdent(it)}" }
 
+    override fun sessionZoneSql(): String = "SELECT timezone()"
+
     override fun loadSchemas(conn: Connection): List<SchemaMeta> {
         val out = mutableListOf<SchemaMeta>()
         conn.createStatement().use { st ->

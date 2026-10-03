@@ -506,6 +506,11 @@ enum class Str {
     ConnTestHint,
     ConnTestOk,
     ConnSelect,
+    FormDisplayZone,
+    DisplayZoneLocal,
+    DisplayZoneSource,
+    DisplayZoneCustomOption,
+    DisplayZoneInvalid,
 
     // ── 导出弹窗 ──
     ExportTitle,

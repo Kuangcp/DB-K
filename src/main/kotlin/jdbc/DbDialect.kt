@@ -10,6 +10,8 @@ import engine.model.SchemaMeta
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.ResultSet
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 /**
  * 目标库方言：封装“建连、库探测、对象探测、标识符引用、语句拼装”的差异。
@@ -71,6 +73,37 @@ interface DbDialect {
      */
     fun loadColumns(conn: Connection, schema: SchemaMeta?, table: String): List<ColumnMeta> =
         queryTableColumns(conn, schema, table)
+
+    /** 探查连接会话时区的 SQL：返回可解析为 ZoneId 的字符串（如 "+08:00" "Asia/Shanghai" "UTC"）；
+     *  null / 空 = 不探查。 */
+    fun sessionZoneSql(): String? = null
+
+    /**
+     * 探查并缓存会话时区。调用方负责在工作线程执行；失败返回 null（安全失败）。
+     * [sessionZoneSql] 非空时执行查询并尝试解析结果为 ZoneId。
+     */
+    fun detectSessionZone(conn: Connection): ZoneId? {
+        val sql = sessionZoneSql() ?: return null
+        val raw = runCatching {
+            conn.createStatement().use { st ->
+                st.queryTimeout = 5
+                st.executeQuery(sql).use { rs ->
+                    if (rs.next()) rs.getString(1) else null
+                }
+            }
+        }.getOrNull()?.trim() ?: return null
+        if (raw.isEmpty()) return null
+        // 尝试整数 offset 秒
+        val secs = raw.toIntOrNull()
+        if (secs != null) return ZoneOffset.ofTotalSeconds(secs)
+        // 尝试 ZoneId
+        runCatching { return ZoneId.of(raw, ZoneId.SHORT_IDS) }.getOrNull()
+        // 尝试 offset 串
+        runCatching {
+            return ZoneOffset.of(if (raw == "Z") "+00:00" else raw)
+        }.getOrNull()
+        return null
+    }
 
     /** 标识符（表/列/schema 名）加引号。 */
     fun quoteIdent(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""

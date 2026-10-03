@@ -88,6 +88,7 @@ object ProfileTransfer {
                     color = p.color,
                     sortOrder = p.sortOrder,
                     keySeparator = p.keySeparator,
+                    displayTz = DisplayZone.toDb(p.displayZone),
                 )
             },
         )
@@ -250,5 +251,7 @@ object ProfileTransfer {
         val sortOrder: Int = 0,
         /** 旧版导出文件无此字段 → 默认 `:`。 */
         val keySeparator: String = ":",
+        /** 旧版导出文件无此字段 → 默认空（Local）。 */
+        val displayTz: String = "",
     )
 }

@@ -12,7 +12,7 @@ import java.util.UUID
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 12
+    private const val CURRENT_VERSION = 13
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -78,6 +78,17 @@ object AppDatabase {
         if (!applied.contains(12)) {
             conn.createStatement().use { st -> migrateToV12(st) }
             conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (12)").use { it.executeUpdate() }
+        }
+        if (!applied.contains(13)) {
+            conn.createStatement().use { st -> migrateToV13(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (13)").use { it.executeUpdate() }
+        }
+    }
+
+    /** v13：时间显示时区（per-connection），默认空 = 本地时区。 */
+    private fun migrateToV13(st: Statement) {
+        runCatching {
+            st.executeUpdate("ALTER TABLE connections ADD COLUMN display_tz TEXT NOT NULL DEFAULT ''")
         }
     }
 

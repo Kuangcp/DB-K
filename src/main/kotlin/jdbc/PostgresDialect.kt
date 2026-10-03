@@ -400,6 +400,8 @@ object PostgresDialect : GenericDialect(DbType.POSTGRES, "org.postgresql.Driver"
     /** PG 的 schema 即执行作用域：search_path 指向所选 schema（引号保大小写）。 */
     override fun sessionContextSql(schema: engine.model.SchemaMeta): String? =
         schema.schema?.let { "SET search_path TO ${quoteIdent(it)}" }
+
+    override fun sessionZoneSql(): String = "SHOW timezone"
 }
 
 /** pg_class.relkind → 对象类型（纯函数，供组计数与关系探测共用）。 */

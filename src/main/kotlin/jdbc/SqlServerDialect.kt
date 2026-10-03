@@ -55,4 +55,6 @@ object SqlServerDialect : GenericDialect(DbType.SQLSERVER, "com.microsoft.sqlser
         val orderBy = if (Regex("(?i)\\border\\s+by\\b").containsMatchIn(baseSql)) "" else " ORDER BY (SELECT NULL)"
         return "$baseSql$orderBy OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY"
     }
+
+    override fun sessionZoneSql(): String = "SELECT DATEDIFF(SECOND, GETUTCDATE(), GETDATE())"
 }

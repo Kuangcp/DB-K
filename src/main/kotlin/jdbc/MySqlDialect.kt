@@ -131,6 +131,9 @@ open class MySqlLikeDialect(
     /** MySQL/MariaDB 的库即 catalog：执行前 USE 一下，保证与树里看到的库一致。 */
     override fun sessionContextSql(schema: engine.model.SchemaMeta): String? =
         schema.catalog?.let { "USE ${quoteIdent(it)}" }
+
+    override fun sessionZoneSql(): String =
+        "SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())"
 }
 
 /** MySQL。 */

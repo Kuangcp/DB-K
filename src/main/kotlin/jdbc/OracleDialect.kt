@@ -108,6 +108,9 @@ object OracleDialect : GenericDialect(DbType.ORACLE, "oracle.jdbc.OracleDriver")
     override fun paginate(baseSql: String, offset: Long, limit: Int): String =
         "$baseSql OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY"
 
+    override fun sessionZoneSql(): String =
+        "SELECT (EXTRACT(TIMEZONE_HOUR FROM SYSTIMESTAMP) * 3600 + EXTRACT(TIMEZONE_MINUTE FROM SYSTIMESTAMP) * 60) FROM DUAL"
+
     private fun queryFirstStrings(conn: Connection, sql: String): List<String> =
         conn.createStatement().use { st ->
             st.executeQuery(sql).use { rs ->

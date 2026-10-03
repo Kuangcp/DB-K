@@ -1,6 +1,7 @@
 package db
 
 import engine.Protocol
+import java.time.ZoneId
 
 /**
  * 数据源大类（仅用于 UI 分组，不持久化）：连接弹窗左侧按此分栏。
@@ -86,6 +87,7 @@ data class ConnectionProfile(
     val sortOrder: Int = 0,
     /** Redis 键层级分隔符（如 `:`）；空白 = 不按层级渲染。非 Redis 后端不使用。 */
     val keySeparator: String = ":",
+    val displayZone: DisplayZone = DisplayZone.Local,
 ) {
     /** 生成 JDBC URL（编辑弹窗实时预览用；M2 连接时以方言实现为准）。 */
     fun urlPreview(): String {
@@ -128,6 +130,32 @@ data class ConnectionProfile(
             return if (normalized.isEmpty()) base else "$base;$normalized"
         }
         return "$base?$params"
+    }
+}
+
+/** 每连接时间显示时区。 */
+sealed interface DisplayZone {
+    /** 应用（JVM）时区 */
+    data object Local : DisplayZone
+    /** 数据源时区（原样显示，只统一格式） */
+    data object Source : DisplayZone
+    /** 指定时区 */
+    data class Custom(val zoneId: String) : DisplayZone
+
+    companion object {
+        /** 从 DB 值反序列化。空串 = Local，"SOURCE" = Source，否则 Custom(zoneId)。 */
+        fun fromDb(v: String): DisplayZone = when (v.trim().uppercase()) {
+            "", "LOCAL" -> Local
+            "SOURCE" -> Source
+            else -> Custom(v.trim())
+        }
+
+        /** 序列化到 DB。 */
+        fun toDb(dz: DisplayZone): String = when (dz) {
+            Local -> ""
+            Source -> "SOURCE"
+            is Custom -> dz.zoneId
+        }
     }
 }
 

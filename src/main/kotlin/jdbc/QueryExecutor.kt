@@ -80,14 +80,14 @@ object QueryExecutor {
      * [registerStatement]：可选——语句建立后回调一次、finally 中再回调 null，
      * 供 LiveConnection 登记当前执行语句以支持外部 cancel（Statement.cancel）。
      */
-    fun execute(conn: Connection, sql: String, registerStatement: ((Statement?) -> Unit)? = null): QueryResult {
+    fun execute(conn: Connection, sql: String, ctx: TemporalContext? = null, registerStatement: ((Statement?) -> Unit)? = null): QueryResult {
         val started = System.currentTimeMillis()
         val stmt = conn.createStatement()
         try {
             stmt.queryTimeout = QUERY_TIMEOUT_SECONDS
             registerStatement?.invoke(stmt)
             return if (isQueryLike(sql)) {
-                stmt.executeQuery(sql).use { rs -> readResultSet(sql, rs, started) }
+                stmt.executeQuery(sql).use { rs -> readResultSet(sql, rs, started, ctx) }
             } else {
                 val affected = stmt.executeUpdate(sql)
                 QueryResult(sql, emptyList(), emptyList(), affectedRows = affected, durationMs = System.currentTimeMillis() - started)
@@ -110,7 +110,7 @@ object QueryExecutor {
         }
     }
 
-    private fun readResultSet(sql: String, rs: ResultSet, started: Long): QueryResult {
+    private fun readResultSet(sql: String, rs: ResultSet, started: Long, ctx: TemporalContext? = null): QueryResult {
         val meta = rs.metaData
         val count = meta.columnCount
         val columns = columnMetas(meta)
@@ -126,7 +126,7 @@ object QueryExecutor {
             val row = ArrayList<String?>(count)
             var rowChars = 0L
             for (i in 1..count) {
-                val v = readCell(rs, i, columns[i - 1].sqlType)
+                val v = readCell(rs, i, columns[i - 1], ctx)
                 rowChars += v?.length ?: 0
                 row.add(v)
             }
@@ -147,12 +147,12 @@ object QueryExecutor {
 
     /**
      * 读一个单元格（带内存阀）：二进制走流式只数字节；字符类走字符流限读上限；
-     * 其余走 `getObject` 后按规定长度截断。
+     * 其余走时区渲染器。
      */
-    private fun readCell(rs: ResultSet, i: Int, sqlType: Int): String? = when {
-        isBinaryColumn(sqlType) -> readBinaryCell(rs, i)
-        isCharColumn(sqlType) -> readTextCell(rs, i)
-        else -> clampCell(cellToString(runCatching { rs.getObject(i) }.getOrNull()))
+    private fun readCell(rs: ResultSet, i: Int, col: QueryColumn, ctx: TemporalContext? = null): String? = when {
+        isBinaryColumn(col.sqlType) -> readBinaryCell(rs, i)
+        isCharColumn(col.sqlType) -> readTextCell(rs, i)
+        else -> clampCell(TemporalCells.render(runCatching { rs.getObject(i) }.getOrNull(), col, ctx))
     }
 
     /** 字符类：用 `getCharacterStream` 限读，避免超大 CLOB/TEXT 一次性进内存；驱动不支持时回退 `getString`。 */
@@ -241,11 +241,6 @@ object QueryExecutor {
         )
     }
 
-    /** 单元格值 → 展示/导出字符串（与 CSV 全量导出共用同一转换）。 */
-    fun cellToString(v: Any?): String? = when (v) {
-        null -> null
-        is ByteArray -> "[${v.size} bytes]"
-        is Boolean -> if (v) "true" else "false"
-        else -> v.toString()
-    }
+    /** 单元格值 → 展示/导出字符串。保留旧签名以兼容无 ctx 的代码路径。 */
+    fun cellToString(v: Any?): String? = TemporalCells.render(v)
 }

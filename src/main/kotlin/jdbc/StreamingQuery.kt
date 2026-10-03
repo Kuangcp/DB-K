@@ -24,6 +24,7 @@ object StreamingQuery {
         sql: String,
         strategy: CursorStrategy,
         fetchSize: Int,
+        ctx: TemporalContext? = null,
         onMeta: (List<QueryColumn>) -> Unit,
         onRow: (List<String?>) -> Unit,
     ): Long {
@@ -45,7 +46,7 @@ object StreamingQuery {
                     val row = ArrayList<String?>(count)
                     while (rs.next()) {
                         row.clear()
-                        for (i in 1..count) row.add(QueryExecutor.cellToString(rs.getObject(i)))
+                        for (i in 1..count) row.add(TemporalCells.render(rs.getObject(i), columns[i - 1], ctx))
                         onRow(row)
                         written++
                     }

@@ -28,6 +28,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
@@ -60,6 +62,7 @@ import app.state.friendlySqlError
 import app.ui.DbIcons
 import app.ui.FramelessDialog
 import app.ui.ThemeSpec
+import db.DisplayZone
 import db.DbCategory
 import db.ConnectionProfile
 import db.DbType
@@ -117,6 +120,7 @@ fun ConnectionEditorDialog(
     var password by remember(request) { mutableStateOf(initial?.password ?: "") }
     var extra by remember(request) { mutableStateOf(initial?.extraParams ?: "") }
     var keySeparator by remember(request) { mutableStateOf(initial?.keySeparator ?: ":") }
+    var displayZone by remember(request) { mutableStateOf(initial?.displayZone ?: DisplayZone.Local) }
 
     val isEmbedded = dbType == DbType.SQLITE || dbType == DbType.H2LOCAL
     val port = portText.toIntOrNull()
@@ -133,6 +137,7 @@ fun ConnectionEditorDialog(
         password = if (isEmbedded) null else password.takeIf { it.isNotEmpty() },
         extraParams = if (isEmbedded) "" else extra.trim(),
         keySeparator = if (dbType == DbType.REDIS) keySeparator else ":",
+        displayZone = displayZone,
     )
 
     val isRedis = dbType == DbType.REDIS
@@ -306,6 +311,12 @@ fun ConnectionEditorDialog(
                             style = MaterialTheme.typography.caption,
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                             modifier = Modifier.padding(start = LabelGutter, top = 2.dp),
+                        )
+                    }
+                    FormRow(t(Str.FormDisplayZone)) {
+                        DisplayZoneDropdown(
+                            current = displayZone,
+                            onSelect = { displayZone = it },
                         )
                     }
                     FormRow(t(Str.FormExtraParams)) {
@@ -634,4 +645,53 @@ private fun pickDatabaseFile(dbType: DbType, current: String): String? {
         }
     }
     return path
+}
+
+@Composable
+private fun DisplayZoneDropdown(
+    current: DisplayZone,
+    onSelect: (DisplayZone) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var customText by remember(current) { mutableStateOf((current as? DisplayZone.Custom)?.zoneId ?: "") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        val label = when (current) {
+            DisplayZone.Local -> t(Str.DisplayZoneLocal)
+            DisplayZone.Source -> t(Str.DisplayZoneSource)
+            is DisplayZone.Custom -> t(Str.DisplayZoneCustomOption) + " (${current.zoneId})"
+        }
+        Box {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.onSurface,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { expanded = true }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(onClick = { onSelect(DisplayZone.Local); expanded = false }) {
+                    Text(t(Str.DisplayZoneLocal), style = MaterialTheme.typography.body2)
+                }
+                DropdownMenuItem(onClick = { onSelect(DisplayZone.Source); expanded = false }) {
+                    Text(t(Str.DisplayZoneSource), style = MaterialTheme.typography.body2)
+                }
+                DropdownMenuItem(onClick = {
+                    onSelect(DisplayZone.Custom(customText.ifBlank { "UTC" }))
+                    expanded = false
+                }) {
+                    Text(t(Str.DisplayZoneCustomOption), style = MaterialTheme.typography.body2)
+                }
+            }
+        }
+        if (current is DisplayZone.Custom) {
+            CompactField(
+                value = customText,
+                onValueChange = { customText = it; onSelect(DisplayZone.Custom(it)) },
+                placeholder = "Asia/Tokyo",
+                modifier = Modifier.width(120.dp).padding(start = 4.dp),
+            )
+        }
+    }
 }

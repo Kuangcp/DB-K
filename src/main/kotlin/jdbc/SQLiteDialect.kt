@@ -20,6 +20,9 @@ object SQLiteDialect : GenericDialect(DbType.SQLITE, "org.sqlite.JDBC") {
     /** 单文件无库/schema 可切。 */
     override val supportsTargetSwitch: Boolean get() = false
 
+    /** SQLite 约定：datetime() 等返回 UTC，无会话时区概念。 */
+    override fun detectSessionZone(conn: Connection): java.time.ZoneId = java.time.ZoneId.of("UTC")
+
 
     override fun loadSchemas(conn: Connection): List<SchemaMeta> =
         listOf(SchemaMeta(catalog = null, schema = "main"))

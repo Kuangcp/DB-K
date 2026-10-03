@@ -109,7 +109,7 @@ object RowUpdater {
         plans: List<UpdatePlan>,
         dialect: DbDialect,
         registerStatement: ((Statement?) -> Unit)? = null,
-    ): Int = executeWriteBatch(conn, plans.map { WriteOp.Update(it) }, dialect, registerStatement)
+    ): Int = executeWriteBatch(conn, plans.map { WriteOp.Update(it) }, dialect, registerStatement = registerStatement)
 
     /**
      * 在**单事务**中顺序执行 UPDATE / INSERT / DELETE（每条要求恰好影响 1 行；否则整体回滚）。
@@ -119,6 +119,7 @@ object RowUpdater {
         conn: Connection,
         ops: List<WriteOp>,
         dialect: DbDialect,
+        ctx: TemporalContext? = null,
         registerStatement: ((Statement?) -> Unit)? = null,
     ): Int {
         if (ops.isEmpty()) return 0
@@ -127,7 +128,7 @@ object RowUpdater {
         var total = 0
         try {
             for (op in ops) {
-                val affected = executeOne(conn, op, dialect, registerStatement)
+                val affected = executeOne(conn, op, dialect, ctx, registerStatement)
                 check(affected == 1) { affectedMessage(op, affected) }
                 total += affected
             }
@@ -145,6 +146,7 @@ object RowUpdater {
         conn: Connection,
         op: WriteOp,
         dialect: DbDialect,
+        ctx: TemporalContext? = null,
         registerStatement: ((Statement?) -> Unit)?,
     ): Int {
         val sql = when (op) {
@@ -172,7 +174,7 @@ object RowUpdater {
             try {
                 ps.queryTimeout = UPDATE_TIMEOUT_SECONDS
                 var index = 1
-                for (cv in binds) bindValue(ps, index++, cv)
+                for (cv in binds) bindValue(ps, index++, cv, ctx)
                 return ps.executeUpdate()
             } finally {
                 registerStatement?.invoke(null)
@@ -215,7 +217,7 @@ object RowUpdater {
     }
 
     /** 按目标列 JDBC 类型把字符串单元格值绑到参数上；类型不符抛 [CellValueException]。 */
-    private fun bindValue(ps: PreparedStatement, index: Int, cv: ColumnValue) {
+    private fun bindValue(ps: PreparedStatement, index: Int, cv: ColumnValue, ctx: TemporalContext? = null) {
         val raw = cv.value.raw
         if (raw == null) {
             ps.setNull(index, cv.sqlType)
@@ -236,8 +238,17 @@ object RowUpdater {
                     ps.setDate(index, java.sql.Date.valueOf(raw.trim()))
                 Types.TIME ->
                     ps.setTime(index, java.sql.Time.valueOf(raw.trim()))
-                Types.TIMESTAMP ->
-                    ps.setTimestamp(index, java.sql.Timestamp.valueOf(raw.trim()))
+                Types.TIMESTAMP -> {
+                    val v = if (ctx != null && !ctx.isSourceMode && !ctx.isSameZone()) {
+                        // 反向换算：显示时区 → 数据源时区
+                        val ldt = parseLocalDateTime(raw.trim())
+                        val instant = ldt.atZone(ctx.effectiveDisplayZone).toInstant()
+                        java.sql.Timestamp.from(instant.atZone(ctx.sourceZone).toInstant())
+                    } else {
+                        java.sql.Timestamp.valueOf(raw.trim())
+                    }
+                    ps.setTimestamp(index, v)
+                }
                 else -> ps.setString(index, raw)
             }
         } catch (e: CellValueException) {
@@ -245,6 +256,22 @@ object RowUpdater {
         } catch (_: Exception) {
             throw CellValueException(I18n.t(Str.ErrInvalidValue, cv.column, raw, typeLabel(cv.sqlType)))
         }
+    }
+
+    /** 解析 yyyy-MM-dd HH:mm:ss[.f…] 或 ISO 格式为 LocalDateTime */
+    private fun parseLocalDateTime(text: String): java.time.LocalDateTime {
+        val trimmed = text.trim()
+        // 尝试 SQL 格式: yyyy-MM-dd HH:mm:ss[.f…]
+        val dt = runCatching { java.time.LocalDateTime.parse(trimmed, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) }.getOrNull()
+        if (dt != null) return dt
+        // 尝试带小数秒
+        val withFrac = runCatching {
+            java.time.LocalDateTime.parse(trimmed, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS"))
+        }.getOrNull()
+        if (withFrac != null) return withFrac
+        // 尝试 ISO
+        return runCatching { java.time.LocalDateTime.parse(trimmed) }.getOrNull()
+            ?: throw IllegalArgumentException("Cannot parse datetime: $trimmed")
     }
 
     private fun parseBoolean(raw: String): Boolean = when (raw.trim().lowercase()) {

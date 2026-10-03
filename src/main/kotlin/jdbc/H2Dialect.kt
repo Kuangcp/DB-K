@@ -12,6 +12,8 @@ open class H2BaseDialect(dbType: DbType) : GenericDialect(dbType, "org.h2.Driver
     /** H2 的 schema 即作用域：SET SCHEMA 切过去（引号保大小写）。 */
     override fun sessionContextSql(schema: SchemaMeta): String? =
         schema.schema?.let { "SET SCHEMA ${quoteIdent(it)}" }
+
+    override fun sessionZoneSql(): String = "SELECT CURRENT_TIMEZONE()"
 }
 
 /**
