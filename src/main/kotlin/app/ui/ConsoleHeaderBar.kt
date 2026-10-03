@@ -23,7 +23,6 @@ import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
-import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
@@ -222,7 +221,7 @@ internal fun RowScope.ConnectionNavBar(
     statusMessage: String?,
     profiles: List<ConnectionProfile>,
     onSelectProfile: (String) -> Unit,
-    onDisconnect: () -> Unit,
+    onToggleConnect: () -> Unit,
     supportsTargetSwitch: Boolean,
     /** 执行目标切换器标签（SQL = 「目标」；Redis DB = 「DB」）。 */
     targetLabel: String,
@@ -279,13 +278,31 @@ internal fun RowScope.ConnectionNavBar(
         }
     }
     Spacer(Modifier.width(8.dp))
-    StatusDot(status)
-    Text(
-        statusLabel(status),
-        fontSize = 11.sp,
-        color = statusColor(status),
-        modifier = Modifier.padding(start = 4.dp),
-    )
+    // Status + connect/disconnect merged into one clickable element.
+    val connectClickable = status != ConnUiStatus.CONNECTING
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .clickable(enabled = connectClickable) { onToggleConnect() }
+            .padding(horizontal = 5.dp, vertical = 3.dp),
+    ) {
+        StatusDot(status)
+        Text(
+            statusLabel(status),
+            fontSize = 11.sp,
+            color = statusColor(status),
+            modifier = Modifier.padding(start = 3.dp),
+        )
+        // Small chevron hints clickability (only when active state).
+        if (status == ConnUiStatus.CONNECTED || status == ConnUiStatus.DISCONNECTED) {
+            Icon(
+                Icons.Filled.ArrowDropDown, null,
+                tint = statusColor(status).copy(alpha = 0.5f),
+                modifier = Modifier.size(14.dp).padding(start = 2.dp),
+            )
+        }
+    }
     if (status == ConnUiStatus.ERROR && statusMessage != null) {
         Text(
             statusMessage,
@@ -307,9 +324,7 @@ internal fun RowScope.ConnectionNavBar(
             onSelectTarget = onSelectTarget,
         )
     }
-    if (status == ConnUiStatus.CONNECTED) {
-        TextButton(onClick = onDisconnect) { Text(t(Str.EditorDisconnect), fontSize = 12.sp) }
-    }
+
 }
 
 /**

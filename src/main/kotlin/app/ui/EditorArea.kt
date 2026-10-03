@@ -195,7 +195,7 @@ fun WindowScope.EditorArea(
     columnCatalog: ColumnCatalog? = null,
     /** 复制文本（单元格 / INSERT 语句）→ 剪贴板 + Toast。参数：文本、Toast 文案。 */
     onCopyText: (String, String) -> Unit,
-    onDisconnect: () -> Unit,
+    onToggleConnect: () -> Unit,
     /** 结果区显隐（Alt+D 由 Main 窗口根层统一接管，这里只读它布局）。 */
     resultsVisible: Boolean,
     onToggleResults: () -> Unit,
@@ -342,7 +342,7 @@ fun WindowScope.EditorArea(
                         statusMessage = statusMessage,
                         profiles = profiles,
                         onSelectProfile = onSelectProfile,
-                        onDisconnect = onDisconnect,
+                        onToggleConnect = onToggleConnect,
                         supportsTargetSwitch = supportsTargetSwitch,
                         targetLabel = targetLabel,
                         targetAllowDefault = targetAllowDefault,

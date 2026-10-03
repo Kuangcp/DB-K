@@ -1434,7 +1434,17 @@ private fun WindowScope.AppBody(
                             writeClipboardText(text)
                             toastState.show(label)
                         },
-                        onDisconnect = { activeProfile?.let(::disconnectProfile) },
+                        onToggleConnect = { 
+                            val p = activeProfile ?: return@EditorArea
+                            val st = connectionsState.statusOf(p.id)
+                            when (st) {
+                                ConnUiStatus.CONNECTED -> disconnectProfile(p)
+                                ConnUiStatus.DISCONNECTED, ConnUiStatus.ERROR -> scope.launch {
+                                    connectionsState.ensureConnectionReady(p)
+                                }
+                                else -> Unit // CONNECTING — nothing to do
+                            }
+                        },
                         resultsVisible = resultsVisible,
                         onToggleResults = { resultsVisible = !resultsVisible },
                         resultFrac = resultFrac,
