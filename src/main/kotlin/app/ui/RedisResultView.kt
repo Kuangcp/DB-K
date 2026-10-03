@@ -58,6 +58,7 @@ import app.i18n.t
 import app.state.ConsoleRunUi
 import app.state.RedisKeyMeta
 import app.state.StatementOutcome
+import app.settings.EditorSettings
 import engine.model.QueryColumn
 import engine.model.QueryResult
 import i18n.I18n
@@ -81,6 +82,7 @@ fun RedisResultView(
     onExport: () -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    settings: EditorSettings,
 ) {
     var cellView by remember { mutableStateOf<RedisCellView?>(null) }
     Box(modifier = modifier) {
@@ -110,6 +112,7 @@ fun RedisResultView(
                 content = v.content,
                 onDismiss = { cellView = null },
                 onCopy = onCopyText,
+                settings = settings,
             )
         }
     }

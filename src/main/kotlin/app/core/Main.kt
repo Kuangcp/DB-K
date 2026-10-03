@@ -1478,6 +1478,7 @@ private fun WindowScope.AppBody(
                         writeClipboardText(text)
                         toastState.show(label)
                     },
+                    editorSettings = editorSettings,
                     toastState = toastState,
                 )
                 ToastHost(toastState)
@@ -1539,6 +1540,7 @@ private fun DialogHost(
     theme: ThemeSpec,
     language: Lang,
     onCopyText: (String, String) -> Unit = { _, _ -> },
+    editorSettings: app.settings.EditorSettings,
     toastState: ToastState,
 ) {
     dialogState.tableDdl?.let { request ->
@@ -1547,12 +1549,14 @@ private fun DialogHost(
             loadDdl = connectionsState::fetchDdl,
             onDismiss = { dialogState.tableDdl = null },
             onCopy = onCopyText,
+            settings = editorSettings,
         )
     }
     dialogState.commitPreview?.let { request ->
         CommitPreviewDialog(
             request = request,
             onDismiss = { dialogState.commitPreview = null },
+            settings = editorSettings,
         )
     }
     dialogState.folderDialog?.let { request ->

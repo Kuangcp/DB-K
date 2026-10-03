@@ -41,11 +41,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.settings.EditorSettings
 import app.state.CommitPreviewRequest
 import app.state.TableDdlRequest
 import app.core.NativeMemory
 import app.ui.decodeBase64Bytes
 import app.ui.FramelessDialog
+import app.ui.editorFontFamily
 import app.ui.humanSize
 import app.ui.imageFormatName
 import app.ui.jsonSyntaxPalette
@@ -202,12 +204,18 @@ private fun ViewerFrame(modifier: Modifier = Modifier, content: @Composable () -
 
 /** 传统只读文本视图：自动换行、等宽字体、纵向滚动 + 右侧滚动条（不做语法着色）。 */
 @Composable
-private fun ViewerText(content: String, modifier: Modifier = Modifier) {
+private fun ViewerText(
+    content: String,
+    modifier: Modifier = Modifier,
+    settings: EditorSettings,
+) {
+    val ff = editorFontFamily(settings.fontFamilyName)
+    val fs = settings.fontSizeSp.sp
     ViewerFrame(modifier) {
         Text(
             content,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
+            fontFamily = ff,
+            fontSize = fs,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
         )
     }
@@ -218,18 +226,24 @@ private fun ViewerText(content: String, modifier: Modifier = Modifier) {
  * 仅用于 DDL（表/视图等数据库对象定义）；任意单元格文本仍用 [ViewerText]，不按 SQL 误染。
  */
 @Composable
-private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
+private fun SqlCodeText(
+    content: String,
+    modifier: Modifier = Modifier,
+    settings: EditorSettings,
+) {
     val themeColors = LocalThemeColors.current
     val keywords = remember { sqlHighlightKeywordSet() }
     // themeColors 作 key：主题切换时重算色板（与 EditorPane 一致）。
     val annotated = remember(content, themeColors, keywords) {
         AnnotatedString(content, spanStyles = sqlHighlightSpans(content, sqlSyntaxPalette(themeColors), keywords))
     }
+    val ff = editorFontFamily(settings.fontFamilyName)
+    val fs = settings.fontSizeSp.sp
     ViewerFrame(modifier) {
         Text(
             annotated,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
+            fontFamily = ff,
+            fontSize = fs,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
         )
     }
@@ -240,17 +254,23 @@ private fun SqlCodeText(content: String, modifier: Modifier = Modifier) {
  * 仅在单元格内容被识别为 JSON 时使用，避免任意文本误染。
  */
 @Composable
-private fun JsonCodeText(content: String, modifier: Modifier = Modifier) {
+private fun JsonCodeText(
+    content: String,
+    modifier: Modifier = Modifier,
+    settings: EditorSettings,
+) {
     val themeColors = LocalThemeColors.current
     // themeColors 作 key：主题切换时重算色板（与 SqlCodeText 一致）。
     val annotated = remember(content, themeColors) {
         AnnotatedString(content, spanStyles = jsonHighlightSpans(content, jsonSyntaxPalette(themeColors)))
     }
+    val ff = editorFontFamily(settings.fontFamilyName)
+    val fs = settings.fontSizeSp.sp
     ViewerFrame(modifier) {
         Text(
             annotated,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
+            fontFamily = ff,
+            fontSize = fs,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
         )
     }
@@ -267,6 +287,7 @@ fun DdlDialog(
     loadDdl: suspend (ConnectionProfile, SchemaMeta?, String) -> Result<String>,
     onDismiss: () -> Unit,
     onCopy: (String, String) -> Unit,
+    settings: EditorSettings,
 ) {
     var loading by remember(request) { mutableStateOf(true) }
     var ddl by remember(request) { mutableStateOf<String?>(null) }
@@ -311,9 +332,9 @@ fun DdlDialog(
                     Text(I18n.t(Str.ViewerLoadingDefinition), style = MaterialTheme.typography.body2)
                 }
                 ddl != null -> if (request.profile.dbType.protocol == Protocol.ELASTICSEARCH) {
-                    JsonCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
+                    JsonCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth(), settings)
                 } else {
-                    SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth())
+                    SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth(), settings)
                 }
                 else -> Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     Text(
@@ -357,6 +378,7 @@ fun TextViewerDialog(
     copyToast: String = I18n.t(Str.ViewerCopiedAll),
     /** 可选的额外动作按钮（如历史 SQL 的「插入到当前控制台」）；null 则不显示。 */
     extraAction: Pair<String, () -> Unit>? = null,
+    settings: EditorSettings,
 ) {
     val lineCount = content.count { it == '\n' } + 1
     FramelessDialog(
@@ -380,9 +402,9 @@ fun TextViewerDialog(
                 modifier = Modifier.padding(bottom = 6.dp),
             )
             if (highlightSql) {
-                SqlCodeText(content, Modifier.weight(1f).fillMaxWidth())
+                SqlCodeText(content, Modifier.weight(1f).fillMaxWidth(), settings)
             } else {
-                ViewerText(content, Modifier.weight(1f).fillMaxWidth())
+                ViewerText(content, Modifier.weight(1f).fillMaxWidth(), settings)
             }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -413,6 +435,7 @@ fun CellViewerDialog(
     content: String,
     onDismiss: () -> Unit,
     onCopy: (String, String) -> Unit,
+    settings: EditorSettings,
 ) {
     // 大内容时 count 也是 O(n)，按 content 缓存，避免忙碌态重组成倍扫描
     val lineCount = remember(content) { content.count { it == '\n' } + 1 }
@@ -565,10 +588,12 @@ fun CellViewerDialog(
                         fontSize = 11.sp,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
                     )
+                    val ff = editorFontFamily(settings.fontFamilyName)
+                    val fs = settings.fontSizeSp.sp
                     Text(
                         hash,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
+                        fontFamily = ff,
+                        fontSize = fs,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                     )
@@ -622,8 +647,8 @@ fun CellViewerDialog(
                 when {
                     root != null && jsonMode ->
                         JsonTreeView(root, jsonTreeState, Modifier.weight(1f).fillMaxWidth())
-                    root != null -> JsonCodeText(content, Modifier.weight(1f).fillMaxWidth())
-                    else -> ViewerText(content, Modifier.weight(1f).fillMaxWidth())
+                    root != null -> JsonCodeText(content, Modifier.weight(1f).fillMaxWidth(), settings)
+                    else -> ViewerText(content, Modifier.weight(1f).fillMaxWidth(), settings)
                 }
             }
             Row(
@@ -647,6 +672,7 @@ fun CellViewerDialog(
 fun CommitPreviewDialog(
     request: CommitPreviewRequest,
     onDismiss: () -> Unit,
+    settings: EditorSettings,
 ) {
     val sql = remember(request) { request.statements.joinToString("\n") }
     FramelessDialog(
@@ -669,7 +695,7 @@ fun CommitPreviewDialog(
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.padding(bottom = 8.dp),
             )
-            SqlCodeText(sql, Modifier.weight(1f).fillMaxWidth())
+            SqlCodeText(sql, Modifier.weight(1f).fillMaxWidth(), settings)
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalArrangement = Arrangement.End,

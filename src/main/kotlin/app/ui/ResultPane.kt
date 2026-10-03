@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.core.export.ExportText
+import app.settings.EditorSettings
 import app.state.ConsoleRunUi
 import app.i18n.LocalLang
 import app.i18n.t
@@ -133,6 +134,7 @@ internal fun ResultTabs(
     onCancelRun: () -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    settings: EditorSettings,
 ) {
     // 非 composable 的 onClick 里取词需要显式语言（与 ResultTable 同做法）
     val lang = LocalLang.current
@@ -198,6 +200,7 @@ internal fun ResultTabs(
             onToggleRowDelete = onToggleRowDelete,
             onCopyText = onCopyText,
             modifier = Modifier.weight(1f).fillMaxWidth(),
+            settings = settings,
         )
     }
 }
@@ -221,6 +224,7 @@ internal fun ResultPane(
     onToggleRowDelete: (Int) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    settings: EditorSettings,
 ) {
     Box(
         modifier = modifier
@@ -255,6 +259,7 @@ internal fun ResultPane(
                     onToggleRowDelete = onToggleRowDelete,
                     onCopyText = onCopyText,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    settings = settings,
                 )
             }
             else -> CenteredHint(

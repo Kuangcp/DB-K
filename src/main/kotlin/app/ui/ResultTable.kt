@@ -56,6 +56,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import app.core.export.ExportText
+import app.settings.EditorSettings
 import app.settings.ShortcutCommand
 import app.dialog.CellViewerDialog
 import app.dialog.EditCellDialog
@@ -167,6 +168,7 @@ internal fun ResultTable(
     onToggleRowDelete: (Int) -> Unit,
     onCopyText: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    settings: EditorSettings,
 ) {
     // 当前快捷键表：结果网格的复制单元格走注册表（基础键，固定），方向键等仍为模态导航。
     val keymap = LocalKeymap.current
@@ -783,6 +785,7 @@ internal fun ResultTable(
             content = v.content,
             onDismiss = { viewer = null },
             onCopy = onCopyText,
+            settings = settings,
         )
     }
 }

@@ -577,6 +577,7 @@ fun WindowScope.EditorArea(
                                 onExport = onExport,
                                 onCopyText = onCopyText,
                                 modifier = Modifier.weight(resultFrac).fillMaxWidth(),
+                                settings = editorSettings,
                             )
                         } else {
                             ResultTabs(
@@ -609,6 +610,7 @@ fun WindowScope.EditorArea(
                                 onCancelRun = onCancelRun,
                                 onCopyText = onCopyText,
                                 modifier = Modifier.weight(resultFrac).fillMaxWidth(),
+                                settings = editorSettings,
                             )
                         }
                     }
@@ -639,6 +641,7 @@ fun WindowScope.EditorArea(
                     historyView = null
                 }
             } else null,
+            settings = editorSettings,
         )
     }
 }
