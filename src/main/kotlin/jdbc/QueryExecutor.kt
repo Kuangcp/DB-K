@@ -149,10 +149,13 @@ object QueryExecutor {
      * 读一个单元格（带内存阀）：二进制走流式只数字节；字符类走字符流限读上限；
      * 其余走时区渲染器。
      */
-    private fun readCell(rs: ResultSet, i: Int, col: QueryColumn, ctx: TemporalContext? = null): String? = when {
-        isBinaryColumn(col.sqlType) -> readBinaryCell(rs, i)
-        isCharColumn(col.sqlType) -> readTextCell(rs, i)
-        else -> clampCell(TemporalCells.render(runCatching { rs.getObject(i) }.getOrNull(), col, ctx))
+    private fun readCell(rs: ResultSet, i: Int, col: QueryColumn, ctx: TemporalContext? = null): String? {
+        val raw: String? = when {
+            isBinaryColumn(col.sqlType) -> readBinaryCell(rs, i)
+            isCharColumn(col.sqlType) -> readTextCell(rs, i)
+            else -> clampCell(runCatching { rs.getObject(i)?.toString() }.getOrNull())
+        }
+        return clampCell(TemporalCells.render(raw, col, ctx))
     }
 
     /** 字符类：用 `getCharacterStream` 限读，避免超大 CLOB/TEXT 一次性进内存；驱动不支持时回退 `getString`。 */
