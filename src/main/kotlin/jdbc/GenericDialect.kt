@@ -6,6 +6,7 @@ import engine.model.DbObjectMeta
 import engine.model.ObjectKind
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
+import org.tinylog.Logger
 import java.sql.Connection
 import java.sql.DriverManager
 import java.util.Properties
@@ -18,6 +19,33 @@ open class GenericDialect(
     override val dbType: DbType,
     private val driverClass: String,
 ) : DbDialect {
+
+    companion object {
+        /**
+         * 启动时预加载所有内置 JDBC 驱动类（避免首次连接时 `Class.forName` 的类加载开销）。
+         * 外部驱动（SQL Server / Oracle）由 [ExternalDrivers.ensureLoaded] 单独处理。
+         * 幂等，可重复调用。
+         */
+        @JvmStatic
+        fun preloadDrivers() {
+            val drivers = listOf(
+                "org.postgresql.Driver",
+                "com.mysql.cj.jdbc.Driver",
+                "org.mariadb.jdbc.Driver",
+                "org.sqlite.JDBC",
+                "org.h2.Driver",
+                "com.clickhouse.jdbc.ClickHouseDriver",
+            )
+            drivers.forEach { name ->
+                runCatching {
+                    Class.forName(name)
+                    Logger.info("preloaded JDBC driver: {}", name)
+                }.onFailure {
+                    Logger.warn(it, "failed to preload JDBC driver: {}", name)
+                }
+            }
+        }
+    }
 
     /**
      * 网络库默认启用「用前校验」：空闲 60s 后探活一次，死连接自动重建。

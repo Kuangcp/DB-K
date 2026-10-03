@@ -141,6 +141,7 @@ import i18n.I18n
 import i18n.Lang
 import i18n.Str
 import jdbc.ExternalDrivers
+import jdbc.GenericDialect
 import jdbc.QueryExecutor
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +179,8 @@ fun main() = application {
     // 外部 JDBC 驱动（SQL Server / Oracle）：<dataDir>/drivers 下的 jar 以独立 classloader 加载。
     // 需重启才生效（新增 jar 后重启应用）。
     ExternalDrivers.ensureLoaded()
+    // 预加载内置 JDBC 驱动类：避免首次连接时 Class.forName 的 JVM 类加载开销（可能数秒）。
+    GenericDialect.preloadDrivers()
     AppRoot(onExit = ::exitApplication)
 }
 
