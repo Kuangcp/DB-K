@@ -1434,15 +1434,40 @@ private fun WindowScope.AppBody(
                             writeClipboardText(text)
                             toastState.show(label)
                         },
-                        onToggleConnect = { 
-                            val p = activeProfile ?: return@EditorArea
-                            val st = connectionsState.statusOf(p.id)
+                        onToggleConnect = {
+                            // Resolve target profile: activeProfile (from active console) takes
+                            // priority; falls back to first unconnected/errored profile, then
+                            // first profile in list. This covers the case where the user clicks
+                            // the status bar before any console is activated.
+                            val target: ConnectionProfile? =
+                                activeProfile
+                                    ?: profiles.firstOrNull { p ->
+                                        val s = connectionsState.statusOf(p.id)
+                                        s == ConnUiStatus.DISCONNECTED || s == ConnUiStatus.ERROR
+                                    }
+                                    ?: profiles.firstOrNull()
+                            if (target == null) {
+                                Logger.info("toggle connect: no profile available (profiles={})", profiles.size)
+                                return@EditorArea
+                            }
+                            val pid = target.id
+                            val st = connectionsState.statusOf(pid)
                             when (st) {
-                                ConnUiStatus.CONNECTED -> disconnectProfile(p)
-                                ConnUiStatus.DISCONNECTED, ConnUiStatus.ERROR -> scope.launch {
-                                    connectionsState.ensureConnectionReady(p)
+                                ConnUiStatus.CONNECTED -> {
+                                    Logger.info("toggle connect: disconnecting {}", target.name)
+                                    disconnectProfile(target)
                                 }
-                                else -> Unit // CONNECTING — nothing to do
+                                ConnUiStatus.CONNECTING -> {
+                                    Logger.info("toggle connect: already connecting {}", target.name)
+                                    // Status changing → re-compose will update button automatically;
+                                    // do nothing here to avoid conflicting with the ongoing request.
+                                }
+                                ConnUiStatus.DISCONNECTED, ConnUiStatus.ERROR -> {
+                                    Logger.info("toggle connect: connecting {} (prev={})", target.name, st)
+                                    scope.launch {
+                                        connectionsState.ensureConnectionReady(target)
+                                    }
+                                }
                             }
                         },
                         resultsVisible = resultsVisible,
