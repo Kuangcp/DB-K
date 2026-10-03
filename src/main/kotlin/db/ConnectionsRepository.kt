@@ -296,7 +296,7 @@ class ConnectionsRepository(
         return conn.prepareStatement(
             """
             SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password,
-                   extra_params, color, sort_order, key_separator
+                   extra_params, color, sort_order, key_separator, display_tz
             FROM connections ORDER BY sort_order, created_at
             """.trimIndent(),
         ).use { ps ->
