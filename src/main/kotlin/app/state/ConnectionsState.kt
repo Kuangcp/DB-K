@@ -22,6 +22,7 @@ import jdbc.LiveConnection
 import jdbc.isConnectionLost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.tinylog.Logger
 import tree.ConnUiStatus
 import tree.ConnectionRuntimeView
@@ -206,11 +207,13 @@ class ConnectionsState(
         }
     }
 
-    /** 元数据获取唯一入口：缓存命中(含过期) → 入内存；未命中 → 查库整体预取回写。
+    /** 元数据获取唯一入口：缓存命中(含过期) → 入内存；未命中 → schema 先行 + 渐进逐 schema 加载对象。
      *  「命名空间即过滤器」后端（Redis）**不走磁盘缓存**（key 列表瞬时性强、缓存易误导），每次都从服务端取当前 DB 首页。 */
     private suspend fun loadMetadata(rt: ConnRuntime) {
         rt.schemasLoading = true
         rt.statusMessage = null
+
+        // namespaceAsFilter (Redis) 路径——不变
         if (rt.live.capabilities.namespaceAsFilter) {
             val fetched = fetchFreshMetadata(rt)
             rt.schemasLoading = false
@@ -221,6 +224,8 @@ class ConnectionsState(
             }
             return
         }
+
+        // 1) 缓存命中（含过期）：全量立即可用
         val cached = withContext(Dispatchers.IO) { metaCache.load(rt.profile) }
         if (cached != null) {
             applyMetadata(rt, cached.schemas, cached.objects)
@@ -231,12 +236,25 @@ class ConnectionsState(
             }
             return
         }
-        val fetched = fetchFreshMetadata(rt)
-        rt.schemasLoading = false
-        fetched.onFailure { t ->
-            Logger.error(t, "load metadata failed {}", rt.profile.name)
+
+        // 2) 缓存未命中：先取库列表，立即可见
+        val schemas = withContext(Dispatchers.IO) { loadAllSchemas(rt) }
+        if (schemas == null) {
             rt.status = ConnUiStatus.ERROR
-            rt.statusMessage = friendlyMessage(t)
+            rt.statusMessage = friendlySqlError(RuntimeException("Failed to load schemas"))
+            rt.schemasLoading = false
+            return
+        }
+        rt.schemas = schemas
+
+        // 3) 逐 schema 渐进加载对象
+        val warn = progressiveLoadObjects(rt, schemas)
+        rt.schemasLoading = false
+        if (warn != null) rt.statusMessage = warn
+
+        // 4) 写磁盘缓存
+        if (!rt.live.capabilities.namespaceAsFilter) {
+            withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, rt.objects.toMap()) }
         }
     }
 
@@ -263,39 +281,39 @@ class ConnectionsState(
         return result.isSuccess
     }
 
-    /** 查库全量元数据并回写缓存（整体预取：编辑器补全依赖全部 schema 对象）。 */
+    /** 查库全量元数据（schema-first + progressive per-schema objects）并回写缓存。
+     *  供 [refreshMetadata] 使用。 */
     private suspend fun fetchFreshMetadata(rt: ConnRuntime): Result<Unit> {
-        val outcome = withContext(Dispatchers.IO) {
-            runCatching { loadAllMetaFromDb(rt) }
+        val schemas = withContext(Dispatchers.IO) { loadAllSchemas(rt) }
+        if (schemas == null) {
+            return Result.failure(RuntimeException("Failed to load schemas"))
         }
-        outcome.onSuccess { (schemas, objects, warn) ->
-            applyMetadata(rt, schemas, objects)
-            if (warn != null) rt.statusMessage = warn
-            if (!rt.live.capabilities.namespaceAsFilter) {
-                withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, objects) }
-            }
+        rt.schemas = schemas
+        val warn = progressiveLoadObjects(rt, schemas)
+        if (warn != null) rt.statusMessage = warn
+        if (!rt.live.capabilities.namespaceAsFilter) {
+            withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, rt.objects.toMap()) }
         }
-        return outcome.map { }
+        return Result.success(Unit)
     }
 
     /**
-     * 缓存过期后的后台静默刷新：不闪占位符、不打断浏览——成功才整体替换 + 回写。
+     * 缓存过期后的后台静默刷新：不闪占位符、不打断浏览——同步收集完毕后整体替换 + 回写。
      * 频率受 TTL 约束（过期连接时最多一次）；失败仅记日志，沿用旧缓存。
      */
     private suspend fun backgroundRefresh(rt: ConnRuntime) {
         if (rt.backgroundRefreshing) return
         rt.backgroundRefreshing = true
         try {
-            val outcome = withContext(Dispatchers.IO) {
-                runCatching { loadAllMetaFromDb(rt) }
+            val schemas = withContext(Dispatchers.IO) { loadAllSchemas(rt) } ?: return
+            val (objects, warn) = withContext(Dispatchers.IO) {
+                collectAllObjects(rt, schemas)
             }
-            outcome.onSuccess { (schemas, objects, warn) ->
-                applyMetadata(rt, schemas, objects)
-                if (warn != null) rt.statusMessage = warn
-                withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, objects) }
-            }.onFailure {
-                Logger.error(it, "background meta refresh failed {}", rt.profile.name)
-            }
+            applyMetadata(rt, schemas, objects)
+            if (warn != null) rt.statusMessage = warn
+            withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, objects) }
+        } catch (t: Throwable) {
+            Logger.error(t, "background meta refresh failed {}", rt.profile.name)
         } finally {
             rt.backgroundRefreshing = false
         }
@@ -566,36 +584,80 @@ class ConnectionsState(
         rt.groupLoading.clear()
     }
 
+    /** Phase 1: 只取库列表（不取任何对象）。失败返回 null（调用方负责设 ERROR 状态）。 */
+    private fun loadAllSchemas(rt: ConnRuntime): List<SchemaMeta>? =
+        runCatching {
+            rt.live.loadNamespaces()
+        }.onFailure { t ->
+            Logger.error(t, "load schemas failed {}", rt.profile.name)
+        }.getOrNull()
+
     /**
-     * 阻塞读库全量元数据（调用方负责切 IO）：
-     * 库列表失败抛异常；单个 schema 的对象失败只记消息不打断（对齐旧的 ensureSchemaObjects 语义）。
-     * @return schemas、各库对象（schema.key → SchemaObjects）、警告消息（可能有对象未取到）。
+     * Phase 2: 逐个 schema 渐进加载对象（串行，共享同一 JDBC 连接）。
+     * 进入前必须先设置 [rt.schemas]（树可见 schema 节点）。
+     * 预标记所有 schema 的 objectsLoading = true 防止 ensureSchemaObjects 重复加载。
+     * @return 警告消息（有失败 schema 时），null 表示全部成功。
      */
-    private fun loadAllMetaFromDb(
+    private suspend fun progressiveLoadObjects(
         rt: ConnRuntime,
-    ): Triple<List<SchemaMeta>, Map<String, SchemaObjects>, String?> {
-        val live = rt.live
-        val schemas = live.loadNamespaces()
+        schemas: List<SchemaMeta>,
+    ): String? {
+        val lazy = rt.live.capabilities.lazyObjectGroups
+        val errors = mutableListOf<String>()
+        val reasons = mutableListOf<String>()
+
+        // 预标记所有 schema 防止 ensureSchemaObjects 重复加载
+        schemas.forEach { rt.objectsLoading[it.key] = true }
+        yield()
+
+        for (schema in schemas) {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (lazy) {
+                        val counts = rt.live.loadObjectCounts(schema)
+                        val core = rt.live.loadCoreObjects(schema)
+                        SchemaObjects(objects = core.objects, counts = counts)
+                    } else {
+                        rt.live.loadObjects(schema)
+                    }
+                }
+            }
+            result.onSuccess { rt.objects[schema.key] = it }
+                .onFailure { t ->
+                    Logger.error(t, "load objects failed {} {}", rt.profile.name, schema.displayName)
+                    errors += schema.displayName
+                    reasons += friendlyMessage(t)
+                }
+            rt.objectsLoading[schema.key] = false
+            yield()
+        }
+
+        if (errors.isEmpty()) return null
+        return I18n.t(Str.ObjectsLoadFailed,
+            errors.joinToString(I18n.t(Str.CommonListSeparator)).take(40),
+            reasons.first().take(160))
+    }
+
+    /**
+     * 同步获取全部 schema 的对象（调用方负责切 IO）。返回 (objects, 警告)。
+     * 供 [backgroundRefresh] 静默更新用——收集完毕后整体替换，不闪 loading 态。
+     */
+    private fun collectAllObjects(
+        rt: ConnRuntime,
+        schemas: List<SchemaMeta>,
+    ): Pair<Map<String, SchemaObjects>, String?> {
         val objects = linkedMapOf<String, SchemaObjects>()
+        val lazy = rt.live.capabilities.lazyObjectGroups
         val failed = mutableListOf<String>()
         val reasons = mutableListOf<String>()
-        val lazy = live.capabilities.lazyObjectGroups
-        val flat = live.capabilities.namespaceAsFilter
-        // 「命名空间即过滤器」：只加载当前 DB（先取 B/S 计数 + 首页键）
-        val active = if (flat) pickActiveNamespace(rt.profile, schemas) else null
-        if (active != null) activeNamespaces[rt.profile.id] = active
         schemas.forEach { s ->
-            if (flat && s.key != active?.key) return@forEach
             runCatching {
-                when {
-                    flat -> loadFlatNamespace(rt.profile.id, live, s)
-                    // 懒加载方言：只取组计数 + 关系类核心组（补全/首屏用）；重目录组展开时再拉。
-                    lazy -> {
-                        val counts = live.loadObjectCounts(s)
-                        val core = live.loadCoreObjects(s)
-                        SchemaObjects(objects = core.objects, counts = counts)
-                    }
-                    else -> live.loadObjects(s)
+                if (lazy) {
+                    val counts = rt.live.loadObjectCounts(s)
+                    val core = rt.live.loadCoreObjects(s)
+                    SchemaObjects(objects = core.objects, counts = counts)
+                } else {
+                    rt.live.loadObjects(s)
                 }
             }
                 .onSuccess { objects[s.key] = it }
@@ -605,13 +667,11 @@ class ConnectionsState(
                     reasons += friendlyMessage(t)
                 }
         }
-        val warn = if (failed.isEmpty()) {
-            null
-        } else {
-            // 带上根因（如 ES 403 缺权限），否则树/状态栏只有一句“加载失败”无从排查
-            I18n.t(Str.ObjectsLoadFailed, failed.joinToString(I18n.t(Str.CommonListSeparator)).take(40), reasons.first().take(160))
-        }
-        return Triple(schemas, objects, warn)
+        val warn = if (failed.isEmpty()) null
+        else I18n.t(Str.ObjectsLoadFailed,
+            failed.joinToString(I18n.t(Str.CommonListSeparator)).take(40),
+            reasons.first().take(160))
+        return objects to warn
     }
 
     /**
