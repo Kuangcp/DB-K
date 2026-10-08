@@ -1072,8 +1072,11 @@ private fun WindowScope.AppBody(
                             onToggleExpand = ::toggleRow,
                             onDisconnectConnection = ::disconnectProfile,
                             onRefreshMetadata = { p ->
+                                Logger.info("[diag] onRefreshMetadata triggered profile={} thread={}", p.name, Thread.currentThread().name)
                                 scope.launch {
+                                    Logger.info("[diag] onRefreshMetadata coroutine start thread={}", Thread.currentThread().name)
                                     val ok = connectionsState.refreshMetadata(p)
+                                    Logger.info("[diag] onRefreshMetadata coroutine done ok={} thread={}", ok, Thread.currentThread().name)
                                     toastState.show(
                                         if (ok) I18n.t(Str.MainCacheRefreshed, p.name)
                                         else I18n.t(Str.MainCacheRefreshFailed, p.name, connectionsState.statusMessageOf(p.id)?.take(80) ?: I18n.t(Str.ConnectionUnknownError)),
