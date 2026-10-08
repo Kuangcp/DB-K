@@ -21,8 +21,8 @@ import engine.model.SQL_OBJECT_KINDS
 import jdbc.LiveConnection
 import jdbc.isConnectionLost
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.yield
 import org.tinylog.Logger
 import tree.ConnUiStatus
 import tree.ConnectionRuntimeView
@@ -596,6 +596,7 @@ class ConnectionsState(
      * Phase 2: 逐个 schema 渐进加载对象（串行，共享同一 JDBC 连接）。
      * 进入前必须先设置 [rt.schemas]（树可见 schema 节点）。
      * 预标记所有 schema 的 objectsLoading = true 防止 ensureSchemaObjects 重复加载。
+     * 每加载完一个 schema 用 [delay] 让出 Main 调度器，给 Compose 渲染管线推进 snapshot 与重组的机会。
      * @return 警告消息（有失败 schema 时），null 表示全部成功。
      */
     private suspend fun progressiveLoadObjects(
@@ -608,7 +609,6 @@ class ConnectionsState(
 
         // 预标记所有 schema 防止 ensureSchemaObjects 重复加载
         schemas.forEach { rt.objectsLoading[it.key] = true }
-        yield()
 
         for (schema in schemas) {
             val result = withContext(Dispatchers.IO) {
@@ -629,7 +629,8 @@ class ConnectionsState(
                     reasons += friendlyMessage(t)
                 }
             rt.objectsLoading[schema.key] = false
-            yield()
+            // 让出 Main 调度器，使 Compose 管线有机会推进 snapshot 并重组
+            delay(1)
         }
 
         if (errors.isEmpty()) return null
