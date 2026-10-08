@@ -3,6 +3,8 @@ package jdbc
 import db.ConnectionProfile
 import db.DbType
 import engine.model.ColumnMeta
+import engine.model.DbObjectMeta
+import engine.model.ObjectKind
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
 import org.tinylog.Logger
@@ -21,6 +23,9 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
 
     /** CH 走 HTTP 响应流，fetchSize 控制批大小。 */
     override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH
+
+    /** 支持对象组懒加载：组展开才拉正文，首次连接只取计数 + 表/视图名。 */
+    override val lazyObjectGroups: Boolean get() = true
 
     /** 引擎名（大写）判定为“视图”。 */
     private val viewEngines = setOf("VIEW", "MATERIALIZEDVIEW", "LIVEVIEW", "WINDOWVIEW")
@@ -65,6 +70,49 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
             }
         }
         return SchemaObjects.simple(tables.sorted(), views.sorted())
+    }
+
+    override fun loadObjectCounts(conn: Connection, schema: SchemaMeta): Map<ObjectKind, Int> {
+        val catalog = schema.catalog ?: return emptyMap()
+        val counts = mutableMapOf<ObjectKind, Int>()
+        conn.prepareStatement(
+            "SELECT engine, count() AS cnt FROM system.tables " +
+                "WHERE database = ? AND is_temporary = 0 GROUP BY engine"
+        ).use { ps ->
+            ps.setString(1, catalog)
+            ps.executeQuery().use { rs ->
+                while (rs.next()) {
+                    val engine = rs.getString(1)?.uppercase().orEmpty()
+                    val cnt = rs.getInt(2)
+                    val kind = if (engine in viewEngines) ObjectKind.VIEW else ObjectKind.TABLE
+                    counts[kind] = (counts[kind] ?: 0) + cnt
+                }
+            }
+        }
+        return counts
+    }
+
+    /** 核心组（表/视图名），等价于 [loadObjects] 但显式覆写供 lazyObjectGroups 管线使用。 */
+    override fun loadCoreObjects(conn: Connection, schema: SchemaMeta): SchemaObjects =
+        loadObjects(conn, schema)
+
+    override fun loadObjectsForKind(conn: Connection, schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> {
+        val catalog = schema.catalog ?: return emptyList()
+        val wantViews = kind == ObjectKind.VIEW
+        conn.prepareStatement(
+            "SELECT name FROM system.tables " +
+                "WHERE database = ? AND is_temporary = 0 ORDER BY name"
+        ).use { ps ->
+            ps.setString(1, catalog)
+            ps.executeQuery().use { rs ->
+                val out = mutableListOf<DbObjectMeta>()
+                while (rs.next()) {
+                    val name = rs.getString(1) ?: continue
+                    out += DbObjectMeta(name, kind)
+                }
+                return out
+            }
+        }
     }
 
     /** 精确 DDL：SHOW CREATE TABLE（CH 返回单列 statement）。 */
