@@ -1,0 +1,152 @@
+name: Release
+
+# 推送 v* 标签即触发：构建 Linux(Deb + AppImage) / Windows(MSI)，产物挂到对应 tag 的 GitHub Release。
+#   git tag v1.0.4 && git push origin v1.0.4     # 或 git push hub v1.0.4
+# 手动触发（workflow_dispatch）只构建不上传 Release，方便测试。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# softprops/action-gh-release 建 Release 需要写权限
+permissions:
+  contents: write
+
+# 同一个 tag 重复推送时取消/串行，避免两个 job 并发建 Release
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 工具链与 AGENTS.md 一致：JDK 25 + Gradle 9.4.1（项目不引入 wrapper）
+  JAVA_VERSION: '25'
+  GRADLE_VERSION: '9.4.1'
+  # build.gradle.kts 读它覆盖 version（去掉 v 前缀），使产物名/设置窗口版本号与 tag 一致
+  DBK_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+  # AppImage 免 FUSE 运行（appimagetool 自身也是 AppImage，容器/无 FUSE 环境必需）
+  APPIMAGE_EXTRACT_AND_RUN: '1'
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            # Deb 需要 dpkg/fakeroot；AppImage 需要 appimagetool（下面单独下载）
+            tasks: packageDeb makeAppImage
+          - os: windows-latest
+            # jpackage 不支持交叉打包，MSI/EXE 只能在 Windows 上产出；需 WiX Toolset 3.x
+            # 想额外出 .exe 便携版就在后面追加 packageExe
+            tasks: packageMsi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Linux 构建依赖 (dpkg / fakeroot)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fakeroot
+
+      - name: 下载 appimagetool (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p tools
+          curl -fsSL --retry 3 -o tools/appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x tools/appimagetool-x86_64.AppImage
+
+      - name: 确认 WiX Toolset 3.x (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # jpackage 生成 MSI 需要 WiX 3.x 的 candle.exe / light.exe 在 PATH 上
+          $bins = @(
+            "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin",
+            "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin",
+            "$env:ProgramFiles\WiX Toolset v3.14\bin"
+          )
+          $bin = $bins | Where-Object { Test-Path (Join-Path $_ 'candle.exe') } | Select-Object -First 1
+          if (-not $bin) {
+            Write-Host '未找到 WiX 3.x，尝试安装…'
+            choco install wixtoolset --version=3.14.1 -y --no-progress
+            $bin = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Directory -ErrorAction SilentlyContinue |
+                   ForEach-Object { Join-Path $_.FullName 'bin' } |
+                   Where-Object { Test-Path (Join-Path $_ 'candle.exe') } |
+                   Select-Object -First 1
+          }
+          if (-not $bin) { throw 'WiX Toolset 3.x (candle.exe) 未找到，MSI 无法构建' }
+          Write-Host "WiX bin: $bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      # 可选发布门禁：想「测试不过不发布」就打开下面两行
+      # - name: 单元测试
+      #   run: gradle test
+
+      - name: 打包 (${{ matrix.tasks }})
+        run: gradle ${{ matrix.tasks }}
+
+      - name: 收集产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbk-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            build/compose/binaries/main/**/*.deb
+            build/compose/binaries/main/**/*.AppImage
+            build/compose/binaries/main/**/*.msi
+            build/compose/binaries/main/**/*.exe
+
+  release:
+    name: publish release
+    needs: build
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 汇总两个平台产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 准备 Release 正文
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          if [ -f "doc/release/RELEASE_${ver}.md" ]; then
+            cp "doc/release/RELEASE_${ver}.md" release-body.md
+          else
+            # 没写发布公告就让 GitHub 按 commit 自动生成
+            : > release-body.md
+          fi
+          ls -l dist
+
+      - name: 创建 / 更新 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: db-k ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: release-body.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/**/*.deb
+            dist/**/*.AppImage
+            dist/**/*.msi
+            dist/**/*.exe

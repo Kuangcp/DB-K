@@ -1,7 +1,8 @@
 # 打包与分发（Deb / AppImage / MSI）
 
 > 工具链见 `AGENTS.md`：JDK `25.0.3-jbr`、Gradle `9.4.1`（项目**不引入 wrapper**，各平台用系统 gradle）。
-> `build.gradle.kts` 里 `version = "1.0.1"`，是 Deb / AppImage / MSI / 设置窗口版本号（`app/build/Version.kt`）的统一来源。
+> `build.gradle.kts` 里 `version` 是 Deb / AppImage / MSI / 设置窗口版本号（`app/build/Version.kt`）的统一来源：
+> 本地默认写死（如 `1.0.4`），CI 发布时由环境变量 `DBK_VERSION`（= tag 去掉 `v` 前缀）覆盖，保证与 tag 一致。
 
 ## 目标格式与构建机
 
@@ -13,6 +14,25 @@
 | **EXE** | **仅 Windows** | `gradle packageExe` | WiX Toolset 3.x |
 
 **交叉打包不支持**：jpackage 不能在 Linux 上产出 EXE，反之亦然。所以 EXE 必须在 Windows 上构建。
+
+---
+
+## 自动发布（GitHub Actions）
+
+`.github/workflows/release.yml`：推送 `v*` 标签即自动在 `ubuntu-latest`（Deb + AppImage）与
+`windows-latest`（MSI）上打包，产物挂到该 tag 的 GitHub Release。
+
+```bash
+git tag v1.0.4
+git push hub v1.0.4        # hub = github.com:Kuangcp/DB-K.git
+```
+
+- 版本号由 `DBK_VERSION` 注入（见文首），**tag 必须是 `vX.Y.Z`**：jpackage 的 `--app-version`
+  不接受 `v1.0.4-rc1` 这类带后缀的形式。
+- Release 正文优先取 `doc/release/RELEASE_<ver>.md`（存在时），否则由 GitHub 按 commit 自动生成。
+- Windows 侧 WiX Toolset 3.x 由 workflow 探测/安装并挂进 `PATH`（jpackage 调 `candle.exe`）。
+- 手动 `workflow_dispatch` 只构建、不发版，便于先验证流水线。
+- 测试 / smoke 自检**未**纳入流水线门禁；需要时取消 `release.yml` 里 `单元测试` 步骤的注释。
 
 ---
 

@@ -11,7 +11,9 @@ plugins {
 }
 
 group = "dev.dbk"
-version = "1.0.3"
+// 版本号唯一来源（Deb/AppImage/MSI + 设置窗口 app/build/Version.kt）。
+// 本地默认写死；发布时 CI 用环境变量 DBK_VERSION（= 去掉 v 前缀的 tag）覆盖，保证与 tag 一致。
+version = System.getenv("DBK_VERSION")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "1.0.4"
 val appVersion = project.version.toString()
 
 // ---------- sqlite-jdbc 按平台裁剪 ----------
