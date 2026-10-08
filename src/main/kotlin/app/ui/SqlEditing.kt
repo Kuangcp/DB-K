@@ -83,7 +83,7 @@ data class CompletionItem(
 )
 
 /**
- * 补全候选排序：星号展开 → 上下文列 → 别名 → 函数 → 表/视图 → 关键字；大小写不敏感前缀匹配；
+ * 补全候选排序：星号展开 → 上下文列 → 别名 → 函数 → 表/视图 → 关键字；大小写不敏感子串匹配；
  * 长度不短于前缀的不出现（已输完整即关闭弹层）；文本去重，靠前者优先。
  * 空前缀仅由显式唤起（Ctrl+Space）产生，此时列出上下文对象；完全不传上下文则返回空。
  */
@@ -105,7 +105,7 @@ fun completionItems(
     }
     val out = ArrayList<CompletionItem>()
     fun add(items: List<CompletionItem>) {
-        for (item in items) if (matchesPrefix(item.text, prefix)) out.add(item)
+        for (item in items) if (matchesSubstring(item.text, prefix)) out.add(item)
     }
     add(expands)
     // 模板：按缩写前缀匹配（含相等），缩写字面敲全后仍保留候选
@@ -127,7 +127,7 @@ fun completionItems(
     add(objects)
     if (includeKeywords) {
         for (kw in SQL_KEYWORDS) {
-            if (matchesPrefix(kw, prefix)) out.add(CompletionItem(kw, kind = CompletionKind.KEYWORD))
+            if (matchesSubstring(kw, prefix)) out.add(CompletionItem(kw, kind = CompletionKind.KEYWORD))
         }
     }
     return out.distinctBy { it.text }
@@ -181,9 +181,9 @@ fun selectStarBeforeCaret(text: String, caret: Int): Int? {
     return if (prev == "select" || prev == "distinct" || prev == "all") starPos else null
 }
 
-private fun matchesPrefix(candidate: String, prefix: String): Boolean =
+private fun matchesSubstring(candidate: String, prefix: String): Boolean =
     if (prefix.isEmpty()) candidate.isNotEmpty()
-    else candidate.length > prefix.length && candidate.lowercase().startsWith(prefix)
+    else candidate.length > prefix.length && candidate.lowercase().contains(prefix)
 
 // ---------- 列补全上下文解析（纯逻辑，无 compose 依赖） ----------
 
