@@ -191,7 +191,7 @@ fun buildTreeRows(
         )
     }
     val elapsed = System.currentTimeMillis() - t0
-    if (elapsed > 5) {
+    if (elapsed > 0) {
         // 只有在耗时超过阈值时才打日志，避免高频无害的重组刷屏
         val conns = connections.joinToString(",") { "${it.name}(" + (runtime.statusOf(it.id).name) + ")" }
         val firstConnInfo = connections.firstOrNull()?.let { conn ->

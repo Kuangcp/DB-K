@@ -234,7 +234,11 @@ class ConnectionsState(
         val cached = withContext(Dispatchers.IO) { metaCache.load(rt.profile) }
         if (cached != null) {
             Logger.info("[diag] loadMetadata cache HIT profile={}", rt.profile.name)
+            Logger.info("[diag] loadMetadata BEFORE applyMetadata thread={}", Thread.currentThread().name)
+            val applyT0 = System.currentTimeMillis()
             applyMetadata(rt, cached.schemas, cached.objects)
+            val applyElapsed = System.currentTimeMillis() - applyT0
+            Logger.info("[diag] loadMetadata AFTER applyMetadata elapsed={}ms thread={}", applyElapsed, Thread.currentThread().name)
             rt.schemasLoading = false
             if (cached.stale) {
                 Logger.info("meta cache stale for {}; silent background refresh", rt.profile.name)
