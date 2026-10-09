@@ -604,9 +604,11 @@ private fun WindowScope.AppBody(
     // 元数据（库列表 + 对象）已由 ConnectionsState 在连接建立时整体预取并读缓存（见 ensureConnectionReady），
     // 数据来自数据源目录元信息；树是否展开不影响候选完整性。
     val completionTables: List<CompletionTable> = activeProfile?.let { p ->
+        Logger.info("[diag] completionTables computation start profile={} thread={}", p.name, Thread.currentThread().name)
+        val t0 = System.currentTimeMillis()
         // ES：对象是索引/别名（不是表/视图）；补全与 DSL 的 index 候选同源
         val es = p.dbType.protocol == Protocol.ELASTICSEARCH
-        connectionsState.schemasOf(p.id).orEmpty()
+        val result = connectionsState.schemasOf(p.id).orEmpty()
             .flatMap { s ->
                 connectionsState.objectsOf(p.id, s.key)
                     ?.let { o ->
@@ -615,6 +617,9 @@ private fun WindowScope.AppBody(
                     }.orEmpty()
                     .map { name -> CompletionTable(name, s) }
             }
+        val elapsed = System.currentTimeMillis() - t0
+        Logger.info("[diag] completionTables computation done elapsed={}ms count={} thread={}", elapsed, result.size, Thread.currentThread().name)
+        result
     }.orEmpty()
     val completionIdentifiers: List<String> = completionTables.map { it.name }.distinct().sorted()
     // Live Templates：内置 + 用户 live-templates.json 叠加；快照状态，设置窗保存后即时生效。
