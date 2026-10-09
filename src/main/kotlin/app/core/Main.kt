@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -601,42 +602,45 @@ private fun WindowScope.AppBody(
     }
 
     // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名 + 所属 schema。
-    // 元数据（库列表 + 对象）已由 ConnectionsState 在连接建立时整体预取并读缓存（见 ensureConnectionReady），
-    // 数据来自数据源目录元信息；树是否展开不影响候选完整性。
-    val completionTables: List<CompletionTable> = activeProfile?.let { p ->
-        Logger.info("[diag] completionTables computation start profile={} thread={}", p.name, Thread.currentThread().name)
-        val t0 = System.currentTimeMillis()
-        // ES：对象是索引/别名（不是表/视图）；补全与 DSL 的 index 候选同源
-        val es = p.dbType.protocol == Protocol.ELASTICSEARCH
-        val result = connectionsState.schemasOf(p.id).orEmpty()
-            .flatMap { s ->
-                connectionsState.objectsOf(p.id, s.key)
-                    ?.let { o ->
-                        if (es) (o.forKind(ObjectKind.INDEX) + o.forKind(ObjectKind.ALIAS)).map { it.name }
-                        else o.tables + o.views + o.materializedViews
-                    }.orEmpty()
-                    .map { name -> CompletionTable(name, s) }
-            }
-        val elapsed = System.currentTimeMillis() - t0
-        Logger.info("[diag] completionTables computation done elapsed={}ms count={} thread={}", elapsed, result.size, Thread.currentThread().name)
-        result
-    }.orEmpty()
-    val completionIdentifiers: List<String> = completionTables.map { it.name }.distinct().sorted()
+    // 用 derivedStateOf 包裹确保只在底层 state 变化时才重算，避免每次重组重建 万级 列表触发无限重组。
+    val completionTables: List<CompletionTable> by remember {
+        derivedStateOf {
+            activeProfile?.let { p ->
+                val es = p.dbType.protocol == Protocol.ELASTICSEARCH
+                connectionsState.schemasOf(p.id).orEmpty()
+                    .flatMap { s ->
+                        connectionsState.objectsOf(p.id, s.key)
+                            ?.let { o ->
+                                if (es) (o.forKind(ObjectKind.INDEX) + o.forKind(ObjectKind.ALIAS)).map { it.name }
+                                else o.tables + o.views + o.materializedViews
+                            }.orEmpty()
+                            .map { name -> CompletionTable(name, s) }
+                    }
+            }.orEmpty()
+        }
+    }
+    val completionIdentifiers: List<String> by remember {
+        derivedStateOf { completionTables.map { it.name }.distinct().sorted() }
+    }
     // Live Templates：内置 + 用户 live-templates.json 叠加；快照状态，设置窗保存后即时生效。
     var liveTemplates by remember {
         mutableStateOf(runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() })
     }
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
-    val completionFunctions: List<String> = activeProfile?.let { p ->
-        connectionsState.schemasOf(p.id).orEmpty()
-            .flatMap { s ->
-                connectionsState.objectsOf(p.id, s.key)?.let { o ->
-                    (o.forKind(ObjectKind.ROUTINE) + o.forKind(ObjectKind.AGGREGATE)).map { it.name }
-                }.orEmpty()
-            }
-            .distinct()
-            .sorted()
-    }.orEmpty()
+    val completionFunctions: List<String> by remember {
+        derivedStateOf {
+            activeProfile?.let { p ->
+                connectionsState.schemasOf(p.id).orEmpty()
+                    .flatMap { s ->
+                        connectionsState.objectsOf(p.id, s.key)?.let { o ->
+                            (o.forKind(ObjectKind.ROUTINE) + o.forKind(ObjectKind.AGGREGATE)).map { it.name }
+                        }.orEmpty()
+                    }
+                    .distinct()
+                    .sorted()
+            }.orEmpty()
+        }
+    }
 
     fun runActiveConsole(sql: String?, anchor: Int?) {
         val c = consoleState.activeConsole() ?: return
@@ -1077,11 +1081,8 @@ private fun WindowScope.AppBody(
                             onToggleExpand = ::toggleRow,
                             onDisconnectConnection = ::disconnectProfile,
                             onRefreshMetadata = { p ->
-                                Logger.info("[diag] onRefreshMetadata triggered profile={} thread={}", p.name, Thread.currentThread().name)
                                 scope.launch {
-                                    Logger.info("[diag] onRefreshMetadata coroutine start thread={}", Thread.currentThread().name)
                                     val ok = connectionsState.refreshMetadata(p)
-                                    Logger.info("[diag] onRefreshMetadata coroutine done ok={} thread={}", ok, Thread.currentThread().name)
                                     toastState.show(
                                         if (ok) I18n.t(Str.MainCacheRefreshed, p.name)
                                         else I18n.t(Str.MainCacheRefreshFailed, p.name, connectionsState.statusMessageOf(p.id)?.take(80) ?: I18n.t(Str.ConnectionUnknownError)),

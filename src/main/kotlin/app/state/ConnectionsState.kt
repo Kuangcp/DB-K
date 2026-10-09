@@ -188,7 +188,6 @@ class ConnectionsState(
      */
     suspend fun ensureConnectionReady(profile: ConnectionProfile) {
         val rt = runtime(profile)
-        Logger.info("[diag] ensureConnectionReady profile={} status={} thread={}", profile.name, rt.status, Thread.currentThread().name)
         if (rt.status == ConnUiStatus.CONNECTING) return
         if (rt.status != ConnUiStatus.CONNECTED) {
             rt.status = ConnUiStatus.CONNECTING
@@ -204,22 +203,18 @@ class ConnectionsState(
             rt.status = ConnUiStatus.CONNECTED
         }
         if (rt.schemas == null && !rt.schemasLoading) {
-            Logger.info("[diag] ensureConnectionReady -> loadMetadata thread={}", Thread.currentThread().name)
             loadMetadata(rt)
-            Logger.info("[diag] ensureConnectionReady -> loadMetadata done thread={}", Thread.currentThread().name)
         }
     }
 
     /** 元数据获取唯一入口：缓存命中(含过期) → 入内存；未命中 → schema 先行 + 渐进逐 schema 加载对象。
      *  「命名空间即过滤器」后端（Redis）**不走磁盘缓存**（key 列表瞬时性强、缓存易误导），每次都从服务端取当前 DB 首页。 */
     private suspend fun loadMetadata(rt: ConnRuntime) {
-        Logger.info("[diag] loadMetadata start profile={} thread={}", rt.profile.name, Thread.currentThread().name)
         rt.schemasLoading = true
         rt.statusMessage = null
 
         // namespaceAsFilter (Redis) 路径——不变
         if (rt.live.capabilities.namespaceAsFilter) {
-            Logger.info("[diag] loadMetadata namespaceAsFilter path {}", "")
             val fetched = fetchFreshMetadata(rt)
             rt.schemasLoading = false
             fetched.onFailure { t ->
@@ -233,12 +228,7 @@ class ConnectionsState(
         // 1) 缓存命中（含过期）：全量立即可用
         val cached = withContext(Dispatchers.IO) { metaCache.load(rt.profile) }
         if (cached != null) {
-            Logger.info("[diag] loadMetadata cache HIT profile={}", rt.profile.name)
-            Logger.info("[diag] loadMetadata BEFORE applyMetadata thread={}", Thread.currentThread().name)
-            val applyT0 = System.currentTimeMillis()
             applyMetadata(rt, cached.schemas, cached.objects)
-            val applyElapsed = System.currentTimeMillis() - applyT0
-            Logger.info("[diag] loadMetadata AFTER applyMetadata elapsed={}ms thread={}", applyElapsed, Thread.currentThread().name)
             rt.schemasLoading = false
             if (cached.stale) {
                 Logger.info("meta cache stale for {}; silent background refresh", rt.profile.name)
@@ -247,23 +237,18 @@ class ConnectionsState(
             return
         }
 
-        Logger.info("[diag] loadMetadata cache MISS; loading schemas thread={}", Thread.currentThread().name)
         // 2) 缓存未命中：先取库列表，立即可见
         val schemas = withContext(Dispatchers.IO) { loadAllSchemas(rt) }
         if (schemas == null) {
-            Logger.info("[diag] loadMetadata schemas null FAILED profile={}", rt.profile.name)
             rt.status = ConnUiStatus.ERROR
             rt.statusMessage = friendlySqlError(RuntimeException("Failed to load schemas"))
             rt.schemasLoading = false
             return
         }
-        Logger.info("[diag] loadMetadata schemas loaded count={} thread={}", schemas.size, Thread.currentThread().name)
         rt.schemas = schemas
 
-        Logger.info("[diag] loadMetadata before progressiveLoadObjects thread={}", Thread.currentThread().name)
         // 3) 逐 schema 渐进加载对象
         val warn = progressiveLoadObjects(rt, schemas)
-        Logger.info("[diag] loadMetadata after progressiveLoadObjects thread={}", Thread.currentThread().name)
         rt.schemasLoading = false
         if (warn != null) rt.statusMessage = warn
 
@@ -279,7 +264,6 @@ class ConnectionsState(
      */
     suspend fun refreshMetadata(profile: ConnectionProfile): Boolean {
         val rt = runtimes[profile.id] ?: return false
-        Logger.info("[diag] refreshMetadata called profile={} status={} thread={}", profile.name, rt.status, Thread.currentThread().name)
         if (rt.status != ConnUiStatus.CONNECTED) return false
         columns.invalidate(profile.id)
         rt.schemas = null
@@ -300,21 +284,16 @@ class ConnectionsState(
     /** 查库全量元数据（schema-first + progressive per-schema objects）并回写缓存。
      *  供 [refreshMetadata] 使用。 */
     private suspend fun fetchFreshMetadata(rt: ConnRuntime): Result<Unit> {
-        Logger.info("[diag] fetchFreshMetadata start thread={}", Thread.currentThread().name)
         val schemas = withContext(Dispatchers.IO) { loadAllSchemas(rt) }
-        Logger.info("[diag] fetchFreshMetadata after loadAllSchemas schemas={} thread={}", schemas?.size, Thread.currentThread().name)
         if (schemas == null) {
-            Logger.info("[diag] fetchFreshMetadata schemas null FAILED {}", "")
             return Result.failure(RuntimeException("Failed to load schemas"))
         }
         rt.schemas = schemas
         val warn = progressiveLoadObjects(rt, schemas)
-        Logger.info("[diag] fetchFreshMetadata after progressiveLoadObjects thread={}", Thread.currentThread().name)
         if (warn != null) rt.statusMessage = warn
         if (!rt.live.capabilities.namespaceAsFilter) {
             withContext(Dispatchers.IO) { metaCache.save(rt.profile, schemas, rt.objects.toMap()) }
         }
-        Logger.info("[diag] fetchFreshMetadata done thread={}", Thread.currentThread().name)
         return Result.success(Unit)
     }
 
@@ -608,9 +587,7 @@ class ConnectionsState(
     /** Phase 1: 只取库列表（不取任何对象）。失败返回 null（调用方负责设 ERROR 状态）。 */
     private fun loadAllSchemas(rt: ConnRuntime): List<SchemaMeta>? =
         runCatching {
-            Logger.info("[diag] loadAllSchemas calling loadNamespaces thread={}", Thread.currentThread().name)
             val schemas = rt.live.loadNamespaces()
-            Logger.info("[diag] loadAllSchemas done count={} thread={}", schemas.size, Thread.currentThread().name)
             schemas
         }.onFailure { t ->
             Logger.error(t, "load schemas failed {}", rt.profile.name)
@@ -631,16 +608,13 @@ class ConnectionsState(
         val errors = mutableListOf<String>()
         val reasons = mutableListOf<String>()
 
-        Logger.info("[diag] progressiveLoadObjects start schemas={} lazy={} thread={}", schemas.size, lazy, Thread.currentThread().name)
 
         // 预标记所有 schema 防止 ensureSchemaObjects 重复加载
         schemas.forEach { rt.objectsLoading[it.key] = true }
 
         for ((i, schema) in schemas.withIndex()) {
-            Logger.info("[diag] progressiveLoadObjects schema {}/{} name={} start thread={}", i + 1, schemas.size, schema.displayName, Thread.currentThread().name)
             val t0 = System.currentTimeMillis()
             val result = withContext(Dispatchers.IO) {
-                Logger.info("[diag] progressiveLoadObjects INSIDE IO schema={} thread={}", schema.displayName, Thread.currentThread().name)
                 runCatching {
                     if (lazy) {
                         val counts = rt.live.loadObjectCounts(schema)
@@ -652,7 +626,6 @@ class ConnectionsState(
                 }
             }
             val elapsed = System.currentTimeMillis() - t0
-            Logger.info("[diag] progressiveLoadObjects schema {}/{} name={} IO done elapsed={}ms thread={}", i + 1, schemas.size, schema.displayName, elapsed, Thread.currentThread().name)
             result.onSuccess { rt.objects[schema.key] = it }
                 .onFailure { t ->
                     Logger.error(t, "load objects failed {} {}", rt.profile.name, schema.displayName)
@@ -660,13 +633,10 @@ class ConnectionsState(
                     reasons += friendlyMessage(t)
                 }
             rt.objectsLoading[schema.key] = false
-            Logger.info("[diag] progressiveLoadObjects schema {}/{} state updated, about to delay thread={}", i + 1, schemas.size, Thread.currentThread().name)
             // 让出 Main 调度器，使 Compose 管线有机会推进 snapshot 并重组
             delay(1)
-            Logger.info("[diag] progressiveLoadObjects schema {}/{} after delay resume thread={}", i + 1, schemas.size, Thread.currentThread().name)
         }
 
-        Logger.info("[diag] progressiveLoadObjects done errors={}", errors.size)
         if (errors.isEmpty()) return null
         return I18n.t(Str.ObjectsLoadFailed,
             errors.joinToString(I18n.t(Str.CommonListSeparator)).take(40),

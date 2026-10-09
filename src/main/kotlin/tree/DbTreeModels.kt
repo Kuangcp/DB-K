@@ -181,29 +181,13 @@ fun buildTreeRows(
     expandedKeyNamespaceKeys: Set<String> = emptySet(),
 ): List<TreeRowInfo> {
     val query = search.trim()
-    val t0 = System.currentTimeMillis()
-    val result = if (query.isNotEmpty()) {
-        buildTreeRowsSearch(folders, connections, runtime, query, searchScopeProfileId, expandedKeyNamespaceKeys)
-    } else {
-        buildTreeRowsNormal(
-            folders, connections, expandedFolderIds, expandedConnectionIds,
-            expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime,
-        )
+    if (query.isNotEmpty()) {
+        return buildTreeRowsSearch(folders, connections, runtime, query, searchScopeProfileId, expandedKeyNamespaceKeys)
     }
-    val elapsed = System.currentTimeMillis() - t0
-    if (elapsed > 0) {
-        // 只有在耗时超过阈值时才打日志，避免高频无害的重组刷屏
-        val conns = connections.joinToString(",") { "${it.name}(" + (runtime.statusOf(it.id).name) + ")" }
-        val firstConnInfo = connections.firstOrNull()?.let { conn ->
-            val schemas = runtime.schemasOf(conn.id)
-            val firstSchema = schemas?.firstOrNull()
-            val objCount = firstSchema?.let { s -> runtime.objectsOf(conn.id, s.key)?.total }
-            "${conn.name}: schemas=${schemas?.size ?: 0} objects=$objCount expandedIn=${conn.id in expandedConnectionIds}"
-        }
-        org.tinylog.Logger.info("[diag] buildTreeRows elapsed={}ms rows={} conns=[{}] firstConnInfo={} thread={}",
-            elapsed, result.size, conns, firstConnInfo ?: "-", Thread.currentThread().name)
-    }
-    return result
+    return buildTreeRowsNormal(
+        folders, connections, expandedFolderIds, expandedConnectionIds,
+        expandedSchemaKeys, expandedGroupKeys, expandedKeyNamespaceKeys, runtime,
+    )
 }private fun buildTreeRowsNormal(
     folders: List<FolderRow>,
     connections: List<ConnectionProfile>,
