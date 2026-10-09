@@ -603,7 +603,7 @@ private fun WindowScope.AppBody(
 
     // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名 + 所属 schema。
     // 用 derivedStateOf 包裹确保只在底层 state 变化时才重算，避免每次重组重建 万级 列表触发无限重组。
-    val completionTables: List<CompletionTable> by remember {
+    val completionTables: List<CompletionTable> by remember(activeProfile?.id) {
         derivedStateOf {
             activeProfile?.let { p ->
                 val es = p.dbType.protocol == Protocol.ELASTICSEARCH
@@ -627,7 +627,7 @@ private fun WindowScope.AppBody(
         mutableStateOf(runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() })
     }
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
-    val completionFunctions: List<String> by remember {
+    val completionFunctions: List<String> by remember(activeProfile?.id) {
         derivedStateOf {
             activeProfile?.let { p ->
                 connectionsState.schemasOf(p.id).orEmpty()
