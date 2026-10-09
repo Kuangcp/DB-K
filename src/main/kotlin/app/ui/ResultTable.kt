@@ -542,28 +542,23 @@ internal fun ResultTable(
                                             )
                                         }
                                     } else null,
-                                    onDoubleClick = when {
-                                        isEditable -> {
-                                            {
-                                                if (ctrlHeld) {
-                                                    // 长值/多行/NULL → 对话框；短值 → 行内编辑
-                                                    if (v == null || v.length > 60 || v.contains('\n')) {
-                                                        origKey?.let {
-                                                            dialogEdit = EditRequest.Cell(
-                                                                it,
-                                                                I18n.t(lang, Str.ResultCellTitle, result.columns[it.col].name, it.row + 1),
-                                                                v,
-                                                            )
-                                                        }
-                                                    } else {
-                                                        beginEdit(index, c)
-                                                    }
-                                                } else {
-                                                    cellView?.let { cv -> viewer = cv }
-                                                }
+                                    onDoubleClick = {
+                                        if (ctrlHeld && origKey != null) {
+                                            // Ctrl+双击始终弹出编辑窗口（不受 isEditable 限制）
+                                            if (v == null || v.length > 60 || v.contains('\n') || !isEditable) {
+                                                dialogEdit = EditRequest.Cell(
+                                                    origKey,
+                                                    I18n.t(lang, Str.ResultCellTitle, result.columns[origKey.col].name, origKey.row + 1),
+                                                    v,
+                                                )
+                                            } else {
+                                                beginEdit(index, c)
                                             }
+                                        } else if (isEditable) {
+                                            cellView?.let { cv -> viewer = cv }
+                                        } else {
+                                            cellView?.let { cv -> viewer = cv }
                                         }
-                                        else -> cellView?.let { cv -> { viewer = cv } }
                                     },
                                     menuItems = buildList {
                                         // 命中格在当前多选区内 → 顶部给「复制选区」
