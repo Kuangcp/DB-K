@@ -470,6 +470,24 @@ internal fun EditorPane(
             selection = TextRange(res.second)
         }
     }
+
+    /** Ctrl+/：按编辑器语言给光标/选区覆盖的整行加或取消行注释（SQL `--`、Redis `#`、ES `//`）。 */
+    fun toggleComment() {
+        if (multiCursors.isNotEmpty()) exitMultiCursor()
+        val prefix = when (editorLanguage) {
+            EditorLanguage.SQL -> "--"
+            EditorLanguage.REDIS_COMMAND -> "#"
+            EditorLanguage.JSON -> "//"
+        }
+        val res = toggleLineComment(state.text.toString(), state.selection.start, state.selection.end, prefix)
+            ?: return
+        suppressTextActivation = true
+        editing = false
+        state.edit {
+            replace(0, length, res.first)
+            selection = TextRange(res.second.first, res.second.last)
+        }
+    }
     // 打开查找替换栏（焦点会移出编辑器）时退出多光标，避免 AWT 拦截到查找框的输入。
     LaunchedEffect(findOpen) {
         if (findOpen) {
@@ -991,6 +1009,11 @@ internal fun EditorPane(
                             // 业务功能：复制当前行 / 选区覆盖的整块行（可配置，默认 Ctrl+Y）
                             if (keymap.matches(ShortcutCommand.DUPLICATE_LINE, e)) {
                                 duplicateLine()
+                                return@onPreviewKeyEvent true
+                            }
+                            // 业务功能：行注释切换（可配置，默认 Ctrl+/；按语言选前缀）
+                            if (keymap.matches(ShortcutCommand.TOGGLE_COMMENT, e)) {
+                                toggleComment()
                                 return@onPreviewKeyEvent true
                             }
                             // Ctrl+Tab / Ctrl+Shift+Tab：按最近使用切控制台（消费，避免 Tab 走焦点遍历）

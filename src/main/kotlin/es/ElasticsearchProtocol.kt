@@ -3,6 +3,7 @@ package es
 import engine.model.ColumnMeta
 import engine.model.QueryColumn
 import engine.model.QueryResult
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -32,7 +33,10 @@ object ElasticsearchProtocol {
     /** 默认页大小（用户 DSL 未写 `size` 时注入）。 */
     const val DEFAULT_SIZE = 100
 
-    private val compact = Json
+    // 允许 `//` / `/* */` 行/块注释：编辑器可用 `//` 注释 DSL 行，解析后注释被丢弃，
+    // 发给 ES 的仍是干净 JSON（见 parseRequest / withPagination）。
+    @OptIn(ExperimentalSerializationApi::class)
+    private val compact = Json { allowComments = true }
 
     private val pretty = Json { prettyPrint = true }
 

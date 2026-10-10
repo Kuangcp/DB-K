@@ -678,6 +678,74 @@ fun duplicateLineText(text: String, selStart: Int, selEnd: Int): Pair<String, In
     return newText to caret
 }
 
+/** 行注释的一次插入/删除（[pos] 起删除 [removed] 字符、插入 [inserted] 字符）。 */
+private data class LineCommentEdit(val pos: Int, val removed: Int, val inserted: Int)
+
+/** 把原文本中的偏移 [off] 映射过一组编辑后的新偏移（保留光标/选区）。 */
+private fun mapCommentOffset(off: Int, edits: List<LineCommentEdit>): Int {
+    var cumulative = 0
+    for (e in edits) {
+        when {
+            off < e.pos -> return off + cumulative
+            off <= e.pos + e.removed -> return e.pos + cumulative + e.inserted
+            else -> cumulative += e.inserted - e.removed
+        }
+    }
+    return off + cumulative
+}
+
+/**
+ * 行注释切换（Ctrl+/）：对光标/选区覆盖的整行做注释或取消注释，返回新文本与新选区。
+ *
+ * - [prefix] 为语言行注释符（SQL `--`、Redis `#`、ES `//`）。
+ * - 仅非空行参与；空行保持原样。
+ * - 所有非空行均已注释 → 取消注释；否则只给尚未注释的行加注释（混合时不会重复叠加前缀）。
+ * - 前缀加在行首（列 0，保留缩进）；取消时删除前缀及紧随的一个空格。
+ * - 光标/选区按编辑后的偏移映射保留；无可改动内容（空文本/仅空行）返回 null。
+ */
+fun toggleLineComment(text: String, selStart: Int, selEnd: Int, prefix: String): Pair<String, IntRange>? {
+    if (text.isEmpty()) return null
+    val from = minOf(selStart, selEnd).coerceIn(0, text.length)
+    val to = maxOf(selStart, selEnd).coerceIn(0, text.length)
+    val lineStart = text.lastIndexOf('\n', from - 1) + 1
+    val lineEnd = when {
+        from == to -> text.indexOf('\n', from).let { if (it < 0) text.length else it }
+        // 选区终点正好停在下一行行首（前一字符是换行）→ 只处理上一行，不误带下一行
+        to > 0 && text[to - 1] == '\n' -> to - 1
+        else -> text.indexOf('\n', to).let { if (it < 0) text.length else it }
+    }
+    val lines = text.substring(lineStart, lineEnd).split('\n')
+    if (lines.none { it.isNotBlank() }) return null
+
+    fun isCommented(line: String): Boolean = line.trimStart().startsWith(prefix)
+    val allCommented = lines.filter { it.isNotBlank() }.all { isCommented(it) }
+
+    val edits = mutableListOf<LineCommentEdit>()
+    val newLines = ArrayList<String>(lines.size)
+    var abs = lineStart
+    for (line in lines) {
+        when {
+            line.isBlank() -> newLines += line
+            allCommented -> {
+                val removeAt = line.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+                val trailing = if (line.getOrNull(removeAt + prefix.length) == ' ') 1 else 0
+                val len = prefix.length + trailing
+                edits += LineCommentEdit(abs + removeAt, len, 0)
+                newLines += line.removeRange(removeAt, removeAt + len)
+            }
+            isCommented(line) -> newLines += line
+            else -> {
+                edits += LineCommentEdit(abs, 0, prefix.length + 1)
+                newLines += "$prefix $line"
+            }
+        }
+        abs += line.length + 1
+    }
+    val newBlock = newLines.joinToString("\n")
+    val newText = text.substring(0, lineStart) + newBlock + text.substring(lineEnd)
+    return newText to (mapCommentOffset(from, edits)..mapCommentOffset(to, edits))
+}
+
 /**
  * 把一行结果组成 INSERT 语句（值一律加引号、单引号翻倍；NULL → NULL）。
  * 返回 null 表示无法确定源表（复杂查询），调用方应隐藏对应菜单项。

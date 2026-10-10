@@ -352,6 +352,74 @@ class SqlEditingTest {
         assertNull(duplicateLineText("", 0, 0))
     }
 
+    // ---- toggleLineComment（Ctrl+/ 行注释切换） ----
+
+    @Test
+    fun `toggleLineComment comments current line and keeps caret`() {
+        assertEquals(
+            "-- SELECT *\nFROM t" to (6..6),
+            toggleLineComment("SELECT *\nFROM t", 3, 3, "--"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment comments whole selected lines`() {
+        assertEquals(
+            "-- aa\n-- bb\ncc" to (3..11),
+            toggleLineComment("aa\nbb\ncc", 0, 5, "--"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment uncomments when every non-blank line is commented`() {
+        assertEquals(
+            "aa\nbb" to (0..3),
+            toggleLineComment("-- aa\n-- bb", 0, 9, "--"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment comments only uncommented lines when mixed`() {
+        assertEquals(
+            "-- aa\n-- bb" to (0..10),
+            toggleLineComment("-- aa\nbb", 0, 7, "--"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment skips blank lines`() {
+        assertEquals(
+            "-- aa\n\n-- bb" to (3..12),
+            toggleLineComment("aa\n\nbb", 0, 6, "--"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment does not include next line when selection ends at its start`() {
+        assertEquals(
+            "-- aa\nbb\ncc" to (3..6),
+            toggleLineComment("aa\nbb\ncc", 0, 3, "--"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment uses the given prefix`() {
+        assertEquals(
+            "# GET a\nSET b 1" to (2..7),
+            toggleLineComment("GET a\nSET b 1", 0, 5, "#"),
+        )
+        assertEquals(
+            "// {\n  \"a\": 1\n}" to (3..3),
+            toggleLineComment("{\n  \"a\": 1\n}", 0, 0, "//"),
+        )
+    }
+
+    @Test
+    fun `toggleLineComment returns null for empty or blank-only selection`() {
+        assertNull(toggleLineComment("", 0, 0, "--"))
+        assertNull(toggleLineComment("aa\n\nbb", 3, 3, "--"))
+    }
+
     @Test
     fun `matchesQualifier accepts alias table and schema table`() {
         val ref = TableRef(qualifier = "public.users", schema = "public", table = "users", alias = "u")

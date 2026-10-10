@@ -3,6 +3,7 @@ package es
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -43,6 +44,28 @@ class ElasticsearchProtocolTest {
         assertFailsWith<IllegalArgumentException> { ElasticsearchProtocol.parseRequest("   ") }
         assertFailsWith<IllegalArgumentException> { ElasticsearchProtocol.parseRequest("[1,2]") }
         assertFailsWith<IllegalArgumentException> { ElasticsearchProtocol.parseRequest("{oops") }
+    }
+
+    @Test
+    fun `tolerates line comments in the dsl body`() {
+        val req = ElasticsearchProtocol.parseRequest(
+            """
+            // leading comment
+            {
+              "index": "i",
+              "query": { "match_all": {} } // trailing comment
+            }
+            """.trimIndent(),
+        )
+        assertEquals("i", req.index)
+        assertTrue("query" in req.body)
+        // 注释在解析后已被丢弃，发给 ES 的请求体是干净 JSON
+        assertFalse(req.body.toString().contains("//"))
+        assertFalse(ElasticsearchProtocol.withPagination(
+            "{\n // c\n \"query\": {}\n}",
+            10,
+            20,
+        )!!.contains("//"))
     }
 
     @Test
