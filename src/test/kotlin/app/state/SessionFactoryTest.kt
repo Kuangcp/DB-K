@@ -2,11 +2,13 @@ package app.state
 
 import db.ConnectionProfile
 import db.DbType
+import engine.EditorLanguage
 import engine.Protocol
 import es.ElasticsearchSession
 import jdbc.LiveConnection
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import redis.RedisSession
 
@@ -31,6 +33,31 @@ class SessionFactoryTest {
         assertEquals(false, session.capabilities.editableResult)
         assertEquals(false, session.capabilities.sqlCompletion)
         assertTrue(session.capabilities.fetchMore)
+    }
+
+    @Test
+    fun `editor capabilities are known without a live session`() {
+        val sqlite = SessionFactory.editorCapabilities(profile(DbType.SQLITE))
+        assertTrue(sqlite.sqlCompletion)
+        assertEquals(EditorLanguage.SQL, sqlite.editorLanguage)
+
+        val redis = SessionFactory.editorCapabilities(profile(DbType.REDIS))
+        assertFalse(redis.sqlCompletion)
+        assertEquals(EditorLanguage.REDIS_COMMAND, redis.editorLanguage)
+
+        val es = SessionFactory.editorCapabilities(profile(DbType.ELASTICSEARCH))
+        assertFalse(es.sqlCompletion)
+        assertEquals(EditorLanguage.JSON, es.editorLanguage)
+    }
+
+    @Test
+    fun `editor capabilities stay consistent with live sessions`() {
+        listOf(DbType.SQLITE, DbType.REDIS, DbType.ELASTICSEARCH).forEach { type ->
+            val static = SessionFactory.editorCapabilities(profile(type))
+            val live = SessionFactory.create(profile(type)).capabilities
+            assertEquals(live.sqlCompletion, static.sqlCompletion, "sqlCompletion for $type")
+            assertEquals(live.editorLanguage, static.editorLanguage, "editorLanguage for $type")
+        }
     }
 
     @Test

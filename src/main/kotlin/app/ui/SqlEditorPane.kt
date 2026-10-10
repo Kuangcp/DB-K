@@ -175,6 +175,8 @@ internal fun EditorPane(
     editorLanguage: EditorLanguage = EditorLanguage.SQL,
     columnCatalog: ColumnCatalog?,
     schemas: List<SchemaMeta>,
+    /** 数据源未连接：列补全只读本地缓存，不发起连接。 */
+    offline: Boolean = false,
     defaultSchema: SchemaMeta?,
     profile: ConnectionProfile?,
     editorSettings: EditorSettings,
@@ -662,7 +664,7 @@ internal fun EditorPane(
         val p = profile ?: return@LaunchedEffect
         val catalog = columnCatalog ?: return@LaunchedEffect
         if (fetchRefs.isEmpty()) return@LaunchedEffect
-        catalog.ensure(p, fetchRefs.map { (r, s) -> ColumnCatalog.ColumnRef(s, r.table) })
+        catalog.ensure(p, fetchRefs.map { (r, s) -> ColumnCatalog.ColumnRef(s, r.table) }, offline = offline)
     }
 
     // ES：DSL 里的目标索引（或默认索引）确定后预取其 `_mapping` 字段；防抖 + 只认已存在的索引，
@@ -676,7 +678,7 @@ internal fun EditorPane(
             idx == p.database.trim()
         if (!known) return@LaunchedEffect
         kotlinx.coroutines.delay(300)
-        catalog.ensure(p, listOf(ColumnCatalog.ColumnRef(dslSchema, idx)))
+        catalog.ensure(p, listOf(ColumnCatalog.ColumnRef(dslSchema, idx)), offline = offline)
     }
 
     // 弹窗高度自适配：不超出编辑器可视高度（避免被下方执行条/结果区遮挡），至少 64dp

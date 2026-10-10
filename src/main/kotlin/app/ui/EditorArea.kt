@@ -102,6 +102,8 @@ fun WindowScope.EditorArea(
     pendingEditCounts: Map<String, Int> = emptyMap(),
     /** 激活控制台数据源的库/schema 列表（目标切换菜单；null = 未连接/未加载）。 */
     schemas: List<SchemaMeta>?,
+    /** 数据源未连接：列补全只读本地缓存，不发起连接（离线补全）。 */
+    offline: Boolean = false,
     /** 数据源方言是否支持切换执行目标（SQLite 单文件不支持）。 */
     supportsTargetSwitch: Boolean,
     /** 执行目标切换器的标签（SQL = 「目标」；Redis DB = 「DB」）。 */
@@ -538,6 +540,7 @@ fun WindowScope.EditorArea(
                             editorLanguage = editorLanguage,
                             columnCatalog = columnCatalog,
                             schemas = schemas.orEmpty(),
+                            offline = offline,
                             defaultSchema = schemas?.firstOrNull { it.displayName == targetSchema },
                             profile = profile,
                             editorSettings = editorSettings,

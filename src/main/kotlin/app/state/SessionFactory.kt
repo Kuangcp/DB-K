@@ -2,6 +2,7 @@ package app.state
 
 import db.ConnectionProfile
 import engine.DataSourceSession
+import engine.EditorLanguage
 import engine.Protocol
 import es.ElasticsearchSession
 import jdbc.LiveConnection
@@ -16,11 +17,29 @@ import redis.RedisSession
  */
 object SessionFactory {
 
+    /** 编辑器渲染所需能力（无活动会话即可判定；离线补全用）。
+     *  只含与编辑器直接相关的两项，避免伪造完整能力位。 */
+    data class EditorCapabilities(
+        val sqlCompletion: Boolean,
+        val editorLanguage: EditorLanguage,
+    )
+
     fun create(profile: ConnectionProfile): DataSourceSession = when (profile.dbType.protocol) {
         Protocol.JDBC -> LiveConnection(profile)
         Protocol.REDIS -> RedisSession(profile)
         Protocol.ELASTICSEARCH -> ElasticsearchSession(profile)
     }
+
+    /**
+     * 编辑器能力：按协议静态判定，未连接（无活动会话）也可用。
+     * 与各后端 `capabilities` 的同名字段保持一致（`SessionFactoryTest` 守着不漂移）。
+     */
+    fun editorCapabilities(profile: ConnectionProfile): EditorCapabilities =
+        when (profile.dbType.protocol) {
+            Protocol.JDBC -> EditorCapabilities(sqlCompletion = true, editorLanguage = EditorLanguage.SQL)
+            Protocol.REDIS -> EditorCapabilities(sqlCompletion = false, editorLanguage = EditorLanguage.REDIS_COMMAND)
+            Protocol.ELASTICSEARCH -> EditorCapabilities(sqlCompletion = false, editorLanguage = EditorLanguage.JSON)
+        }
 
     /** 按协议切分控制台文本为多条语句：SQL 按 `;`；Redis 按行；ES 整段一个报体。 */
     fun splitStatements(profile: ConnectionProfile, text: String): List<String> =

@@ -25,6 +25,9 @@ import org.tinylog.Logger
  * 离线不打断编辑。断开只清内存（[evict]，磁盘留给下次/离线）；档案编辑、元数据刷新、档案删除
  * 才清磁盘（[invalidate]）。
  *
+ * [ensure] 的 `offline = true`（数据源未连接）：只把磁盘缓存装入内存，即使过期也不查库，
+ * 无缓存则跳过——离线补全绝不发起连接。
+ *
  * [loader]、[store] 由 app/state 注入，便于单测。
  */
 class ColumnCatalog(
@@ -45,7 +48,7 @@ class ColumnCatalog(
     fun peek(profileId: String, schema: SchemaMeta?, table: String): List<ColumnMeta>? =
         cache[key(profileId, schema, table)]
 
-    suspend fun ensure(profile: ConnectionProfile, refs: List<ColumnRef>) {
+    suspend fun ensure(profile: ConnectionProfile, refs: List<ColumnRef>, offline: Boolean = false) {
         val missing = refs.mapNotNull { ref ->
             val k = key(profile.id, ref.schema, ref.table)
             if (cache.containsKey(k)) null else k to ref
@@ -58,7 +61,11 @@ class ColumnCatalog(
                 val disk = withContext(Dispatchers.IO) { store?.load(profile, objectKey) }
                 if (disk != null) {
                     put(k, disk.columns)
-                    if (!disk.isStale(System.currentTimeMillis(), ttlMs)) continue
+                    // 离线只用缓存，即使过期也不查库；在线过期才后台刷新
+                    if (offline || !disk.isStale(System.currentTimeMillis(), ttlMs)) continue
+                } else if (offline) {
+                    // 离线且无缓存：跳过，不发连接请求
+                    continue
                 }
                 try {
                     val columns = loader(profile, ref.schema, ref.table)

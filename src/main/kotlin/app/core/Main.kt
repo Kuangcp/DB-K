@@ -92,6 +92,7 @@ import app.state.ConnectionEditorRequest
 import app.state.ConnectionsState
 import app.state.ConsoleRenameRequest
 import app.state.ConsoleState
+import app.state.SessionFactory
 import app.state.WorkspaceState
 import app.state.ConsoleRunUi
 import app.state.DialogState
@@ -601,15 +602,26 @@ private fun WindowScope.AppBody(
         }
     }
 
+    // 数据源是否已连接；未连接时编辑器只读本地缓存补全，不发起连接。
+    val dataSourceOffline = activeProfile?.let { p ->
+        connectionsState.statusOf(p.id) != ConnUiStatus.CONNECTED
+    } ?: true
+    // 离线补全：未连接数据源时从本地 meta_cache 装入只读元数据（不建连），供补全候选与列缓存回退使用。
+    // 键含 offline：断开后 CONNECTED → 离线需重新装入（[ConnectionsState.disconnect] 会清 searchCache）。
+    LaunchedEffect(activeProfile?.id, dataSourceOffline) {
+        val p = activeProfile ?: return@LaunchedEffect
+        connectionsState.ensureSearchCachesLoaded(listOf(p), p.id)
+    }
+
     // 编辑器补全候选：当前数据源全部 schema 的表/视图/物化视图名 + 所属 schema。
-    // 元数据（库列表 + 对象）已由 ConnectionsState 在连接建立时整体预取并读缓存（见 ensureConnectionReady），
-    // 数据来自数据源目录元信息；树是否展开不影响候选完整性。
+    // 元数据优先实时（已连接），否则回落 [ConnectionsState.searchSchemasOf] / [searchObjectsOf] 的本地缓存
+    // ——未连接（含从未连接）也能补全表/视图/函数。
     val completionTables: List<CompletionTable> = activeProfile?.let { p ->
         // ES：对象是索引/别名（不是表/视图）；补全与 DSL 的 index 候选同源
         val es = p.dbType.protocol == Protocol.ELASTICSEARCH
-        connectionsState.schemasOf(p.id).orEmpty()
+        connectionsState.searchSchemasOf(p.id).orEmpty()
             .flatMap { s ->
-                connectionsState.objectsOf(p.id, s.key)
+                connectionsState.searchObjectsOf(p.id, s.key)
                     ?.let { o ->
                         if (es) (o.forKind(ObjectKind.INDEX) + o.forKind(ObjectKind.ALIAS)).map { it.name }
                         else o.tables + o.views + o.materializedViews
@@ -626,9 +638,9 @@ private fun WindowScope.AppBody(
     }
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
     val completionFunctions: List<String> = activeProfile?.let { p ->
-        connectionsState.schemasOf(p.id).orEmpty()
+        connectionsState.searchSchemasOf(p.id).orEmpty()
             .flatMap { s ->
-                connectionsState.objectsOf(p.id, s.key)?.let { o ->
+                connectionsState.searchObjectsOf(p.id, s.key)?.let { o ->
                     (o.forKind(ObjectKind.ROUTINE) + o.forKind(ObjectKind.AGGREGATE)).map { it.name }
                 }.orEmpty()
             }
@@ -1188,7 +1200,8 @@ private fun WindowScope.AppBody(
                         },
                         dirtyConsoleIds = consoleState.dirtyConsoleIds,
                         pendingEditCounts = consoleState.editBuffers.mapValues { it.value.count },
-                        schemas = activeProfile?.let { connectionsState.schemasOf(it.id) },
+                        schemas = activeProfile?.let { connectionsState.searchSchemasOf(it.id) },
+                        offline = dataSourceOffline,
                         supportsTargetSwitch =
                             activeProfile?.let { connectionsState.sessionOf(it.id)?.capabilities?.sessionContext } == true,
                         targetLabel = if (activeProfile?.let { connectionsState.flatNamespaceOf(it.id) } == true) "DB" else I18n.t(Str.EditorTargetLabel),
@@ -1429,12 +1442,9 @@ private fun WindowScope.AppBody(
                         liveTemplates = liveTemplates,
                         completionTables = completionTables,
                         completionFunctions = completionFunctions,
-                        completionEnabled = activeProfile?.let {
-                            connectionsState.sessionOf(it.id)?.capabilities?.sqlCompletion
-                        } ?: true,
-                        editorLanguage = activeProfile?.let {
-                            connectionsState.sessionOf(it.id)?.capabilities?.editorLanguage
-                        } ?: EditorLanguage.SQL,
+                        completionEnabled = activeProfile?.let { SessionFactory.editorCapabilities(it).sqlCompletion } ?: true,
+                        editorLanguage = activeProfile?.let { SessionFactory.editorCapabilities(it).editorLanguage }
+                            ?: EditorLanguage.SQL,
                         columnCatalog = connectionsState.columns,
                         onCopyText = { text, label ->
                             writeClipboardText(text)

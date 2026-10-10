@@ -121,6 +121,28 @@ class ColumnCatalogTest {
         assertEquals(listOf("fresh"), store.saved[key]!!.map { it.name })
     }
 
+    @Test
+    fun `offline ensure loads disk cache without calling loader`() = runTest {
+        // 磁盘条目即使过期，离线也不查库：只把缓存装入内存
+        val store = FakeStore(stale = true)
+        val key = columnObjectKey(schema, "users")
+        store.put(key, listOf(ColumnMeta("id")))
+        var calls = 0
+        val catalog = ColumnCatalog(loader = { _, _, _ -> calls++; error("must not load") }, store = store)
+        catalog.ensure(profile, listOf(ref("users")), offline = true)
+        assertEquals(0, calls)
+        assertEquals(listOf("id"), catalog.peek(profile.id, schema, "users")!!.map { it.name })
+    }
+
+    @Test
+    fun `offline ensure without cache does not call loader`() = runTest {
+        var calls = 0
+        val catalog = ColumnCatalog(loader = { _, _, _ -> calls++; emptyList() }, store = FakeStore())
+        catalog.ensure(profile, listOf(ref("missing")), offline = true)
+        assertEquals(0, calls)
+        assertNull(catalog.peek(profile.id, schema, "missing"))
+    }
+
     private inner class FakeStore(private val stale: Boolean = false) : ColumnCacheStore {
         val saved = mutableMapOf<String, List<ColumnMeta>>()
         var deletes = 0
