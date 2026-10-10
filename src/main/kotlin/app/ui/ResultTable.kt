@@ -144,7 +144,7 @@ private sealed interface EditRequest {
     val title: String
     val value: String?
 
-    data class Cell(val key: CellKey, override val title: String, override val value: String?, val readOnly: Boolean = false) : EditRequest
+    data class Cell(val key: CellKey, override val title: String, override val value: String?) : EditRequest
     data class Insert(val id: Long, val col: Int, override val title: String, override val value: String?) : EditRequest
 }
 
@@ -544,13 +544,16 @@ internal fun ResultTable(
                                     } else null,
                                     onDoubleClick = {
                                         if (ctrlHeld && origKey != null) {
-                                            val readOnly = !isEditable
-                                            dialogEdit = EditRequest.Cell(
-                                                key = origKey,
-                                                title = I18n.t(lang, Str.ResultCellTitle, result.columns[origKey.col].name, origKey.row + 1),
-                                                value = v,
-                                                readOnly = readOnly,
-                                            )
+                                            // Ctrl+双击始终弹出编辑窗口（不受 isEditable 限制）
+                                            if (v == null || v.length > 60 || v.contains('\n') || !isEditable) {
+                                                dialogEdit = EditRequest.Cell(
+                                                    origKey,
+                                                    I18n.t(lang, Str.ResultCellTitle, result.columns[origKey.col].name, origKey.row + 1),
+                                                    v,
+                                                )
+                                            } else {
+                                                beginEdit(index, c)
+                                            }
                                         } else if (isEditable) {
                                             cellView?.let { cv -> viewer = cv }
                                         } else {
@@ -752,7 +755,6 @@ internal fun ResultTable(
         EditCellDialog(
             title = t(Str.ResultEditCellTitle, request.title),
             initial = request.value,
-            readOnly = request is EditRequest.Cell && request.readOnly,
             onDismiss = { dialogEdit = null },
             onConfirm = { value ->
                 dialogEdit = null

@@ -62,7 +62,6 @@ private fun dialogSizeFor(initial: String?): DpSize {
 fun EditCellDialog(
     title: String,
     initial: String?,
-    readOnly: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: (CellValue) -> Unit,
 ) {
@@ -83,8 +82,7 @@ fun EditCellDialog(
             if (e.type == KeyEventType.KeyDown && e.isCtrlPressed &&
                 (e.key == Key.Enter || e.key == Key.NumPadEnter)
             ) {
-                if (!readOnly) commit()
-                else onDismiss()
+                commit()
                 true
             } else {
                 false
@@ -98,11 +96,11 @@ fun EditCellDialog(
                 .padding(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = isNull, onCheckedChange = { if (!readOnly) isNull = it }, enabled = !readOnly)
+                Checkbox(checked = isNull, onCheckedChange = { isNull = it })
                 Text(
                     I18n.t(Str.EditCellSetNull),
                     style = MaterialTheme.typography.body2,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = if (readOnly) 0.4f else 0.75f),
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
                 )
             }
             Box(
@@ -123,8 +121,7 @@ fun EditCellDialog(
                 } else {
                     BasicTextField(
                         value = text,
-                        onValueChange = { if (!readOnly) text = it },
-                        readOnly = readOnly,
+                        onValueChange = { text = it },
                         textStyle = TextStyle(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 13.sp,
@@ -146,12 +143,8 @@ fun EditCellDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (readOnly) {
-                    TextButton(onClick = onDismiss) { Text(I18n.t(Str.CommonClose)) }
-                } else {
-                    TextButton(onClick = commit) { Text(I18n.t(Str.CommonOk)) }
-                    TextButton(onClick = onDismiss) { Text(I18n.t(Str.CommonCancel)) }
-                }
+                TextButton(onClick = commit) { Text(I18n.t(Str.CommonOk)) }
+                TextButton(onClick = onDismiss) { Text(I18n.t(Str.CommonCancel)) }
             }
         }
     }
