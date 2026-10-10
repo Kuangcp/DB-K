@@ -410,14 +410,12 @@ class ConsoleState(
         val plan = editPlanOf(console.id) ?: return Result.failure(IllegalStateException(I18n.t(Str.ConsoleNotEditable)))
         val edits = editsOf(console.id)
         if (edits.isEmpty) return Result.success(0)
-        // 待插入行必须至少填一个可编辑列，否则无法生成 INSERT（不能静默丢弃）
         val blankInserts = edits.inserts.count { !edits.insertHasValues(plan, it) }
         if (blankInserts > 0) {
             return Result.failure(IllegalStateException(I18n.t(Str.ConsoleBlankInserts, blankInserts)))
         }
         val ops = buildWriteOps(result, plan, edits)
         if (ops.isEmpty()) return Result.failure(IllegalStateException(I18n.t(Str.ConsoleNoChanges)))
-
         if (connectionsState.statusOf(profile.id) != ConnUiStatus.CONNECTED) {
             connectionsState.ensureConnectionReady(profile)
         }

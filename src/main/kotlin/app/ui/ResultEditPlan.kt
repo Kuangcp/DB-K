@@ -75,22 +75,26 @@ fun buildEditPlan(
 
     val ref = base.first()
     val refTable = ref.table
-    val refSchema = ref.query.schema
-    val refCatalog = ref.query.catalog
     val known = knownColumns?.map { it.lowercase() }?.toSet()
     val valid = base.filter { known == null || it.column.lowercase() in known }
     if (valid.isEmpty()) return null
 
     // 1b) 补充驱动未报 table/baseColumn 的结果列（如 CK 某些类型不提供元数据）
-    //     只要已确定基表，就认为其余结果列也属于该表，按 [column.name] 写入 SET。
+    val baseIndices = base.map { it.index }.toSet()
     val unmapped = result.columns.withIndex()
         .filter { (i, c) ->
-            i !in base.map { it.index }
+            i !in baseIndices
                 && (c.table.isNullOrBlank() || c.baseColumn.isNullOrBlank())
                 && !c.readOnly && !c.autoIncrement && !isBinarySqlType(c.sqlType)
         }
         .map { (i, c) -> BaseRef(i, c, refTable, c.baseColumn ?: c.name) }
-    val validAll = valid + unmapped.filter { known == null || it.column.lowercase() in known }
+    // 哪些列在 base 内但被 known 过滤掉了？也许是 CK 驱动报了元数据但列名不在 ColumnCatalog 缓存中
+    val baseExcludedByKnown = if (known != null) base.filter { it.column.lowercase() !in known } else emptyList()
+    baseExcludedByKnown.forEach { (i, _, name, col) ->
+    }
+    val validAll = valid + unmapped + baseExcludedByKnown.filter {
+        !it.query.readOnly && !it.query.autoIncrement && !isBinarySqlType(it.query.sqlType)
+    }
 
     // 2) 键列：主键列必须都能在结果里找到（不要求可编辑，例如自增主键）
     val keyColumns = primaryKeys.map { pk ->
@@ -147,14 +151,17 @@ fun buildUpdatePlans(
         if (rowIndex !in result.rows.indices) return@mapNotNull null
         val original = result.rows[rowIndex]
         val sets = entries.mapNotNull { (key, value) ->
-            val col = plan.columnAt(key.col) ?: return@mapNotNull null
+            val col = plan.columnAt(key.col)
+            if (col == null) {
+                return@mapNotNull null
+            }
             if (key.col !in original.indices) return@mapNotNull null
             ColumnValue(col.baseColumn, value, col.sqlType)
         }
         if (sets.isEmpty()) return@mapNotNull null
         val keyValues = plan.keyColumns.map { idx ->
             val col = result.columns[idx]
-            val base = col.baseColumn ?: return@mapNotNull null
+            val base = col.baseColumn?.takeIf { it.isNotBlank() } ?: col.name
             ColumnValue(base, CellValue(original.getOrNull(idx)), col.sqlType)
         }
         if (keyValues.size != plan.keyColumns.size) return@mapNotNull null
