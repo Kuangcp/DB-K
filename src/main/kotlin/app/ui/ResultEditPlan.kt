@@ -74,18 +74,32 @@ fun buildEditPlan(
     if (base.map { tableIdentity(it.table, it.query.schema, it.query.catalog) }.distinct().size != 1) return null
 
     val ref = base.first()
+    val refTable = ref.table
+    val refSchema = ref.query.schema
+    val refCatalog = ref.query.catalog
     val known = knownColumns?.map { it.lowercase() }?.toSet()
     val valid = base.filter { known == null || it.column.lowercase() in known }
     if (valid.isEmpty()) return null
 
+    // 1b) 补充驱动未报 table/baseColumn 的结果列（如 CK 某些类型不提供元数据）
+    //     只要已确定基表，就认为其余结果列也属于该表，按 [column.name] 写入 SET。
+    val unmapped = result.columns.withIndex()
+        .filter { (i, c) ->
+            i !in base.map { it.index }
+                && (c.table.isNullOrBlank() || c.baseColumn.isNullOrBlank())
+                && !c.readOnly && !c.autoIncrement && !isBinarySqlType(c.sqlType)
+        }
+        .map { (i, c) -> BaseRef(i, c, refTable, c.baseColumn ?: c.name) }
+    val validAll = valid + unmapped.filter { known == null || it.column.lowercase() in known }
+
     // 2) 键列：主键列必须都能在结果里找到（不要求可编辑，例如自增主键）
     val keyColumns = primaryKeys.map { pk ->
-        valid.firstOrNull { it.column.equals(pk, ignoreCase = true) && !isBinarySqlType(it.query.sqlType) }?.index
+        validAll.firstOrNull { it.column.equals(pk, ignoreCase = true) && !isBinarySqlType(it.query.sqlType) }?.index
             ?: return null
     }
 
     // 3) 可编辑列：排除只读/自增/二进制
-    val editable = valid
+    val editable = validAll
         .filter { !it.query.readOnly && !it.query.autoIncrement && !isBinarySqlType(it.query.sqlType) }
         .map { EditableColumn(it.index, it.column, it.query.sqlType) }
     if (editable.isEmpty()) return null

@@ -59,7 +59,7 @@ class ResultEditPlanTest {
         val r = result(
             col("id", sqlType = Types.INTEGER),
             col("name"),
-            col("upper", table = null, base = null),
+            col("upper", table = null, base = null, readOnly = true),
         )
         val plan = buildEditPlan(r, primaryKeys = setOf("id"))
         checkNotNull(plan)
