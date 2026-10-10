@@ -5,6 +5,7 @@ internal fun zh(key: Str): String = when (key) {
     // ── 通用 ──
     Str.CommonOk -> "确定"
     Str.CommonCancel -> "取消"
+    Str.CommonClose -> "关闭"
     Str.CommonSave -> "保存"
     Str.CommonContinue -> "继续"
     Str.CommonExecute -> "执行"

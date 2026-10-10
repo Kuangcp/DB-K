@@ -5,6 +5,7 @@ internal fun en(key: Str): String = when (key) {
     // ── Common ──
     Str.CommonOk -> "OK"
     Str.CommonCancel -> "Cancel"
+    Str.CommonClose -> "Close"
     Str.CommonSave -> "Save"
     Str.CommonContinue -> "Continue"
     Str.CommonExecute -> "Run"

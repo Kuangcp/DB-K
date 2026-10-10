@@ -15,6 +15,7 @@ enum class Str {
     // ── 通用 ──
     CommonOk,
     CommonCancel,
+    CommonClose,
     CommonSave,
     CommonContinue,
     CommonExecute,
