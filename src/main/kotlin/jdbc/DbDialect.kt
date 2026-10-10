@@ -143,6 +143,19 @@ interface DbDialect {
     val supportsTargetSwitch: Boolean get() = true
 
     /**
+     * 交互式查询是否可把行上限下推给驱动（`Statement.setMaxRows`）。
+     * 默认 true；ClickHouse 除外——其 JDBC 驱动把它转成服务端 setting `max_result_rows`，
+     * 而默认 `result_overflow_mode=throw`，超限会直接报错而非截断（[ClickHouseDialect] 覆写为 false）。
+     */
+    val supportsRowLimit: Boolean get() = true
+
+    /**
+     * 是否改用「在执行前给 plain SELECT 注入 SQL `LIMIT`」来限行（默认 false，走 [supportsRowLimit]）。
+     * ClickHouse 专用：其驱动不支持安全下推 `setMaxRows`，注入 `LIMIT` 能被 CK 优化器真正下推。
+     */
+    val injectsRowLimit: Boolean get() = false
+
+    /**
      * N1「取更多」：把 [baseSql]（单条、已去尾分号）改写成取第 [offset]+1 行起共 [limit] 行的等价查询。
      * 默认 `LIMIT <limit> OFFSET <offset>`；无 LIMIT 语法的方言（SQL Server / Oracle）覆写。
      * **仅此操作会重写 SQL** —— 客户端排序/筛选不重跑查询。

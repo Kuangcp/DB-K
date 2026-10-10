@@ -24,6 +24,16 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
     /** CH 走 HTTP 响应流，fetchSize 控制批大小。 */
     override val cursorStrategy: CursorStrategy get() = CursorStrategy.PREFETCH
 
+    /**
+     * CH 驱动把 `setMaxRows` 转成服务端 setting `max_result_rows`，默认 `result_overflow_mode=throw`，
+     * 超限直接抛异常（不是截断）；改用 `break` 又会连同子查询一起截断（聚合会算错）。
+     * 所以不下推，改为在执行前给 plain SELECT 注入 `LIMIT`（[injectsRowLimit]）。
+     */
+    override val supportsRowLimit: Boolean get() = false
+
+    /** CK 用 `LIMIT` 注入限行（能被查询优化器真正下推，与手写 LIMIT 等效）。 */
+    override val injectsRowLimit: Boolean get() = true
+
     /** 支持对象组懒加载：组展开才拉正文，首次连接只取计数 + 表/视图名。 */
     override val lazyObjectGroups: Boolean get() = true
 

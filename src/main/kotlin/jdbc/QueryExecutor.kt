@@ -15,7 +15,14 @@ import java.sql.Types
 /** SQL 执行引擎（jdbc 层，不依赖 compose）：单语句执行，结果集最大 MAX_ROWS 行。 */
 object QueryExecutor {
 
-    const val MAX_ROWS = 1000
+    const val MAX_ROWS = 500
+
+    /**
+     * 下推到驱动的行上限：比 [MAX_ROWS] 多 1，多读到的这一行只用于判定「后面还有没有行」
+     * （决定 `truncated`），不会被保留。
+     */
+    const val MAX_ROWS_PROBE = MAX_ROWS + 1
+
     private const val QUERY_TIMEOUT_SECONDS = 30
 
     /**
@@ -26,7 +33,7 @@ object QueryExecutor {
 
     /**
      * 一次查询结果保留的总字符预算（所有单元格累加）：超出即停止读取本结果并置 `truncated`。
-     * 这是大结果内存的**主闸门**——即便单格不大，1000 行 × 数十 KB 也会爆。
+     * 这是大结果内存的**主闸门**——即便单格不大，MAX_ROWS 行 × 数十 KB 也会爆。
      */
     const val MAX_RESULT_CHARS = 16_000_000
 
@@ -52,14 +59,16 @@ object QueryExecutor {
     /** 首个标识符（关键字）词。 */
     private val LEADING_KEYWORD = Regex("^[A-Za-z]+")
 
-    /**
-     * 判断一条 SQL 是否产生结果集（决定走 executeQuery 还是 executeUpdate）。
-     * 取关键字时必须按“任意空白”切词——SQL 常写成 `SELECT\n    a, b`，若按空格切会得到
-     * `"select\n"` 而误判为非查询（ClickHouse 等驱动对 SELECT 走 executeUpdate 不报错，
-     * 只返回 0，表现为“语句执行成功（非查询，未产生结果集）”）。
-     * 另外跳过前导注释与左括号（如 `-- 注释\nselect`、`(select 1) union all …`）。
-     */
-    fun isQueryLike(sql: String): Boolean {
+    /** 分页子句探测（与 app 层 `sqlHasPaginationClause` 同义；jdbc 层不能 import app）。 */
+    private val PAGINATION_CLAUSE = Regex("(?i)\\b(limit|offset|fetch|top|rownum)\\b")
+
+    /** 必须排在 `LIMIT` 之后的尾部子句——有它们时追加 `LIMIT` 会语法错，跳过注入。 */
+    private val LIMIT_TRAILING_CLAUSE = Regex(
+        "(?i)\\b(for\\s+update|for\\s+share|lock\\s+in\\s+share\\s+mode|format|settings|into\\s+(outfile|dumpfile)|option\\s*\\()",
+    )
+
+    /** 跳过前导注释与左括号后的首个关键字（小写）。 */
+    private fun leadingKeyword(sql: String): String? {
         var s = sql.trimStart()
         var stripped = true
         while (stripped) {
@@ -70,26 +79,60 @@ object QueryExecutor {
                 s.startsWith("(") -> { s = s.substring(1).trimStart(); stripped = true }
             }
         }
-        val head = LEADING_KEYWORD.find(s)?.value?.lowercase() ?: return false
-        return head in QUERY_HEADS
+        return LEADING_KEYWORD.find(s)?.value?.lowercase()
     }
+
+    /**
+     * 判断一条 SQL 是否产生结果集（决定走 executeQuery 还是 executeUpdate）。
+     * 取关键字时必须按“任意空白”切词——SQL 常写成 `SELECT\n    a, b`，若按空格切会得到
+     * `"select\n"` 而误判为非查询（ClickHouse 等驱动对 SELECT 走 executeUpdate 不报错，
+     * 只返回 0，表现为“语句执行成功（非查询，未产生结果集）”）。
+     * 另外跳过前导注释与左括号（如 `-- 注释\nselect`、`(select 1) union all …`）。
+     */
+    fun isQueryLike(sql: String): Boolean = leadingKeyword(sql) in QUERY_HEADS
+
+    /**
+     * 是否「以 SELECT 开头、且可安全追加 `LIMIT`」——ClickHouse 用它在执行前注入 `LIMIT` 限行。
+     * 含分页子句时再注入会语法冲突；非 SELECT 头（`WITH`/`INSERT`/`SHOW`…）注入不安全；
+     * 含必须排在 LIMIT 之后的尾部子句（`FORMAT`/`SETTINGS`/`FOR UPDATE`…）也不能追加。
+     * 只在注释/字符串里出现这些词会误判 → 跳过注入（保守，仍由客户端读取上限兜底）。
+     */
+    fun isPlainUnpagedSelect(sql: String): Boolean =
+        leadingKeyword(sql) == "select" &&
+            !PAGINATION_CLAUSE.containsMatchIn(sql) &&
+            !LIMIT_TRAILING_CLAUSE.containsMatchIn(sql)
 
     /**
      * 执行单条 SQL。阻塞调用；调用方负责放到工作线程、保证连接可用。
      * 结果集在连接关闭前整体读出（上限 MAX_ROWS），随后释放语句。
      * [registerStatement]：可选——语句建立后回调一次、finally 中再回调 null，
      * 供 LiveConnection 登记当前执行语句以支持外部 cancel（Statement.cancel）。
+     * [rowLimit]：可选——非空时把行上限下推给驱动（`Statement.setMaxRows`），避免「服务端先算完整
+     * 结果、客户端只读 MAX_ROWS 行」。传 [MAX_ROWS_PROBE]，由 [readResultSet] 负责截回 [MAX_ROWS]。
+     * [wireSql]：可选——真正发给数据库的 SQL；非空时用于执行，[sql] 仍作为 `QueryResult.sql` 记录
+     * （ClickHouse 的 `LIMIT` 注入用它保持「结果记录的是用户原文」，导出/取更多才不会受限）。
      */
-    fun execute(conn: Connection, sql: String, ctx: TemporalContext? = null, registerStatement: ((Statement?) -> Unit)? = null): QueryResult {
+    fun execute(
+        conn: Connection,
+        sql: String,
+        ctx: TemporalContext? = null,
+        rowLimit: Int? = null,
+        wireSql: String? = null,
+        registerStatement: ((Statement?) -> Unit)? = null,
+    ): QueryResult {
         val started = System.currentTimeMillis()
+        val execSql = wireSql ?: sql
         val stmt = conn.createStatement()
         try {
             stmt.queryTimeout = QUERY_TIMEOUT_SECONDS
             registerStatement?.invoke(stmt)
             return if (isQueryLike(sql)) {
-                stmt.executeQuery(sql).use { rs -> readResultSet(sql, rs, started, ctx) }
+                // 下推行上限：pgjdbc→服务端 portal 限制、MySQL→sql_select_limit、H2/SQLite→查询层截断。
+                // 驱动/语句不支持时忽略即可，客户端 [readResultSet] 仍会兜底。
+                rowLimit?.let { runCatching { stmt.maxRows = it } }
+                stmt.executeQuery(execSql).use { rs -> readResultSet(sql, rs, started, ctx) }
             } else {
-                val affected = stmt.executeUpdate(sql)
+                val affected = stmt.executeUpdate(execSql)
                 QueryResult(sql, emptyList(), emptyList(), affectedRows = affected, durationMs = System.currentTimeMillis() - started)
             }
         } finally {

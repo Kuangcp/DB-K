@@ -31,7 +31,7 @@ object ResultExport {
     }
 
     /**
-     * 路径 B：重跑 [sql] 并按方言游标流式导出（不受 1000 行限制，内存常量级）。
+     * 路径 B：重跑 [sql] 并按方言游标流式导出（不受 MAX_ROWS 行限制，内存常量级）。
      * [live] 必须已连接；[sessionContextSql] 非空时先切换会话目标。返回写入行数。
      */
     fun writeStreamed(

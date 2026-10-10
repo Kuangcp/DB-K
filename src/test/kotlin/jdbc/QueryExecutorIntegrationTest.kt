@@ -65,6 +65,64 @@ class QueryExecutorIntegrationTest {
     }
 
     @Test
+    fun `row limit is pushed down and still truncates`() {
+        withH2 { conn ->
+            conn.createStatement().use { st ->
+                st.execute("CREATE TABLE big AS SELECT X AS id FROM SYSTEM_RANGE(1, 1005)")
+            }
+            val r = QueryExecutor.execute(conn, "SELECT * FROM big", rowLimit = QueryExecutor.MAX_ROWS_PROBE)
+            assertTrue(r.isQuery)
+            assertEquals(QueryExecutor.MAX_ROWS, r.rows.size)
+            assertTrue(r.truncated)
+        }
+    }
+
+    @Test
+    fun `exactly MAX_ROWS rows are not marked truncated`() {
+        withH2 { conn ->
+            conn.createStatement().use { st ->
+                st.execute("CREATE TABLE exact AS SELECT X AS id FROM SYSTEM_RANGE(1, ${QueryExecutor.MAX_ROWS})")
+            }
+            val r = QueryExecutor.execute(conn, "SELECT * FROM exact", rowLimit = QueryExecutor.MAX_ROWS_PROBE)
+            assertEquals(QueryExecutor.MAX_ROWS, r.rows.size)
+            assertFalse(r.truncated)
+        }
+    }
+
+    @Test
+    fun `plain unpaged select detection`() {
+        assertTrue(QueryExecutor.isPlainUnpagedSelect("SELECT * FROM t"))
+        assertTrue(QueryExecutor.isPlainUnpagedSelect("  -- c\nselect 1"))
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("SELECT * FROM t LIMIT 10"))
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("SELECT * FROM t OFFSET 5"))
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("WITH x AS (SELECT 1) SELECT * FROM x"))
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("INSERT INTO t SELECT * FROM u"))
+        // 必须排在 LIMIT 之后的尾部子句：追加会语法错，跳过注入
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("SELECT * FROM t FORMAT JSON"))
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("SELECT * FROM t SETTINGS max_threads=1"))
+        assertFalse(QueryExecutor.isPlainUnpagedSelect("SELECT * FROM t FOR UPDATE"))
+    }
+
+    @Test
+    fun `wire sql limits rows while result keeps original sql`() {
+        withH2 { conn ->
+            conn.createStatement().use { st ->
+                st.execute("CREATE TABLE big AS SELECT X AS id FROM SYSTEM_RANGE(1, 1005)")
+            }
+            val original = "SELECT * FROM big"
+            val r = QueryExecutor.execute(
+                conn,
+                original,
+                wireSql = "$original LIMIT ${QueryExecutor.MAX_ROWS_PROBE}",
+            )
+            // QueryResult.sql 必须是用户原文（导出/取更多依赖它）
+            assertEquals(original, r.sql)
+            assertEquals(QueryExecutor.MAX_ROWS, r.rows.size)
+            assertTrue(r.truncated)
+        }
+    }
+
+    @Test
     fun `oversized cell is truncated with marker`() {
         withH2 { conn ->
             conn.createStatement().use { st -> st.execute("CREATE TABLE t (txt CLOB)") }

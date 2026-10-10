@@ -7,7 +7,7 @@ import java.sql.ResultSet
 import java.sql.Statement
 
 /**
- * 全量结果**流式**读取（N8 大数据量导出）：不走 [QueryExecutor] 的 1000 行截断，
+ * 全量结果**流式**读取（N8 大数据量导出）：不走 [QueryExecutor] 的 MAX_ROWS 行截断，
  * 按 [CursorStrategy] 配置语句后逐行回调，内存占用与结果行数无关。
  *
  * 阻塞调用，必须跑在连接所属的单线程执行器上（经 [LiveConnection.streamQuery] 调用）。

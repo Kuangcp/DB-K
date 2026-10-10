@@ -89,16 +89,18 @@ class ConsoleStateRunTest {
             val (_, state) = newState(it, dbPath)
             val console = state.createConsole(pid, "c")
 
-            // 1200 行 > QueryExecutor.MAX_ROWS(1000) → 首屏截断
+            // 1200 行 > QueryExecutor.MAX_ROWS(500) → 首屏截断
             state.run(console, stored, "SELECT X AS n FROM SYSTEM_RANGE(1, 1200) ORDER BY X")
             val first = state.runStateOf(console.id).result!!
             assertTrue(first.truncated)
-            assertEquals(1000, first.rows.size)
+            assertEquals(500, first.rows.size)
             assertTrue(state.canFetchMore(console.id))
 
-            // 取下一页（offset=1000，page=500）→ 追加剩余 200 行
-            val added = state.fetchMore(console, stored).getOrThrow()
-            assertEquals(200, added)
+            // 循环「取更多」（每页 250）直到到底
+            var guard = 0
+            while (state.canFetchMore(console.id) && guard++ < 20) {
+                state.fetchMore(console, stored).getOrThrow()
+            }
             val after = state.runStateOf(console.id).result!!
             assertEquals(1200, after.rows.size)
             assertFalse(after.truncated)

@@ -226,8 +226,27 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     override fun runStatement(statement: String, sessionContextSql: String?): QueryResult =
         runOnConnection({ QueryExecutor.isQueryLike(statement) }) { conn ->
             QueryExecutor.applyContext(conn, sessionContextSql)
-            QueryExecutor.execute(conn, statement, temporalCtx) { st -> registerStatement(st) }
+            QueryExecutor.execute(
+                conn,
+                statement,
+                temporalCtx,
+                rowLimit = if (dialect.supportsRowLimit) QueryExecutor.MAX_ROWS_PROBE else null,
+                wireSql = limitedWireSql(statement),
+                registerStatement = { st -> registerStatement(st) },
+            )
         }
+
+    /**
+     * ClickHouse 特例（[DbDialect.injectsRowLimit]）：对安全的 plain SELECT 注入 `LIMIT`，
+     * 让 CK 优化器真正少读（驱动 `setMaxRows` 在这里不可用，见 [ClickHouseDialect] 注释）。
+     * 用换行分隔，避免用户 SQL 末尾的 `--` 行注释把追加的 `LIMIT` 吞掉。
+     * 返回 null = 不注入（执行原始 SQL）。
+     */
+    private fun limitedWireSql(statement: String): String? {
+        if (!dialect.injectsRowLimit || !QueryExecutor.isPlainUnpagedSelect(statement)) return null
+        val base = statement.trim().trimEnd(';').trim()
+        return dialect.paginate("$base\n", 0, QueryExecutor.MAX_ROWS_PROBE)
+    }
 
     override fun paginate(statement: String, offset: Long, limit: Int): String? =
         dialect.paginate(statement, offset, limit)

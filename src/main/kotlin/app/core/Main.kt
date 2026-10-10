@@ -444,7 +444,7 @@ private fun WindowScope.AppBody(
     }
 
     /**
-     * N8 结果导出：内存结果直接写（≤1000 行）；用户选「全量流式」时重跑 SQL，
+     * N8 结果导出：内存结果直接写（≤ `QueryExecutor.MAX_ROWS` 行）；用户选「全量流式」时重跑 SQL，
      * 按方言游标逐行导出（不受行数上限、内存常量级）。文件写出在 `Dispatchers.IO`。
      */
     fun startResultExport(

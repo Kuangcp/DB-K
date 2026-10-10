@@ -1361,7 +1361,7 @@ class ConsoleState(
         // 光标落库防抖窗口：光标/选区变化远频于文本改动，单独一个更短的窗口（内存即时生效）。
         private const val CARET_SAVE_MS = 1500L
         // N1「取更多」每页行数（< QueryExecutor.MAX_ROWS，保证单页不被截断）
-        private const val FETCH_MORE_PAGE = 500
+        private const val FETCH_MORE_PAGE = 250
         private const val HISTORY_PANEL_LIMIT = 100
     }
 }

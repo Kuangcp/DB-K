@@ -10,7 +10,7 @@
 
 | 路径 | 触发 | 数据来源 | 内存 |
 |---|---|---|---|
-| **A. 当前结果（内存）** | 结果区已有 `QueryResult`（≤ `QueryExecutor.MAX_ROWS`=1000 行） | `result.rows` 直接遍历 | 已在内存，无额外开销 |
+| **A. 当前结果（内存）** | 结果区已有 `QueryResult`（≤ `QueryExecutor.MAX_ROWS`=500 行） | `result.rows` 直接遍历 | 已在内存，无额外开销 |
 | **B. 全量流式（重跑）** | 结果被截断（`truncated`），用户选「全量导出」 | 重跑 `result.sql`，用**游标流式**逐行读 | 常量级（一行 + SXSSF 滑动窗口） |
 
 路径 A 不需要游标；路径 B 是本次的重点。两者共用同一套 **RowSink** 写出器，格式逻辑只实现一遍。
