@@ -95,13 +95,25 @@ enum class ShortcutKey(val token: String, val display: String) {
     /** 功能键：允许单独成键（无需 Ctrl/Alt）。 */
     val isFunctionKey: Boolean get() = this in F1..F12
 
-    /** 该键对应的可打印字符（字母/数字）；其余为 null。用于 AWT KEY_TYPED 兜底消费。 */
+    /** 该键在 `KEY_TYPED` 上的可打印/控制字符（字母/数字/可打印符号/Tab）；其余为 null。
+     *  用于 AWT `KEY_TYPED` 兜底消费（避免字符漏进编辑器，如 Ctrl+/ 输入 '/'）。 */
     val keyChar: Char?
         get() = when (this) {
             in A..Z -> display[0].lowercaseChar()
             in DIGIT_0..DIGIT_9 -> display[0]
             // X11 下 Ctrl+Tab 会额外派发 KEY_TYPED（keyCode 未定义），用 '\t' 兜底识别
             TAB -> '\t'
+            MINUS -> '-'
+            EQUALS -> '='
+            COMMA -> ','
+            PERIOD -> '.'
+            SLASH -> '/'
+            SEMICOLON -> ';'
+            QUOTE -> '\''
+            BACKTICK -> '`'
+            BRACKET_LEFT -> '['
+            BRACKET_RIGHT -> ']'
+            BACKSLASH -> '\\'
             else -> null
         }
 

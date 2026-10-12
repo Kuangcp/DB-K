@@ -205,21 +205,39 @@ fun ShortcutKey.toAwtKeyCode(): Int = when (this) {
  * AWT 事件是否属于该组合键（**不区分事件类型**）。
  *
  * X11 下修饰键+字母除 `KEY_PRESSED` 外还会派发一次 `KEY_TYPED`（`keyCode=VK_UNDEFINED`），
- * 必须在事件进入 Compose 前一并消费，否则会漏进编辑器文本会话。`KEY_TYPED` 用 `keyChar`
- * 兜底：字母本身（Alt+字母）或 Ctrl+字母的控制字符（如 Ctrl+Q → 0x11）。
+ * 必须在事件进入 Compose 前一并消费，否则会漏进编辑器文本会话。`KEY_TYPED` 用 [matchesTypedChar]
+ * 兜底：可打印键本身（Alt+字母、Ctrl+/ → `/`）或 Ctrl+可打印键的 ASCII 控制字符（如 Ctrl+Q → 0x11）。
  */
 fun AwtKeyEvent.matchesAwt(chord: KeyChord): Boolean {
     if (isControlDown != chord.ctrl || isAltDown != chord.alt || isShiftDown != chord.shift) return false
     if (keyCode == chord.key.toAwtKeyCode()) return true
-    val ch = chord.key.keyChar ?: return false
-    return keyChar.equals(ch, ignoreCase = true) || (chord.ctrl && keyChar == controlChar(ch))
+    return chord.matchesTypedChar(keyChar)
+}
+
+/**
+ * `KEY_TYPED` 的字符 [ch] 是否对应本组合键。
+ *
+ * `KEY_TYPED` 的 `keyCode` 是 `VK_UNDEFINED`，只能靠字符判定。可打印键取按键本身的字符
+ * （如 Ctrl+/ → `/`）；Ctrl+字母/符号在 X11 还可能上报 ASCII 控制字符（Ctrl+Q → 0x11、
+ * Ctrl+/ → 0x1F），用 [controlChar] 兼容。
+ */
+fun KeyChord.matchesTypedChar(ch: Char): Boolean {
+    val expected = key.keyChar ?: return false
+    return ch.equals(expected, ignoreCase = true) || (ctrl && ch == controlChar(expected))
 }
 
 /** 首个命中的可配置命令（按注册表顺序），供窗口级派发器定位并整颗消费。 */
 fun Keymap.matchAnyAwt(event: AwtKeyEvent): ShortcutCommand? =
     ShortcutCommand.configurableCommands.firstOrNull { command -> chordsOf(command).any { event.matchesAwt(it) } }
 
-private fun controlChar(ch: Char): Char? = if (ch in 'a'..'z') (ch - 'a' + 1).toChar() else null
+private fun controlChar(ch: Char): Char? = when {
+    ch in 'a'..'z' -> (ch - 'a' + 1).toChar()
+    // Ctrl+[ \ ] ^ _ → 0x1B..0x1F
+    ch in '['..'_' -> ch - 64
+    // Ctrl+/ 常被 X11 映射为 0x1F（US 分隔符）
+    ch == '/' -> 0x1F.toChar()
+    else -> null
+}
 
 /** 仅修饰键按下（Ctrl/Alt/Shift/Meta/AltGr/Win）：录制时忽略、继续等待。 */
 private fun AwtKeyEvent.isModifierOnly(): Boolean = keyCode in MODIFIER_KEY_CODES
