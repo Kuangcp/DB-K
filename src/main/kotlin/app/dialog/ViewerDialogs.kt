@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.MaterialTheme
@@ -224,12 +225,16 @@ private fun ViewerText(
 /**
  * 只读 SQL 代码视图：与编辑器共用 [sqlHighlightSpans] 语法高亮，等宽 + 主题色。
  * 仅用于 DDL（表/视图等数据库对象定义）；任意单元格文本仍用 [ViewerText]，不按 SQL 误染。
+ *
+ * [selectable] = true 时包一层 [SelectionContainer]，允许鼠标自由框选局部文本复制
+ * （Ctrl+Q 表定义弹窗需要「只复制部分字段行」的场景）；默认 false 以免影响历史 SQL / 提交预览等复用方。
  */
 @Composable
 private fun SqlCodeText(
     content: String,
     modifier: Modifier = Modifier,
     settings: EditorSettings,
+    selectable: Boolean = false,
 ) {
     val themeColors = LocalThemeColors.current
     val keywords = remember { sqlHighlightKeywordSet() }
@@ -240,24 +245,28 @@ private fun SqlCodeText(
     val ff = editorFontFamily(settings.fontFamilyName)
     val fs = settings.fontSizeSp.sp
     ViewerFrame(modifier) {
-        Text(
-            annotated,
-            fontFamily = ff,
-            fontSize = fs,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
-        )
+        SelectableView(selectable) {
+            Text(
+                annotated,
+                fontFamily = ff,
+                fontSize = fs,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+            )
+        }
     }
 }
 
 /**
  * 只读 JSON 代码视图：与树视图共用 [jsonSyntaxPalette] 色板，按 JSON 语法高亮（原文模式）。
  * 仅在单元格内容被识别为 JSON 时使用，避免任意文本误染。
+ * [selectable] 语义同 [SqlCodeText]（ES 表定义的 mapping 视图需要自由框选）。
  */
 @Composable
 private fun JsonCodeText(
     content: String,
     modifier: Modifier = Modifier,
     settings: EditorSettings,
+    selectable: Boolean = false,
 ) {
     val themeColors = LocalThemeColors.current
     // themeColors 作 key：主题切换时重算色板（与 SqlCodeText 一致）。
@@ -267,13 +276,24 @@ private fun JsonCodeText(
     val ff = editorFontFamily(settings.fontFamilyName)
     val fs = settings.fontSizeSp.sp
     ViewerFrame(modifier) {
-        Text(
-            annotated,
-            fontFamily = ff,
-            fontSize = fs,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
-        )
+        SelectableView(selectable) {
+            Text(
+                annotated,
+                fontFamily = ff,
+                fontSize = fs,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.9f),
+            )
+        }
     }
+}
+
+/**
+ * 条件性选择容器：`selectable` 为 true 时用 [SelectionContainer] 包裹 [content]，
+ * 使内部文本支持鼠标框选 / Ctrl+A / Ctrl+C；为 false 时原样输出（不改动默认行为）。
+ */
+@Composable
+private fun SelectableView(selectable: Boolean, content: @Composable () -> Unit) {
+    if (selectable) SelectionContainer { content() } else content()
 }
 
 /**
@@ -332,9 +352,10 @@ fun DdlDialog(
                     Text(I18n.t(Str.ViewerLoadingDefinition), style = MaterialTheme.typography.body2)
                 }
                 ddl != null -> if (request.profile.dbType.protocol == Protocol.ELASTICSEARCH) {
-                    JsonCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth(), settings)
+                    // selectable = true：表定义允许自由框选局部字段行复制（不必只能「复制全部」）
+                    JsonCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth(), settings, selectable = true)
                 } else {
-                    SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth(), settings)
+                    SqlCodeText(ddl.orEmpty(), Modifier.weight(1f).fillMaxWidth(), settings, selectable = true)
                 }
                 else -> Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     Text(
