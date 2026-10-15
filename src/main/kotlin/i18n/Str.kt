@@ -470,6 +470,7 @@ enum class Str {
     ConnectionErrorCode,
     DdlFetchFailed,
     ObjectsLoadFailed,
+    ObjectsTruncated,
 
     // ── 连接编辑弹窗 ──
     ConnExternalDriverLoaded,

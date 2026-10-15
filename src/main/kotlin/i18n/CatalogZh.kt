@@ -463,6 +463,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.ConnectionErrorCode -> "错误码 {0}: {1}"
     Str.DdlFetchFailed -> "未获取到定义（对象可能不存在，或当前账号无权限）"
     Str.ObjectsLoadFailed -> "对象加载失败：{0}：{1}"
+    Str.ObjectsTruncated -> "数据源对象数量超出限制，已截断至前 20,000 条。右键数据源可刷新元数据缓存覆盖。"
 
     // ── 连接编辑弹窗 ──
     Str.ConnExternalDriverLoaded -> "外部驱动已加载：{0}"

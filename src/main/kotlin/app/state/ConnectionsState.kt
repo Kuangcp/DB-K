@@ -228,8 +228,31 @@ class ConnectionsState(
         // 1) 缓存命中（含过期）：全量立即可用
         val cached = withContext(Dispatchers.IO) { metaCache.load(rt.profile) }
         if (cached != null) {
-            applyMetadata(rt, cached.schemas, cached.objects)
+            // 旧缓存可能包含海量对象 → 同样需要截断，防止内存膨胀
+            var totalCachedObjects = 0
+            val truncated = linkedMapOf<String, SchemaObjects>()
+            for ((key, obj) in cached.objects) {
+                val size = obj.actualSize()
+                if (totalCachedObjects + size > MAX_TOTAL_OBJECTS) {
+                    if (totalCachedObjects < MAX_TOTAL_OBJECTS) {
+                        val remaining = maxOf(MAX_TOTAL_OBJECTS - totalCachedObjects, 100)
+                        truncated[key] = obj.truncate(remaining.coerceIn(100, MAX_OBJECTS_PER_SCHEMA))
+                    } else break
+                } else {
+                    truncated[key] = if (size > MAX_OBJECTS_PER_SCHEMA) {
+                        obj.truncate(MAX_OBJECTS_PER_SCHEMA)
+                    } else {
+                        obj
+                    }
+                }
+                val obj = truncated[key]!!
+                totalCachedObjects += obj.actualSize()
+            }
+            applyMetadata(rt, cached.schemas, truncated)
             rt.schemasLoading = false
+            if (totalCachedObjects >= MAX_TOTAL_OBJECTS) {
+                rt.statusMessage = I18n.t(Str.ObjectsTruncated, totalCachedObjects, MAX_TOTAL_OBJECTS)
+            }
             if (cached.stale) {
                 Logger.info("meta cache stale for {}; silent background refresh", rt.profile.name)
                 backgroundRefresh(rt)
@@ -607,40 +630,88 @@ class ConnectionsState(
         val lazy = rt.live.capabilities.lazyObjectGroups
         val errors = mutableListOf<String>()
         val reasons = mutableListOf<String>()
-
+        var totalLoaded = 0
+        var truncatedAtSchema: SchemaMeta? = null
 
         // 预标记所有 schema 防止 ensureSchemaObjects 重复加载
         schemas.forEach { rt.objectsLoading[it.key] = true }
 
-        for ((i, schema) in schemas.withIndex()) {
+        for (schema in schemas) {
+            // 全局上限到达 → 跳过剩余 schema（已够用了）
+            if (totalLoaded >= MAX_TOTAL_OBJECTS) {
+                truncatedAtSchema = schema
+                break
+            }
             val t0 = System.currentTimeMillis()
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     if (lazy) {
                         val counts = rt.live.loadObjectCounts(schema)
-                        val core = rt.live.loadCoreObjects(schema)
+                        // 先拿计数，再判断：如果单个组计数远超限额，就不拉正文了（避免 6 万行 JDBC 拉数据卡死）
+                        val shouldLoadCore = counts.values.all { it <= MAX_OBJECTS_PER_SCHEMA }
+                        val core = if (shouldLoadCore) {
+                            rt.live.loadCoreObjects(schema)
+                        } else {
+                            Logger.info("skipping loadCoreObjects for {} because counts exceed limit: {}",
+                                schema.displayName, counts)
+                            SchemaObjects.EMPTY
+                        }
                         SchemaObjects(objects = core.objects, counts = counts)
                     } else {
-                        rt.live.loadObjects(schema)
+                        val totalEstimated = runCatching {
+                            val c = rt.live.loadObjectCounts(schema)
+                            c.values.sum()
+                        }.getOrDefault(0)
+                        if (totalEstimated > MAX_TOTAL_OBJECTS * 3) {
+                            Logger.warn("loadObjects skipped for {} because estimated count {} is huge",
+                                schema.displayName, totalEstimated)
+                            SchemaObjects.EMPTY
+                        } else {
+                            rt.live.loadObjects(schema)
+                        }
                     }
                 }
             }
             val elapsed = System.currentTimeMillis() - t0
-            result.onSuccess { rt.objects[schema.key] = it }
-                .onFailure { t ->
-                    Logger.error(t, "load objects failed {} {}", rt.profile.name, schema.displayName)
-                    errors += schema.displayName
-                    reasons += friendlyMessage(t)
+            result.onSuccess { loaded ->
+                val objSize = loaded.actualSize()
+                // 单 schema 超限 → 截断
+                val objTruncated = if (objSize > MAX_OBJECTS_PER_SCHEMA) {
+                    if (totalLoaded + objSize > MAX_OBJECTS_PER_SCHEMA) {
+                        // 剩余预算不足：缩到还剩下的配额，至少保留 100
+                        val remaining = maxOf(MAX_OBJECTS_PER_SCHEMA - totalLoaded, 100)
+                        truncatedAtSchema = schema
+                        loaded.truncate(remaining.coerceIn(100, MAX_OBJECTS_PER_SCHEMA))
+                    } else {
+                        loaded.truncate(MAX_OBJECTS_PER_SCHEMA)
+                    }
+                } else {
+                    loaded
                 }
+                rt.objects[schema.key] = objTruncated
+                totalLoaded += objTruncated.actualSize()
+            }.onFailure { t ->
+                Logger.error(t, "load objects failed {} {}", rt.profile.name, schema.displayName)
+                errors += schema.displayName
+                reasons += friendlyMessage(t)
+            }
             rt.objectsLoading[schema.key] = false
             // 让出 Main 调度器，使 Compose 管线有机会推进 snapshot 并重组
             delay(1)
         }
 
-        if (errors.isEmpty()) return null
-        return I18n.t(Str.ObjectsLoadFailed,
-            errors.joinToString(I18n.t(Str.CommonListSeparator)).take(40),
-            reasons.first().take(160))
+        // 构建提示：加载失败 / 对象超限截断
+        val warnings = mutableListOf<String>()
+        if (errors.isNotEmpty()) {
+            warnings += I18n.t(Str.ObjectsLoadFailed,
+                errors.joinToString(I18n.t(Str.CommonListSeparator)).take(40),
+                reasons.first().take(160))
+        }
+        if (truncatedAtSchema != null || totalLoaded >= MAX_TOTAL_OBJECTS) {
+            val actualCount = totalLoaded
+            warnings += I18n.t(Str.ObjectsTruncated, actualCount, MAX_TOTAL_OBJECTS)
+        }
+        return if (warnings.isEmpty()) null else warnings.joinToString(" ")
     }
 
     /**
@@ -655,24 +726,55 @@ class ConnectionsState(
         val lazy = rt.live.capabilities.lazyObjectGroups
         val failed = mutableListOf<String>()
         val reasons = mutableListOf<String>()
+        var totalLoaded = 0
         schemas.forEach { s ->
+            if (totalLoaded >= MAX_TOTAL_OBJECTS) return@forEach
             runCatching {
                 if (lazy) {
                     val counts = rt.live.loadObjectCounts(s)
-                    val core = rt.live.loadCoreObjects(s)
+                    val shouldLoadCore = counts.values.all { it <= MAX_OBJECTS_PER_SCHEMA }
+                    val core = if (shouldLoadCore) {
+                        rt.live.loadCoreObjects(s)
+                    } else {
+                        Logger.info("skipping loadCoreObjects for {} because counts exceed limit: {}",
+                            s.displayName, counts)
+                        SchemaObjects.EMPTY
+                    }
                     SchemaObjects(objects = core.objects, counts = counts)
                 } else {
-                    rt.live.loadObjects(s)
+                    val totalEstimated = runCatching {
+                        val c = rt.live.loadObjectCounts(s)
+                        c.values.sum()
+                    }.getOrDefault(0)
+                    if (totalEstimated > MAX_TOTAL_OBJECTS * 3) {
+                        Logger.warn("loadObjects skipped for {} because estimated count {} is huge",
+                            s.displayName, totalEstimated)
+                        SchemaObjects.EMPTY
+                    } else {
+                        rt.live.loadObjects(s)
+                    }
                 }
             }
-                .onSuccess { objects[s.key] = it }
+                .onSuccess { loaded ->
+                    val objSize = loaded.actualSize()
+                    // 单 schema 超限 → 截断
+                    val objTruncated = if (objSize > MAX_OBJECTS_PER_SCHEMA) {
+                        val remaining = maxOf(MAX_OBJECTS_PER_SCHEMA - totalLoaded, 100)
+                        loaded.truncate(remaining.coerceIn(100, MAX_OBJECTS_PER_SCHEMA))
+                    } else {
+                        loaded
+                    }
+                    objects[s.key] = objTruncated
+                    totalLoaded += objTruncated.actualSize()
+                }
                 .onFailure { t ->
                     Logger.error(t, "load objects failed {} {}", rt.profile.name, s.displayName)
                     failed += s.displayName
                     reasons += friendlyMessage(t)
                 }
         }
-        val warn = if (failed.isEmpty()) null
+        val warn = if (failed.isEmpty() && totalLoaded < MAX_TOTAL_OBJECTS) null
+        else if (failed.isEmpty()) I18n.t(Str.ObjectsTruncated, totalLoaded, MAX_TOTAL_OBJECTS)
         else I18n.t(Str.ObjectsLoadFailed,
             failed.joinToString(I18n.t(Str.CommonListSeparator)).take(40),
             reasons.first().take(160))
@@ -723,10 +825,26 @@ class ConnectionsState(
     }
 
     companion object {
+        /** 单 schema 最大对象数；超出时截断列表（保留前 N）。 */
+        private const val MAX_OBJECTS_PER_SCHEMA = 5000
+        /** 全局最大对象总数；全部 schema 加载到此数量后停止继续加载。 */
+        private const val MAX_TOTAL_OBJECTS = 20000
+
         private fun friendlyMessage(t: Throwable?): String = friendlySqlError(t)
 
         /** 按组懒加载标记的键（schemaKey + 类型）。 */
         private fun groupLoadingKey(schemaKey: String, kind: ObjectKind): String =
             schemaKey + "\u0000" + kind.name
+
+        /** 将 SchemaObjects 中每个组的正文限制到指定上限；多余部分丢弃。 */
+        private fun SchemaObjects.truncate(perGroupLimit: Int): SchemaObjects {
+            val truncatedObjects = objects.mapValues { (_, list) ->
+                if (list.size <= perGroupLimit) list else list.take(perGroupLimit)
+            }.filterValues { it.isNotEmpty() }
+            return SchemaObjects(truncatedObjects, counts)
+        }
+
+        /** 统计 SchemaObjects 所有组的实际条数（不含 counts 里未加载的组）。 */
+        private fun SchemaObjects.actualSize(): Int = objects.values.sumOf { it.size }
     }
 }

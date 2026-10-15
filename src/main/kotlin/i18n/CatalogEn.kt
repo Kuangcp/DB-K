@@ -464,6 +464,7 @@ internal fun en(key: Str): String = when (key) {
     Str.ConnectionErrorCode -> "Error code {0}: {1}"
     Str.DdlFetchFailed -> "No definition (the object may not exist, or the account lacks permission)"
     Str.ObjectsLoadFailed -> "Failed to load objects: {0}: {1}"
+    Str.ObjectsTruncated -> "Data source object count exceeds limit; only first 20,000 loaded. Right-click data source to refresh metadata cache and override."
 
     // ── Connection editor dialog ──
     Str.ConnExternalDriverLoaded -> "External driver loaded: {0}"
