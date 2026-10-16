@@ -840,7 +840,7 @@ class ConnectionsState(
         private const val MAX_TOTAL_OBJECTS = 20000
 
         /** 每页拉取对象数（用于 progressiveLoadObjects 和确保分组加载）。 */
-        private const val PAGE_SIZE = 1000
+        private const val PAGE_SIZE = 2000
         /** 自动异步填充上限：达到此数量后停止渐进加载。 */
         private const val AUTO_LOAD_CAP = 5000
         /** 用户手动突破上限：展开某组时允许额外加载到此总数。 */
