@@ -353,7 +353,7 @@ class ConnectionsState(
         if (rt.objects.containsKey(key) || rt.objectsLoading[key] == true) return
         rt.objectsLoading[key] = true
         val result = withContext(Dispatchers.IO) {
-            runCatching { rt.live.loadObjects(schema) }
+            runCatching { rt.live.loadCoreObjectsLimited(schema, offset = 0, limit = MAX_TOTAL_OBJECTS) }
         }
         rt.objectsLoading[key] = false
         result.onSuccess { rt.objects[key] = it }
@@ -374,11 +374,30 @@ class ConnectionsState(
         val loadingKey = groupLoadingKey(key, kind)
         if (current.isLoaded(kind) || rt.groupLoading[loadingKey] == true) return
         rt.groupLoading[loadingKey] = true
+        
+        // 关键修复：不要用 countOf(kind) 做 offset（那是缓存里的总数），
+        // 而是用该 kind 在当前对象列表中实际存在的条数作为起始位置。
+        // 当 progressiveLoadObjects 跳过大库时，objects 是空的，但 counts 有值，
+        // 导致之前 offset = countOf(TABLE) = 62643 → 永远拉不到数据。
+        val loadedOffset = current.forKind(kind).size
+        
         val result = withContext(Dispatchers.IO) {
-            runCatching { rt.live.loadObjectsForKind(schema, kind) }
+            runCatching {
+                if (loadedOffset > 0 && totalCurrentlyLoaded(rt) < AUTO_LOAD_CAP) {
+                    // 已有部分数据 + 未满自动上限 → 拉下一批
+                    rt.live.loadObjectsForKindLimited(schema, kind, offset = loadedOffset, limit = PAGE_SIZE)
+                } else if (loadedOffset == 0 && totalCurrentlyLoaded(rt) < MANUAL_BREAK_CAP) {
+                    // 首次加载或手动突破 → 先拉第一页（受后端 LIMIT 保护）
+                    rt.live.loadObjectsForKindLimited(schema, kind, offset = 0, limit = PAGE_SIZE)
+                } else {
+                    // 已达上限且已有数据 → 不拉
+                    emptyList()
+                }
+            }
         }
         rt.groupLoading.remove(loadingKey)
         result.onSuccess { items ->
+            if (items.isEmpty()) return@onSuccess
             // 写回时重读当前快照：期间可能已并发加载了别的组（同一 schema 多组先后展开）
             val base = rt.objects[key] ?: current
             rt.objects[key] = SchemaObjects(
@@ -830,6 +849,13 @@ class ConnectionsState(
         /** 全局最大对象总数；全部 schema 加载到此数量后停止继续加载。 */
         private const val MAX_TOTAL_OBJECTS = 20000
 
+        /** 每页拉取对象数（用于 progressiveLoadObjects 和确保分组加载）。 */
+        private const val PAGE_SIZE = 1000
+        /** 自动异步填充上限：达到此数量后停止渐进加载。 */
+        private const val AUTO_LOAD_CAP = 5000
+        /** 用户手动突破上限：展开某组时允许额外加载到此总数。 */
+        private const val MANUAL_BREAK_CAP = 7000
+
         private fun friendlyMessage(t: Throwable?): String = friendlySqlError(t)
 
         /** 按组懒加载标记的键（schemaKey + 类型）。 */
@@ -846,5 +872,41 @@ class ConnectionsState(
 
         /** 统计 SchemaObjects 所有组的实际条数（不含 counts 里未加载的组）。 */
         private fun SchemaObjects.actualSize(): Int = objects.values.sumOf { it.size }
+
+        /** 计算运行时当前已加载的对象总数（用于判断是否达到上限）。 */
+        private fun totalCurrentlyLoaded(rt: ConnRuntime): Int = rt.objects.values.sumOf { it.actualSize() }
+    }
+
+    /**
+     * 从成功执行的 SQL 中提取表名并注册到内存补全目录。
+     * 解析 FROM / JOIN 后的标识符，如果不在当前批次缓存中，则异步分页拉取追加。
+     */
+    suspend fun registerQueriedTables(profile: ConnectionProfile, sql: String) {
+        val rt = runtime(profile)
+        val rawNames = Regex("""(?:FROM|JOIN)\s+`?(\w+)`?""").findAll(sql)
+            .map { it.groupValues[1].trim('`', '"') }.distinct().toList()
+        
+        if (rawNames.isEmpty()) return
+        Logger.info("registering {} queried tables for {}: {}", rawNames.size, profile.name, rawNames.joinToString(", "))
+        
+        for (tableName in rawNames) {
+            var matchedSchema: SchemaMeta? = null
+            var kind = ObjectKind.TABLE
+            
+            when {
+                tableName.endsWith("_view", ignoreCase = true) -> kind = ObjectKind.VIEW
+                tableName.endsWith("_shard", ignoreCase = true) || tableName.endsWith("_table", ignoreCase = true) -> kind = ObjectKind.TABLE
+            }
+            
+            for (schema in rt.schemas.orEmpty()) {
+                val existing = rt.objects[schema.key]
+                if (existing != null && !existing.isLoaded(kind)) {
+                    matchedSchema = schema
+                    break
+                }
+            }
+            
+            if (matchedSchema != null) ensureGroupObjects(profile, matchedSchema, kind)
+        }
     }
 }

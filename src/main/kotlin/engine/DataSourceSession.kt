@@ -53,8 +53,26 @@ interface DataSourceSession : AutoCloseable {
     /** 懒加载的「核心组」正文（补全 / 首屏必需的类型）。 */
     fun loadCoreObjects(ns: SchemaMeta): SchemaObjects
 
+    /**
+     * 分页版核心对象加载：从 [offset] 起取最多 [limit] 个对象。
+     * 用于「流式分片加载」——避免大库展开单组时一次性 prefetch 几万行。
+     */
+    open fun loadCoreObjectsLimited(ns: SchemaMeta, offset: Int, limit: Int): SchemaObjects {
+        val full = loadCoreObjects(ns)
+        return SchemaObjects(
+            objects = full.objects.mapValues { it.value.drop(offset).take(limit) },
+            counts = full.counts,
+        )
+    }
+
     /** 单一类型组的正文（组展开时调用）。 */
     fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta>
+
+    /** 分页版单类型组加载：从 [offset] 起取最多 [limit] 个对象。 */
+    open fun loadObjectsForKindLimited(ns: SchemaMeta, kind: ObjectKind, offset: Int, limit: Int): List<DbObjectMeta> {
+        val full = loadObjectsForKind(ns, kind)
+        return full.drop(offset).take(limit)
+    }
 
     /**
      * 对象搜索（支持 pattern / 类型过滤 / 游标分页）。默认忽略搜索条件，退回 [loadObjectsForKind]。

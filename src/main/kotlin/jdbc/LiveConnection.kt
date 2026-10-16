@@ -205,8 +205,14 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     override fun loadCoreObjects(ns: SchemaMeta): SchemaObjects =
         onConnection { dialect.loadCoreObjects(it, ns) }
 
+    override fun loadCoreObjectsLimited(ns: SchemaMeta, offset: Int, limit: Int): SchemaObjects =
+        onConnection { dialect.loadCoreObjectsLimited(it, ns, offset, limit) }
+
     override fun loadObjectsForKind(ns: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
         onConnection { dialect.loadObjectsForKind(it, ns, kind) }
+
+    override fun loadObjectsForKindLimited(ns: SchemaMeta, kind: ObjectKind, offset: Int, limit: Int): List<DbObjectMeta> =
+        onConnection { dialect.loadObjectsForKindLimited(it, ns, kind, offset, limit) }
 
     override fun loadColumns(ns: SchemaMeta?, table: String): List<ColumnMeta> =
         onConnection { dialect.loadColumns(it, ns, table) }

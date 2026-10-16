@@ -1255,7 +1255,10 @@ class ConsoleState(
             progress = progress,
             progressLineCount = lineCountAtRun,
         )
-        // 结果落地后计算可编辑计划（无基表/无主键/视图 → 保持 null）
+        // 执行成功后自动注册 SQL 中的表名到补全目录（分页保护）
+        if (errIdx < 0 && target.isNotBlank()) {
+            try { connectionsState.registerQueriedTables(profile, target) } catch (e: Throwable) { Logger.warn(e, "register queried tables failed") }
+        }
         ensureEditPlan(console, profile)
     }
 

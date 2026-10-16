@@ -58,11 +58,33 @@ interface DbDialect {
     fun loadCoreObjects(conn: Connection, schema: SchemaMeta): SchemaObjects = loadObjects(conn, schema)
 
     /**
+     * 分页版核心对象加载：从 [offset] 起取最多 [limit] 个对象。
+     * 用于「流式分片加载」——避免大库一次性 prefetch 几万行导致卡死。
+     */
+    open fun loadCoreObjectsLimited(
+        conn: Connection, schema: SchemaMeta, offset: Int, limit: Int,
+    ): SchemaObjects {
+        val full = loadCoreObjects(conn, schema)
+        return SchemaObjects(
+            objects = full.objects.mapValues { it.value.drop(offset).take(limit) },
+            counts = full.counts,
+        )
+    }
+
+    /**
      * 单一类型组的正文（组展开时调用）。默认从全量 [loadObjects] 取子集；
      * 懒加载方言应覆写为只查该类型。
      */
     fun loadObjectsForKind(conn: Connection, schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> =
         loadObjects(conn, schema).forKind(kind)
+
+    /**
+     * 分页版单类型组加载：从 [offset] 起取最多 [limit] 个对象。
+     * 用于「流式分片加载」——避免大库展开单组时一次性 prefetch 几万行。
+     */
+    open fun loadObjectsForKindLimited(
+        conn: Connection, schema: SchemaMeta, kind: ObjectKind, offset: Int, limit: Int,
+    ): List<DbObjectMeta> = loadObjectsForKind(conn, schema, kind).drop(offset).take(limit)
 
     /**
      * 探测单表列清单（编辑器列补全）。默认走 JDBC [DatabaseMetaData.getColumns]。

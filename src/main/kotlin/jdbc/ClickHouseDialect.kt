@@ -106,6 +106,30 @@ object ClickHouseDialect : GenericDialect(DbType.CLICKHOUSE, "com.clickhouse.jdb
     override fun loadCoreObjects(conn: Connection, schema: SchemaMeta): SchemaObjects =
         loadObjects(conn, schema)
 
+    /** 分页版：SQL 层面加 LIMIT/OFFSET，避免一次拉全量导致 JDBC 卡死。 */
+    override fun loadCoreObjectsLimited(
+        conn: Connection, schema: SchemaMeta, offset: Int, limit: Int,
+    ): SchemaObjects {
+        val catalog = schema.catalog ?: return SchemaObjects.EMPTY
+        val tables = mutableListOf<String>()
+        val views = mutableListOf<String>()
+        conn.prepareStatement(
+            "SELECT name, engine FROM system.tables WHERE database = ? AND is_temporary = 0 ORDER BY name LIMIT ? OFFSET ?"
+        ).use { ps ->
+            ps.setString(1, catalog)
+            ps.setInt(2, limit)
+            ps.setInt(3, offset)
+            ps.executeQuery().use { rs ->
+                while (rs.next()) {
+                    val name = rs.getString(1) ?: continue
+                    val engine = rs.getString(2)?.uppercase().orEmpty()
+                    if (engine in viewEngines) views += name else tables += name
+                }
+            }
+        }
+        return SchemaObjects.simple(tables.sorted(), views.sorted())
+    }
+
     override fun loadObjectsForKind(conn: Connection, schema: SchemaMeta, kind: ObjectKind): List<DbObjectMeta> {
         val catalog = schema.catalog ?: return emptyList()
         val wantViews = kind == ObjectKind.VIEW
