@@ -1255,9 +1255,9 @@ class ConsoleState(
             progress = progress,
             progressLineCount = lineCountAtRun,
         )
-        // 执行成功后自动注册 SQL 中的表名到补全目录（分页保护）
+        Logger.info("🔍 [ConsoleState.run] query success (errIdx={}), target length={}", errIdx, if(target.isNotBlank()) target.length else 0); // 执行成功后自动注册 SQL 中的表名到补全目录（分页保护）
         if (errIdx < 0 && target.isNotBlank()) {
-            try { connectionsState.registerQueriedTables(profile, target) } catch (e: Throwable) { Logger.warn(e, "register queried tables failed") }
+            Logger.info("📋 Calling registerQueriedTables for profile {} with target: {}", profile.id, if(target.length > 150) target.substring(0,150)+"..." else target); try { connectionsState.registerQueriedTables(profile, target) } catch (e: Throwable) { Logger.warn(e, "register queried tables failed") }
         }
         ensureEditPlan(console, profile)
     }

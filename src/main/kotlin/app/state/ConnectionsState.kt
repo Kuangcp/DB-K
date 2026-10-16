@@ -667,15 +667,10 @@ class ConnectionsState(
                     if (lazy) {
                         val counts = rt.live.loadObjectCounts(schema)
                         // 先拿计数，再判断：如果单个组计数远超限额，就不拉正文了（避免 6 万行 JDBC 拉数据卡死）
-                        val shouldLoadCore = counts.values.all { it <= MAX_OBJECTS_PER_SCHEMA }
-                        val core = if (shouldLoadCore) {
-                            rt.live.loadCoreObjects(schema)
-                        } else {
-                            Logger.info("skipping loadCoreObjects for {} because counts exceed limit: {}",
-                                schema.displayName, counts)
-                            SchemaObjects.EMPTY
-                        }
-                        SchemaObjects(objects = core.objects, counts = counts)
+                        // 关键修复：不再跳过大库！改用分页版只拉第一页（1000条），
+                        // 既避免一次 prefetch 几万行卡死，又能让用户看到部分表名用于补全。
+                        val firstPage = rt.live.loadCoreObjectsLimited(schema, offset = 0, limit = PAGE_SIZE)
+                        SchemaObjects(objects = firstPage.objects, counts = counts)
                     } else {
                         val totalEstimated = runCatching {
                             val c = rt.live.loadObjectCounts(schema)
@@ -751,15 +746,10 @@ class ConnectionsState(
             runCatching {
                 if (lazy) {
                     val counts = rt.live.loadObjectCounts(s)
-                    val shouldLoadCore = counts.values.all { it <= MAX_OBJECTS_PER_SCHEMA }
-                    val core = if (shouldLoadCore) {
-                        rt.live.loadCoreObjects(s)
-                    } else {
-                        Logger.info("skipping loadCoreObjects for {} because counts exceed limit: {}",
-                            s.displayName, counts)
-                        SchemaObjects.EMPTY
-                    }
-                    SchemaObjects(objects = core.objects, counts = counts)
+                        // 关键修复：不再跳过大库！改用分页版只拉第一页（1000条），
+                        // 既避免一次 prefetch 几万行卡死，又能让用户看到部分表名用于补全。
+                        val firstPage = rt.live.loadCoreObjectsLimited(s, offset = 0, limit = PAGE_SIZE)
+                        SchemaObjects(objects = firstPage.objects, counts = counts)
                 } else {
                     val totalEstimated = runCatching {
                         val c = rt.live.loadObjectCounts(s)
