@@ -1,6 +1,5 @@
 package app.ui
 
-import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.rememberScrollbarAdapter
@@ -38,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -121,9 +121,10 @@ private const val RESULT_GUTTER_DP = 44
 
 
 /** 结果网格：列宽按表头与最多前 300 行采样估算；表头与数据共用横向滚动。
- * 交互：右键单元格可「复制单元格值 / 复制本行 → INSERT」（不做单击复制，避免动不动污染剪贴板）。
+ * 交互：右键单元格弹自绘级联菜单——一级「复制选中行 / 复制本行」悬浮展开二级格式（TSV / CSV / INSERT），
+ * 另有格级/行级操作（不做单击复制，避免动不动污染剪贴板）。
  * [transposed]=true 时仅展示行列转制视图（复制交互随之作用于转置后的网格；
- * “本行 → INSERT”在转置视图下无意义故隐藏）。
+ * “本行 → INSERT”在转置视图下无意义故隐去）。
  */
 /** 结果表内单元格坐标（行列均基于当前展示视图：转置后为转置坐标）。 */
 private data class CellSel(val row: Int, val col: Int)
@@ -152,6 +153,9 @@ private sealed interface EditRequest {
     data class Cell(val key: CellKey, override val title: String, override val value: String?) : EditRequest
     data class Insert(val id: Long, val col: Int, override val title: String, override val value: String?) : EditRequest
 }
+
+/** 右键菜单目标：唯一锚点（展示视图单元格 / 待插入行的格）+ 点击局部坐标 + 菜单项。 */
+private data class CtxMenuTarget(val anchor: Any, val offset: Offset, val items: List<MenuEntry>)
 
 @Composable
 internal fun ResultTable(
@@ -190,6 +194,8 @@ internal fun ResultTable(
     var editDraft by remember { mutableStateOf("") }
     // 长值/多行/NULL → 对话框编辑
     var dialogEdit by remember { mutableStateOf<EditRequest?>(null) }
+    // 右键级联菜单：命中单元格（展示视图坐标）+ 点击局部坐标 + 菜单项
+    var ctxMenu by remember { mutableStateOf<CtxMenuTarget?>(null) }
     // 暂存修改叠到展示值上（仅值变化，尺寸不变）
     val edited = remember(result, resultEdits.cells) { applyEdits(result, resultEdits.cells) }
     // 视图层（N1）：排序/筛选只改行顺序与可见行，不重跑 SQL；rowView 保留回原始行的映射
@@ -317,6 +323,11 @@ internal fun ResultTable(
     }
     fun cellText(r: Int, c: Int): String? = view.rows.getOrNull(r)?.getOrNull(c)
 
+    /**
+     * 构建数据格的右键级联菜单：
+     * 一级「复制选中行 / 复制本行」（悬浮展开二级格式选择）+ 格级/行级操作。
+     */
+
     fun editableAt(r: Int, c: Int): Boolean {
         val plan = editPlan ?: return false
         val orig = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, r, c) ?: return false
@@ -435,6 +446,118 @@ internal fun ResultTable(
     val truncatedRows: Set<Int> = buildSet {
         result.rows.forEachIndexed { idx, r -> if (r.any { QueryExecutor.isTruncatedCell(it) }) add(idx) }
     }
+    fun buildCellMenu(index: Int, c: Int): List<MenuEntry> {
+        val v = cellText(index, c)
+        val colName = cols.getOrNull(c)?.name ?: ""
+        val origRow = rowView.rowOrder.getOrNull(index)
+        val origKey = displayToOriginal(rowView.rowOrder, result.columns.size, transposed, index, c)
+        val isEditable = editableAt(index, c)
+        val deleted = origRow != null && origRow in resultEdits.deletes
+        val pending = origKey != null && resultEdits.cells.containsKey(origKey)
+        val selRect = sel.value
+        val hasSelection = selRect != null && !selRect.isSingle
+        // 本行可导出（转置视图 / 截断行不可）
+        val rowAvail = !transposed && origRow != null && origRow !in truncatedRows
+        val canInsert = canInsertRow && origRow != null && origRow !in truncatedRows
+        // 选中行的原始行号：含截断单元格的行不能据此生成 INSERT（否则会把截断内容写回库）
+        val selOrigRows = selRect?.let { r ->
+            (r.minRow..r.maxRow).mapNotNull { rowView.rowOrder.getOrNull(it) }
+        } ?: emptyList()
+        val selInsertOk = hasSelection && canInsertRow && selOrigRows.isNotEmpty() && selOrigRows.none { it in truncatedRows }
+        val colNames = result.columns.map { it.name }
+        val cellView = v?.let { CellView(I18n.t(lang, Str.ResultCellTitle, colName, index + 1), it) }
+        return buildList {
+            // 一级：复制选中行 → 二级 TSV / CSV / INSERT
+            add(
+                MenuEntry.Submenu(
+                    I18n.t(lang, Str.ResultCopySelectionGroup),
+                    listOf(
+                        MenuEntry.Action(I18n.t(lang, Str.ResultFmtTsv), enabled = hasSelection) {
+                            selRect?.takeIf { !it.isSingle }?.let { copySelection(it, tsv = true) }
+                        },
+                        MenuEntry.Action(I18n.t(lang, Str.ResultFmtCsv), enabled = hasSelection) {
+                            selRect?.takeIf { !it.isSingle }?.let { copySelection(it, tsv = false) }
+                        },
+                        MenuEntry.Action(I18n.t(lang, Str.ResultFmtInsert), enabled = selInsertOk) {
+                            selRect?.takeIf { !it.isSingle }?.let { rect ->
+                                val block = selectedRowsOf(rect)
+                                val selCols = (rect.minCol..rect.maxCol).mapNotNull { view.columns.getOrNull(it)?.name }
+                                val insertSql = rowsToInsertSql(result.sql, selCols, block)
+                                if (insertSql != null) {
+                                    onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedSelectionInsert, block.size))
+                                }
+                            }
+                        },
+                    ),
+                ),
+            )
+            // 一级：复制本行 → 二级 TSV / CSV / INSERT
+            add(
+                MenuEntry.Submenu(
+                    I18n.t(lang, Str.ResultCopyRowGroup),
+                    listOf(
+                        MenuEntry.Action(I18n.t(lang, Str.ResultFmtTsv), enabled = rowAvail) {
+                            if (origRow != null) {
+                                onCopyText(
+                                    ExportText.tsvHeaderAndRow(colNames, result.rows[origRow]),
+                                    I18n.t(lang, Str.ResultCopiedRowTsv),
+                                )
+                            }
+                        },
+                        MenuEntry.Action(I18n.t(lang, Str.ResultFmtCsv), enabled = rowAvail) {
+                            if (origRow != null) {
+                                onCopyText(
+                                    ExportText.csvHeaderAndRow(colNames, result.rows[origRow]),
+                                    I18n.t(lang, Str.ResultCopiedRowCsv),
+                                )
+                            }
+                        },
+                        MenuEntry.Action(I18n.t(lang, Str.ResultFmtInsert), enabled = canInsert) {
+                            if (origRow != null) {
+                                val insertSql = rowToInsertSql(result.sql, colNames, result.rows[origRow])
+                                if (insertSql != null) {
+                                    onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedRowInsert, tableName))
+                                }
+                            }
+                        },
+                    ),
+                ),
+            )
+            add(MenuEntry.Separator)
+            add(MenuEntry.Action(I18n.t(lang, Str.ResultCopyCell)) { copyCellValue(onCopyText, v, colName) })
+            if (cellView != null) {
+                add(MenuEntry.Action(I18n.t(lang, Str.ResultViewFull)) { viewer = cellView })
+            }
+            if (isEditable && !deleted) {
+                add(MenuEntry.Separator)
+                add(MenuEntry.Action(I18n.t(lang, Str.ResultEditCell)) { beginEdit(index, c) })
+                add(
+                    MenuEntry.Action(I18n.t(lang, Str.ResultEditInDialog)) {
+                        origKey?.let {
+                            dialogEdit = EditRequest.Cell(
+                                it,
+                                I18n.t(lang, Str.ResultCellTitle, result.columns[it.col].name, it.row + 1),
+                                v,
+                            )
+                        }
+                    },
+                )
+                add(MenuEntry.Action(I18n.t(lang, Str.ResultSetNull)) { origKey?.let { onCellEdit(it, CellValue(null)) } })
+            }
+            if (pending) {
+                add(MenuEntry.Action(I18n.t(lang, Str.ResultUndoCellEdit)) { onClearCellEdit(origKey) })
+            }
+            if (canModifyRows && origRow != null) {
+                add(MenuEntry.Separator)
+                add(
+                    MenuEntry.Action(if (deleted) I18n.t(lang, Str.ResultUndoDeleteRow) else I18n.t(lang, Str.ResultMarkDeleteRowCtx)) {
+                        onToggleRowDelete(origRow)
+                    },
+                )
+            }
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -565,99 +688,16 @@ internal fun ResultTable(
                                             cellView?.let { cv -> viewer = cv }
                                         }
                                     },
-                                    menuItems = buildList {
-                                        // 命中格在当前多选区内 → 顶部给「复制选区」
-                                        sel.value?.let { r -> if (!r.isSingle && r.contains(index, c)) r else null }?.let { rect ->
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultCopySelectionTsv)) {
-                                                    copySelection(rect, tsv = true)
-                                                },
-                                            )
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultCopySelectionCsv)) {
-                                                    copySelection(rect, tsv = false)
-                                                },
-                                            )
-                                        }
-                                        add(
-                                            ContextMenuItem(I18n.t(lang, Str.ResultCopyCell)) {
-                                                copyCellValue(onCopyText, v, colName)
-                                            },
-                                        )
-                                        if (cellView != null) {
-                                            add(ContextMenuItem(I18n.t(lang, Str.ResultViewFull)) { viewer = cellView })
-                                        }
-                                        if (canInsertRow && origRow != null && origRow !in truncatedRows) {
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultCopyRowInsert)) {
-                                                    val insertSql = rowToInsertSql(
-                                                        result.sql,
-                                                        result.columns.map { it.name },
-                                                        result.rows[origRow],
-                                                    )
-                                                    if (insertSql != null) {
-                                                        onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedRowInsert, tableName))
-                                                    }
-                                                },
-                                            )
-                                        }
-                                        // CSV 不需要表名，只需要列名 + 原始行；与 INSERT 一样跳过截断行。
-                                        if (!transposed && origRow != null && origRow !in truncatedRows) {
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultCopyRowCsv)) {
-                                                    onCopyText(
-                                                        ExportText.csvHeaderAndRow(
-                                                            result.columns.map { it.name },
-                                                            result.rows[origRow],
-                                                        ),
-                                                        I18n.t(lang, Str.ResultCopiedRowCsv),
-                                                    )
-                                                },
-                                            )
-                                            // TSV（含表头）：与 CSV 同守卫（转置/截断行不提供）
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultCopyRowTsv)) {
-                                                    onCopyText(
-                                                        ExportText.tsvHeaderAndRow(
-                                                            result.columns.map { it.name },
-                                                            result.rows[origRow],
-                                                        ),
-                                                        I18n.t(lang, Str.ResultCopiedRowTsv),
-                                                    )
-                                                },
-                                            )
-                                        }
-                                        if (isEditable && !deleted) {
-                                            add(ContextMenuItem(I18n.t(lang, Str.ResultEditCell)) { beginEdit(index, c) })
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultEditInDialog)) {
-                                                    origKey?.let {
-                                                        dialogEdit = EditRequest.Cell(
-                                                            it,
-                                                            I18n.t(lang, Str.ResultCellTitle, result.columns[it.col].name, it.row + 1),
-                                                            v,
-                                                        )
-                                                    }
-                                                },
-                                            )
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultSetNull)) {
-                                                    origKey?.let { onCellEdit(it, CellValue(null)) }
-                                                },
-                                            )
-                                        }
-                                        if (pending) {
-                                            add(
-                                                ContextMenuItem(I18n.t(lang, Str.ResultUndoCellEdit)) {
-                                                    onClearCellEdit(origKey)
-                                                },
-                                            )
-                                        }
-                                        if (canModifyRows && origRow != null) {
-                                            add(
-                                                ContextMenuItem(if (deleted) I18n.t(lang, Str.ResultUndoDeleteRow) else I18n.t(lang, Str.ResultMarkDeleteRowCtx)) {
-                                                    onToggleRowDelete(origRow)
-                                                },
+                                    onContextMenu = { offset ->
+                                        ctxMenu = CtxMenuTarget(CellSel(index, c), offset, buildCellMenu(index, c))
+                                    },
+                                    contextMenu = {
+                                        val anchor = CellSel(index, c)
+                                        ctxMenu?.takeIf { it.anchor == anchor }?.let { m ->
+                                            CascadingContextMenu(
+                                                items = m.items,
+                                                clickOffset = m.offset,
+                                                onDismiss = { ctxMenu = null },
                                             )
                                         }
                                     },
@@ -705,33 +745,50 @@ internal fun ResultTable(
                                         onDoubleClick = if (isEditable) {
                                             { beginInsertEdit(ins.id, c) }
                                         } else null,
-                                        menuItems = buildList {
-                                            if (isEditable) {
-                                                add(ContextMenuItem(I18n.t(lang, Str.ResultEditPendingCell)) { beginInsertEdit(ins.id, c) })
-                                                add(
-                                                    ContextMenuItem(I18n.t(lang, Str.ResultEditInDialog)) {
-                                                        val pendingName = result.columns.getOrNull(c)?.name ?: I18n.t(lang, Str.ResultColumnFallback)
-                                                        dialogEdit = EditRequest.Insert(
-                                                            ins.id, c,
-                                                            I18n.t(lang, Str.ResultPendingRowTitle, pendingName),
-                                                            filled?.raw,
+                                        onContextMenu = { offset ->
+                                            val pendingName = result.columns.getOrNull(c)?.name ?: I18n.t(lang, Str.ResultColumnFallback)
+                                            ctxMenu = CtxMenuTarget(
+                                                ins.id to c,
+                                                offset,
+                                                buildList {
+                                                    if (isEditable) {
+                                                        add(MenuEntry.Action(I18n.t(lang, Str.ResultEditPendingCell)) { beginInsertEdit(ins.id, c) })
+                                                        add(
+                                                            MenuEntry.Action(I18n.t(lang, Str.ResultEditInDialog)) {
+                                                                dialogEdit = EditRequest.Insert(
+                                                                    ins.id, c,
+                                                                    I18n.t(lang, Str.ResultPendingRowTitle, pendingName),
+                                                                    filled?.raw,
+                                                                )
+                                                            },
                                                         )
-                                                    },
+                                                        add(
+                                                            MenuEntry.Action(I18n.t(lang, Str.ResultSetNull)) {
+                                                                onInsertCellEdit(ins.id, c, CellValue(null))
+                                                            },
+                                                        )
+                                                        if (c in ins.values) {
+                                                            add(
+                                                                MenuEntry.Action(I18n.t(lang, Str.ResultClearPendingCell)) {
+                                                                    onClearInsertCell(ins.id, c)
+                                                                },
+                                                            )
+                                                        }
+                                                    }
+                                                    add(MenuEntry.Separator)
+                                                    add(MenuEntry.Action(I18n.t(lang, Str.ResultRemovePendingRow)) { onRemoveInsertRow(ins.id) })
+                                                },
+                                            )
+                                        },
+                                        contextMenu = {
+                                            val anchor = ins.id to c
+                                            ctxMenu?.takeIf { it.anchor == anchor }?.let { m ->
+                                                CascadingContextMenu(
+                                                    items = m.items,
+                                                    clickOffset = m.offset,
+                                                    onDismiss = { ctxMenu = null },
                                                 )
-                                                add(
-                                                    ContextMenuItem(I18n.t(lang, Str.ResultSetNull)) {
-                                                        onInsertCellEdit(ins.id, c, CellValue(null))
-                                                    },
-                                                )
-                                                if (c in ins.values) {
-                                                    add(
-                                                        ContextMenuItem(I18n.t(lang, Str.ResultClearPendingCell)) {
-                                                            onClearInsertCell(ins.id, c)
-                                                        },
-                                                    )
-                                                }
                                             }
-                                            add(ContextMenuItem(I18n.t(lang, Str.ResultRemovePendingRow)) { onRemoveInsertRow(ins.id) })
                                         },
                                     )
                                 }

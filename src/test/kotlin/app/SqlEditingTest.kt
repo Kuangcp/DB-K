@@ -82,6 +82,29 @@ class SqlEditingTest {
     }
 
     @Test
+    fun `rowsToInsertSql writes one multi-value insert`() {
+        val ins = rowsToInsertSql(
+            "SELECT * FROM users",
+            listOf("id", "name"),
+            listOf(
+                listOf("1", "Ann"),
+                listOf("2", null),
+                listOf("3", "O'Neil"),
+            ),
+        )
+        assertEquals(
+            "INSERT INTO users (id, name) VALUES\n('1', 'Ann'),\n('2', NULL),\n('3', 'O''Neil');",
+            ins,
+        )
+    }
+
+    @Test
+    fun `rowsToInsertSql returns null for unknown table or empty rows`() {
+        assertNull(rowsToInsertSql("SELECT a FROM (SELECT 1 AS a) sub", listOf("a"), listOf(listOf("1"))))
+        assertNull(rowsToInsertSql("SELECT * FROM users", listOf("a"), emptyList()))
+    }
+
+    @Test
     fun `extractTableName handles from into update and quotes`() {
         assertEquals("users", extractTableName("SELECT * FROM users WHERE 1=1"))
         assertEquals("t", extractTableName("INSERT INTO t (a) VALUES (1)"))

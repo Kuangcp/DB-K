@@ -1,9 +1,9 @@
 package app.ui
 
-import androidx.compose.foundation.ContextMenuArea
-import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.contextMenuOpenDetector
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,12 +46,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -291,6 +293,7 @@ internal fun RowHeaderCell(text: String, width: Int, highlighted: Boolean = fals
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun DataCell(
     value: String?,
@@ -306,7 +309,10 @@ internal fun DataCell(
     muted: Boolean = false,
     onDoubleClick: (() -> Unit)? = null,
     editor: (@Composable () -> Unit)? = null,
-    menuItems: List<ContextMenuItem> = emptyList(),
+    /** 右键菜单：给定位器接管右键检测，回调收到单元格局部坐标。为 null 则不接管。 */
+    onContextMenu: ((Offset) -> Unit)? = null,
+    /** 右键菜单内容插槽（渲染在单元格 Box 内，Popup 以单元格为锚点）；由调用方用 [onContextMenu] 触发。 */
+    contextMenu: (@Composable () -> Unit)? = null,
 ) {
     val content: @Composable () -> Unit = {
         if (value == null) {
@@ -363,6 +369,14 @@ internal fun DataCell(
     } else {
         Modifier
     }
+    // 右键检测：借用 Compose 的 contextMenuOpenDetector（与 ContextMenuArea 同源，平台可靠）
+    // 经 rememberUpdatedState 读最新回调，避免 LazyColumn 复用节点时捕获到旧的 index/col
+    val currentContextMenu = rememberUpdatedState(onContextMenu)
+    val menuDetector = if (editor == null && onContextMenu != null) {
+        Modifier.contextMenuOpenDetector(Unit, true) { offset -> currentContextMenu.value?.invoke(offset) }
+    } else {
+        Modifier
+    }
     val base = Modifier
         .width(width.dp)
         .height(26.dp)
@@ -372,17 +386,10 @@ internal fun DataCell(
             else Modifier,
         )
         .then(gesture)
-    when {
-        editor != null -> Box(modifier = base, contentAlignment = Alignment.CenterStart) { editor() }
-        menuItems.isEmpty() -> Box(modifier = base, contentAlignment = Alignment.CenterStart) { content() }
-        else -> {
-            // 仅右键菜单可复制（不做单击复制）
-            ContextMenuArea(items = { menuItems }) {
-                Box(modifier = base, contentAlignment = Alignment.CenterStart) {
-                    content()
-                }
-            }
-        }
+        .then(menuDetector)
+    Box(modifier = base, contentAlignment = Alignment.CenterStart) {
+        if (editor != null) editor() else content()
+        contextMenu?.invoke()
     }
 }
 

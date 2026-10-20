@@ -747,20 +747,36 @@ fun toggleLineComment(text: String, selStart: Int, selEnd: Int, prefix: String):
     return newText to (mapCommentOffset(from, edits)..mapCommentOffset(to, edits))
 }
 
+/** 列名清单 → INSERT 列清单（非法标识符加双引号）。 */
+private fun sqlColumnList(colNames: List<String>): String =
+    colNames.joinToString(", ") { name ->
+        if (Regex("^[A-Za-z_][A-Za-z0-9_]*$").matches(name)) name
+        else "\"${name.replace("\"", "\"\"")}\""
+    }
+
+/** 一行值 → VALUES 元组文本（NULL → NULL，其余单引号包裹并翻倍）。 */
+private fun sqlValueTuple(row: List<String?>): String =
+    "(" + row.joinToString(", ") { v -> if (v == null) "NULL" else "'" + escapeSqlValue(v) + "'" } + ")"
+
 /**
  * 把一行结果组成 INSERT 语句（值一律加引号、单引号翻倍；NULL → NULL）。
  * 返回 null 表示无法确定源表（复杂查询），调用方应隐藏对应菜单项。
  */
 fun rowToInsertSql(sql: String, colNames: List<String>, row: List<String?>): String? {
     val table = extractTableName(sql) ?: return null
-    val cols = colNames.joinToString(", ") { name ->
-        if (Regex("^[A-Za-z_][A-Za-z0-9_]*$").matches(name)) name
-        else "\"${name.replace("\"", "\"\"")}\""
-    }
-    val vals = row.joinToString(", ") { v ->
-        if (v == null) "NULL" else "'"+escapeSqlValue(v)+"'"
-    }
-    return "INSERT INTO $table ($cols) VALUES ($vals);"
+    return "INSERT INTO $table (${sqlColumnList(colNames)}) VALUES ${sqlValueTuple(row)};"
+}
+
+/**
+ * 把多行结果组成一条多值 INSERT（`VALUES (..), (..)`，通用性最好）。
+ * 用于「复制选中行 → INSERT」；[rows] 为选中矩形内每行的选中列。
+ * 返回 null 表示无法确定源表（复杂查询）或无行，调用方应隐藏/禁用对应菜单项。
+ */
+fun rowsToInsertSql(sql: String, colNames: List<String>, rows: List<List<String?>>): String? {
+    val table = extractTableName(sql) ?: return null
+    if (rows.isEmpty()) return null
+    val tuples = rows.joinToString(",\n") { sqlValueTuple(it) }
+    return "INSERT INTO $table (${sqlColumnList(colNames)}) VALUES\n$tuples;"
 }
 
 /** 只读语句的起始词（保守：只放行明确只读的动作）。 */
