@@ -5,6 +5,7 @@ import engine.model.QueryResult
 import engine.model.SchemaMeta
 import i18n.I18n
 import i18n.Str
+import app.core.export.ExportText.escapeSqlValue
 import jdbc.isCommentOnlySql
 
 /*
@@ -757,7 +758,7 @@ fun rowToInsertSql(sql: String, colNames: List<String>, row: List<String?>): Str
         else "\"${name.replace("\"", "\"\"")}\""
     }
     val vals = row.joinToString(", ") { v ->
-        if (v == null) "NULL" else "'${v.replace("'", "''")}'"
+        if (v == null) "NULL" else "'"+escapeSqlValue(v)+"'"
     }
     return "INSERT INTO $table ($cols) VALUES ($vals);"
 }

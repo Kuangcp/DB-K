@@ -45,7 +45,7 @@ object ExportText {
     /**
      * 表头行 + 数据行：行内 Tab 分隔，行间 `\n`，无尾随换行。
      * 用于结果区「复制本行 → TSV（含表头）」与「复制全部（TSV，含表头）」。
-     * 单列多行（如 PG `EXPLAIN`）即“表头 + 每行一条”。
+     * 单列多行（如 PG `EXPLAIN`）即"表头 + 每行一条"。
      */
     fun tsvHeaderAndRows(columns: List<String>, rows: List<List<String?>>): String {
         val header = columns.joinToString("\t") { tsvField(it) }
@@ -80,8 +80,24 @@ object ExportText {
         }
     }
 
-    /** SQL INSERT / JSON 里的字符串字面量转义（标准 SQL：单引号双写）。 */
-    fun sqlString(v: String): String = "'" + v.replace("'", "''") + "'"
+    /** 标准 SQL 字符串字面量中转义单个字符。 */
+    private fun escapeSqlChar(c: Char): String = when (c) {
+        '\\' -> "\\\\"
+        '\'' -> "''"
+        '\n' -> "\\n"
+        '\r' -> "\\r"
+        '\t' -> "\\t"
+        else -> c.toString()
+    }
+
+    /** SQL INSERT 的字符串字面量：转义反斜杠、控制字符及单引号。 */
+    fun sqlString(v: String): String {
+        val sb = StringBuilder(v.length + 2)
+        sb.append('\'')
+        for (c in v) sb.append(escapeSqlChar(c))
+        sb.append('\'')
+        return sb.toString()
+    }
 
     /**
      * SQL INSERT 的值：NULL → `NULL`；数值型且可解析 → 裸数字；布尔型 → `TRUE`/`FALSE`；
@@ -102,6 +118,20 @@ object ExportText {
         isBooleanType(sqlType) && v.equals("true", ignoreCase = true) -> "true"
         isBooleanType(sqlType) && v.equals("false", ignoreCase = true) -> "false"
         else -> jsonString(v)
+    }
+
+    /** SQL 字符串字面量的值部分：逐字符转义控制字符和单引号。 */
+    fun escapeSqlValue(s: String): String {
+        var result = s
+        // 先转反斜杠（其他转义依赖于原始 \ ）
+        result = result.replace("\\", "\\\\")
+        // 再转控制字符
+        result = result.replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        // 最后转单引号（放在最后，避免把之前的 \' 变成 '' ）
+        result = result.replace("'", "''")
+        return result
     }
 
     /** JSON 字符串字面量（含双引号）：转义引号、反斜杠与控制字符。 */
