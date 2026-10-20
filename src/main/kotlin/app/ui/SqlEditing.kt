@@ -769,7 +769,7 @@ fun rowToInsertSql(sql: String, colNames: List<String>, row: List<String?>): Str
 
 /**
  * 把多行结果组成一条多值 INSERT（`VALUES (..), (..)`，通用性最好）。
- * 用于「复制选中行 → INSERT」；[rows] 为选中矩形内每行的选中列。
+ * 用于「复制选中行 → INSERT」；[rows] 为选中行对应的完整结果行（列 = [colNames] 全列）。
  * 返回 null 表示无法确定源表（复杂查询）或无行，调用方应隐藏/禁用对应菜单项。
  */
 fun rowsToInsertSql(sql: String, colNames: List<String>, rows: List<List<String?>>): String? {

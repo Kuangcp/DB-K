@@ -479,12 +479,12 @@ internal fun ResultTable(
                             selRect?.takeIf { !it.isSingle }?.let { copySelection(it, tsv = false) }
                         },
                         MenuEntry.Action(I18n.t(lang, Str.ResultFmtInsert), enabled = selInsertOk) {
-                            selRect?.takeIf { !it.isSingle }?.let { rect ->
-                                val block = selectedRowsOf(rect)
-                                val selCols = (rect.minCol..rect.maxCol).mapNotNull { view.columns.getOrNull(it)?.name }
-                                val insertSql = rowsToInsertSql(result.sql, selCols, block)
+                            // 与「复制本行 → INSERT」一致：完整列 + 完整行值，只是变为多行
+                            val fullRows = selOrigRows.mapNotNull { result.rows.getOrNull(it) }
+                            if (fullRows.isNotEmpty()) {
+                                val insertSql = rowsToInsertSql(result.sql, colNames, fullRows)
                                 if (insertSql != null) {
-                                    onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedSelectionInsert, block.size))
+                                    onCopyText(insertSql, I18n.t(lang, Str.ResultCopiedSelectionInsert, fullRows.size))
                                 }
                             }
                         },
