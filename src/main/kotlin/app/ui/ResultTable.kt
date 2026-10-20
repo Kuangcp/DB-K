@@ -77,19 +77,25 @@ internal fun textWidthDp(s: String): Int = s.sumOf { charWidthDp(it) }
 /** 单元格左右内边距合计（dp，见 DataCell 的 padding(horizontal = 8.dp)）。 */
 private const val CELL_H_PADDING_DP = 16
 
+/** 列宽估算缓冲：补偿 HiDPI 四舍五入 / 字体度量差异，避免文字刚好卡线时末尾被挤出。 */
+private const val COLUMN_WIDTH_HEADROOM_DP = 24
+
 /** 表头除列名外的固定占位：内边距(8+10) + 间距(4) + 漏斗图标(16)（dp）。 */
 internal const val HEADER_CHROME_DP = 38
 
 /** 表头列名完整展示的字符上限：≤ 该长度不省略，超过则截到该长度加省略号。 */
 internal const val HEADER_NAME_MAX_CHARS = 12
 
-/** 自动列宽下限 / 上限（dp）；上限避免超长内容把列撑成巨宽。 */
+/** 自动列宽下限（dp）；无上限——表格自带横向滚动，让列宽按实际内容自然撑开。 */
 private const val AUTO_COL_WIDTH_MIN = 64
 
-private const val AUTO_COL_WIDTH_MAX = 320
+/** 估算列宽时每格最多采样多少字符（已覆盖绝大多数场景）。 */
+private const val WIDTH_SAMPLE_CHARS = 256
 
-/** 估算列宽时每格最多采样多少字符（已超过 [AUTO_COL_WIDTH_MAX] 所需，够用即可）。 */
-private const val WIDTH_SAMPLE_CHARS = 64
+/** 单元格宽度上限（dp）；防止超长文本（如诊断摘要）把列撑成不可用宽度。
+ * 短值类型天然远小于此值：Long ID ~149dp、UUID ~252dp、日期 ~160dp，不会命中上限。
+ */
+private const val CELL_WIDTH_CAP_DP = 400
 
 /** NULL 占位文本（与 DataCell 默认 nullText 一致）。 */
 private const val NULL_CELL_TEXT = "(NULL)"
@@ -112,8 +118,7 @@ private const val MAX_COL_WIDTH = 1600
 /** 结果表行号 gutter 宽（dp，表头与数据行共用）。 */
 private const val RESULT_GUTTER_DP = 44
 
-/** 单列结果 / 转置后只剩一个值列时，值列自适应加宽的上限（dp，避免超长字段把列撑成巨宽）。 */
-private const val MAX_FLEX_COL_WIDTH = 600
+
 
 /** 结果网格：列宽按表头与最多前 300 行采样估算；表头与数据共用横向滚动。
  * 交互：右键单元格可「复制单元格值 / 复制本行 → INSERT」（不做单击复制，避免动不动污染剪贴板）。
@@ -220,7 +225,9 @@ internal fun ResultTable(
                 }
                 if (cw > w) w = cw
             }
-            w.coerceIn(AUTO_COL_WIDTH_MIN, AUTO_COL_WIDTH_MAX)
+            // 加上缓冲余量（补偿字体度量/HIDPi 精度），保底最小列宽，超长文本有上限兜底
+            w += COLUMN_WIDTH_HEADROOM_DP
+            w.coerceAtLeast(AUTO_COL_WIDTH_MIN).coerceAtMost(CELL_WIDTH_CAP_DP)
         }
     }
     val widths = remember(result.sql, result.columns, transposed, transposedRows) {
@@ -243,9 +250,7 @@ internal fun ResultTable(
         if (widenCol in cols.indices && availDp > 0f && !manualCols[widenCol]) {
             val others = cols.indices.filter { it != widenCol }.sumOf { widths[it] }
             val slack = availDp - RESULT_GUTTER_DP - scrollbarDp - others
-            widths[widenCol] = slack
-                .coerceIn(baseWidths[widenCol].toFloat(), MAX_FLEX_COL_WIDTH.toFloat())
-                .toInt()
+            widths[widenCol] = slack.coerceAtLeast(baseWidths[widenCol].toFloat()).toInt()
         }
     }
     // 点选 / 方向键选中的选区（换结果或转置即清空）
