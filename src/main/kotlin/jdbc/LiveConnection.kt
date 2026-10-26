@@ -185,7 +185,7 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     /**
      * 取消正在执行的语句（Statement.cancel，驱动支持时）。
      * 返回是否发出了取消请求；正在排队尚未开始的执行不在内。
-     * 驱动忽略 cancel 时，等待中的查询仍会按其自身超时（30s）结束。
+     * 驱动忽略 cancel 时，等待中的查询仍会按连接档案配置的查询超时结束。
      */
     override fun cancel(): Boolean {
         val st = currentStmt ?: return false
@@ -231,13 +231,14 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
 
     override fun runStatement(statement: String, sessionContextSql: String?): QueryResult =
         runOnConnection({ QueryExecutor.isQueryLike(statement) }) { conn ->
-            QueryExecutor.applyContext(conn, sessionContextSql)
+            QueryExecutor.applyContext(conn, sessionContextSql, profile.queryTimeoutSeconds)
             QueryExecutor.execute(
                 conn,
                 statement,
                 temporalCtx,
                 rowLimit = if (dialect.supportsRowLimit) QueryExecutor.MAX_ROWS_PROBE else null,
                 wireSql = limitedWireSql(statement),
+                timeoutSeconds = profile.queryTimeoutSeconds,
                 registerStatement = { st -> registerStatement(st) },
             )
         }
@@ -270,7 +271,8 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
         // 已产出过行就绝不重试（会重复行）；0 行时断连可安全重跑。
         var emitted = 0L
         return runOnConnection({ emitted == 0L }) { conn ->
-            QueryExecutor.applyContext(conn, sessionContextSql)
+            // 全量导出不设超时（与 StreamingQuery 的 st.queryTimeout = 0 一致）
+            QueryExecutor.applyContext(conn, sessionContextSql, timeoutSeconds = 0)
             StreamingQuery.stream(conn, sql, dialect.cursorStrategy, dialect.streamFetchSize,
                 temporalCtx, onMeta) { row ->
                 emitted++
@@ -281,7 +283,13 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
 
     override fun applyWriteOps(ops: List<WriteOp>, sessionContextSql: String?): Int =
         runOnConnection({ false }) { conn ->
-            QueryExecutor.applyContext(conn, sessionContextSql)
-            RowUpdater.executeWriteBatch(conn, ops, dialect, temporalCtx) { st -> registerStatement(st) }
+            QueryExecutor.applyContext(conn, sessionContextSql, profile.queryTimeoutSeconds)
+            RowUpdater.executeWriteBatch(
+                conn,
+                ops,
+                dialect,
+                temporalCtx,
+                timeoutSeconds = profile.queryTimeoutSeconds,
+            ) { st -> registerStatement(st) }
         }
 }

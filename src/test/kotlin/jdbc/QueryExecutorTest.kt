@@ -50,4 +50,32 @@ class QueryExecutorTest {
         assertFalse(QueryExecutor.isTruncatedCell("普通文本…"))
         assertTrue(QueryExecutor.isTruncatedCell("开头" + QueryExecutor.CELL_TRUNCATION_MARKER))
     }
+
+    @Test
+    fun `execute passes configured timeout to statement`() {
+        val rec = TimeoutRecorder()
+
+        QueryExecutor.execute(rec.connection(), "UPDATE t SET x = 1", timeoutSeconds = 45)
+        assertEquals(45, rec.statementTimeout)
+
+        QueryExecutor.execute(rec.connection(), "UPDATE t SET x = 1", timeoutSeconds = 0)
+        assertEquals(0, rec.statementTimeout)
+
+        QueryExecutor.applyContext(rec.connection(), "USE db1", timeoutSeconds = 7)
+        assertEquals(7, rec.statementTimeout)
+    }
+
+    @Test
+    fun `execute keeps the documented default when no timeout is given`() {
+        val rec = TimeoutRecorder()
+        QueryExecutor.execute(rec.connection(), "UPDATE t SET x = 1")
+        assertEquals(engine.QueryTimeout.DEFAULT_SECONDS, rec.statementTimeout)
+    }
+
+    @Test
+    fun `write batch accepts a timeout and skips statements for an empty batch`() {
+        val rec = TimeoutRecorder()
+        assertEquals(0, RowUpdater.executeWriteBatch(rec.connection(), emptyList(), SQLiteDialect, timeoutSeconds = 45))
+        assertEquals(-1, rec.preparedTimeout)
+    }
 }

@@ -35,7 +35,7 @@ object StreamingQuery {
         try {
             // 前向只读：MySQL 流式与多数驱动的服务端游标都要求该组合。
             conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY).use { st ->
-                // 全量导出不做 30s 截断（用户明确要全量）
+                // 全量导出不设超时（用户明确要全量，不受连接查询超时约束）
                 runCatching { st.queryTimeout = 0 }
                 configure(st, strategy, fetchSize)
                 st.executeQuery(sql).use { rs ->

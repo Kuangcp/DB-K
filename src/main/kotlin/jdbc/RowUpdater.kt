@@ -1,5 +1,6 @@
 package jdbc
 
+import engine.QueryTimeout
 import engine.model.SchemaMeta
 import i18n.I18n
 import i18n.Str
@@ -67,8 +68,6 @@ fun isBinarySqlType(sqlType: Int): Boolean = when (sqlType) {
 
 object RowUpdater {
 
-    private const val UPDATE_TIMEOUT_SECONDS = 30
-
     /** 渲染可读的写语句（用于 SQL 预览 / 执行历史）：值转成 SQL 字面量，标识符走方言引用。 */
     fun renderWriteSql(op: WriteOp, dialect: DbDialect): String = when (op) {
         is WriteOp.Update -> renderUpdateSql(op.plan, dialect)
@@ -108,8 +107,15 @@ object RowUpdater {
         conn: Connection,
         plans: List<UpdatePlan>,
         dialect: DbDialect,
+        timeoutSeconds: Int = QueryTimeout.DEFAULT_SECONDS,
         registerStatement: ((Statement?) -> Unit)? = null,
-    ): Int = executeWriteBatch(conn, plans.map { WriteOp.Update(it) }, dialect, registerStatement = registerStatement)
+    ): Int = executeWriteBatch(
+        conn,
+        plans.map { WriteOp.Update(it) },
+        dialect,
+        timeoutSeconds = timeoutSeconds,
+        registerStatement = registerStatement,
+    )
 
     /**
      * 在**单事务**中顺序执行 UPDATE / INSERT / DELETE（每条要求恰好影响 1 行；否则整体回滚）。
@@ -120,6 +126,7 @@ object RowUpdater {
         ops: List<WriteOp>,
         dialect: DbDialect,
         ctx: TemporalContext? = null,
+        timeoutSeconds: Int = QueryTimeout.DEFAULT_SECONDS,
         registerStatement: ((Statement?) -> Unit)? = null,
     ): Int {
         if (ops.isEmpty()) return 0
@@ -128,7 +135,7 @@ object RowUpdater {
         var total = 0
         try {
             for (op in ops) {
-                val affected = executeOne(conn, op, dialect, ctx, registerStatement)
+                val affected = executeOne(conn, op, dialect, ctx, timeoutSeconds, registerStatement)
                 check(affected == 1) { affectedMessage(op, affected) }
                 total += affected
             }
@@ -147,6 +154,7 @@ object RowUpdater {
         op: WriteOp,
         dialect: DbDialect,
         ctx: TemporalContext? = null,
+        timeoutSeconds: Int = QueryTimeout.DEFAULT_SECONDS,
         registerStatement: ((Statement?) -> Unit)?,
     ): Int {
         val sql = when (op) {
@@ -172,7 +180,7 @@ object RowUpdater {
         conn.prepareStatement(sql).use { ps ->
             registerStatement?.invoke(ps)
             try {
-                ps.queryTimeout = UPDATE_TIMEOUT_SECONDS
+                ps.queryTimeout = timeoutSeconds
                 var index = 1
                 for (cv in binds) bindValue(ps, index++, cv, ctx)
                 return ps.executeUpdate()

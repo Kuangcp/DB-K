@@ -1,5 +1,6 @@
 package jdbc
 
+import engine.QueryTimeout
 import engine.model.QueryColumn
 import engine.model.QueryResult
 import i18n.I18n
@@ -22,8 +23,6 @@ object QueryExecutor {
      * （决定 `truncated`），不会被保留。
      */
     const val MAX_ROWS_PROBE = MAX_ROWS + 1
-
-    private const val QUERY_TIMEOUT_SECONDS = 30
 
     /**
      * 单格展示字符上限：超过则截断并追加 [CELL_TRUNCATION_MARKER]。
@@ -111,6 +110,7 @@ object QueryExecutor {
      * 结果、客户端只读 MAX_ROWS 行」。传 [MAX_ROWS_PROBE]，由 [readResultSet] 负责截回 [MAX_ROWS]。
      * [wireSql]：可选——真正发给数据库的 SQL；非空时用于执行，[sql] 仍作为 `QueryResult.sql` 记录
      * （ClickHouse 的 `LIMIT` 注入用它保持「结果记录的是用户原文」，导出/取更多才不会受限）。
+     * [timeoutSeconds]：连接档案配置的查询超时（0 = 不限时，JDBC 规定即无限制）。
      */
     fun execute(
         conn: Connection,
@@ -118,13 +118,14 @@ object QueryExecutor {
         ctx: TemporalContext? = null,
         rowLimit: Int? = null,
         wireSql: String? = null,
+        timeoutSeconds: Int = QueryTimeout.DEFAULT_SECONDS,
         registerStatement: ((Statement?) -> Unit)? = null,
     ): QueryResult {
         val started = System.currentTimeMillis()
         val execSql = wireSql ?: sql
         val stmt = conn.createStatement()
         try {
-            stmt.queryTimeout = QUERY_TIMEOUT_SECONDS
+            stmt.queryTimeout = timeoutSeconds
             registerStatement?.invoke(stmt)
             return if (isQueryLike(sql)) {
                 // 下推行上限：pgjdbc→服务端 portal 限制、MySQL→sql_select_limit、H2/SQLite→查询层截断。
@@ -145,10 +146,10 @@ object QueryExecutor {
      * 执行会话上下文前导（目标库/schema 切换，如 USE `db` / SET search_path TO …）；
      * null/空白 = 无需切换。失败会抛异常（由调用方按执行错误展示）。
      */
-    fun applyContext(conn: Connection, contextSql: String?) {
+    fun applyContext(conn: Connection, contextSql: String?, timeoutSeconds: Int = QueryTimeout.DEFAULT_SECONDS) {
         if (contextSql.isNullOrBlank()) return
         conn.createStatement().use { st ->
-            st.queryTimeout = QUERY_TIMEOUT_SECONDS
+            st.queryTimeout = timeoutSeconds
             st.execute(contextSql)
         }
     }
