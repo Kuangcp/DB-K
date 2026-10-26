@@ -296,7 +296,7 @@ class ConnectionsRepository(
         return conn.prepareStatement(
             """
             SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password,
-                   extra_params, color, sort_order, key_separator, display_tz
+                   extra_params, color, sort_order, key_separator, display_tz, query_timeout_seconds
             FROM connections ORDER BY sort_order, created_at
             """.trimIndent(),
         ).use { ps ->
@@ -312,7 +312,7 @@ class ConnectionsRepository(
 
     fun getConnection(id: String): ConnectionProfile? {
         return conn.prepareStatement(
-            "SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password, extra_params, color, sort_order, key_separator, display_tz FROM connections WHERE id = ?",
+            "SELECT id, folder_id, name, db_type, host, port, database_name, user_name, password, extra_params, color, sort_order, key_separator, display_tz, query_timeout_seconds FROM connections WHERE id = ?",
         ).use { ps ->
             ps.setString(1, id)
             ps.executeQuery().use { rs ->
@@ -327,8 +327,9 @@ class ConnectionsRepository(
         conn.prepareStatement(
             """
             INSERT INTO connections(id, folder_id, name, db_type, host, port, database_name, user_name,
-                password, extra_params, color, sort_order, key_separator, display_tz, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                password, extra_params, color, sort_order, key_separator, display_tz, query_timeout_seconds,
+                created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { ps ->
             val now = System.currentTimeMillis()
@@ -346,8 +347,9 @@ class ConnectionsRepository(
             ps.setInt(12, nextSortOrder("connections"))
             ps.setString(13, p.keySeparator)
             ps.setString(14, DisplayZone.toDb(p.displayZone))
-            ps.setLong(15, now)
+            ps.setInt(15, p.queryTimeoutSeconds)
             ps.setLong(16, now)
+            ps.setLong(17, now)
             ps.executeUpdate()
         }
         return id
@@ -358,7 +360,7 @@ class ConnectionsRepository(
             """
             UPDATE connections SET folder_id = ?, name = ?, db_type = ?, host = ?, port = ?,
                 database_name = ?, user_name = ?, password = ?, extra_params = ?, color = ?,
-                key_separator = ?, display_tz = ?, updated_at = ?
+                key_separator = ?, display_tz = ?, query_timeout_seconds = ?, updated_at = ?
             WHERE id = ?
             """.trimIndent(),
         ).use { ps ->
@@ -374,8 +376,9 @@ class ConnectionsRepository(
             ps.setString(10, p.color)
             ps.setString(11, p.keySeparator)
             ps.setString(12, DisplayZone.toDb(p.displayZone))
-            ps.setLong(13, System.currentTimeMillis())
-            ps.setString(14, p.id)
+            ps.setInt(13, p.queryTimeoutSeconds)
+            ps.setLong(14, System.currentTimeMillis())
+            ps.setString(15, p.id)
             ps.executeUpdate()
         }
     }
@@ -473,8 +476,9 @@ class ConnectionsRepository(
                 conn.prepareStatement(
                     """
                     INSERT INTO connections(id, folder_id, name, db_type, host, port, database_name, user_name,
-                        password, extra_params, color, sort_order, key_separator, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        password, extra_params, color, sort_order, key_separator, query_timeout_seconds,
+                        created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                 ).use { ps ->
                     val now = System.currentTimeMillis()
@@ -491,8 +495,9 @@ class ConnectionsRepository(
                     ps.setString(11, c.color)
                     ps.setInt(12, nextSortOrder("connections"))
                     ps.setString(13, c.keySeparator)
-                    ps.setLong(14, now)
+                    ps.setInt(14, c.queryTimeoutSeconds)
                     ps.setLong(15, now)
+                    ps.setLong(16, now)
                     ps.executeUpdate()
                 }
                 connectionIds += id
@@ -893,6 +898,7 @@ class ConnectionsRepository(
         sortOrder = rs.getInt("sort_order"),
         keySeparator = rs.getString("key_separator") ?: ":",
         displayZone = DisplayZone.fromDb(rs.getString("display_tz") ?: ""),
+        queryTimeoutSeconds = rs.getInt("query_timeout_seconds").coerceAtLeast(0),
     )
 
     private fun nextSortOrder(table: String): Int {

@@ -418,4 +418,19 @@ class ConnectionsRepositoryTest {
             assertTrue(repo.getConsole(rec.id)!!.external)
         }
     }
+
+    @Test
+    fun `query timeout round trips and defaults to 20`() {
+        open().use { repo ->
+            val defaultId = repo.createConnection(newProfile(id = "d1"))
+            assertEquals(20, repo.getConnection(defaultId)!!.queryTimeoutSeconds)
+
+            val customId = repo.createConnection(newProfile(id = "d2").copy(queryTimeoutSeconds = 300))
+            assertEquals(300, repo.getConnection(customId)!!.queryTimeoutSeconds)
+
+            repo.updateConnection(repo.getConnection(customId)!!.copy(queryTimeoutSeconds = 0))
+            assertEquals(0, repo.getConnection(customId)!!.queryTimeoutSeconds)
+            assertEquals(0, repo.listConnections().first { it.id == customId }.queryTimeoutSeconds)
+        }
+    }
 }

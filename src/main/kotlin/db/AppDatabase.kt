@@ -12,7 +12,7 @@ import java.util.UUID
  */
 object AppDatabase {
 
-    private const val CURRENT_VERSION = 13
+    private const val CURRENT_VERSION = 14
 
     fun migrate(conn: Connection) {
         conn.createStatement().use { st ->
@@ -85,6 +85,30 @@ object AppDatabase {
         } else {
             // 旧代码可能记录了 v13 但列未成功添加，补检查
             conn.createStatement().use { st -> migrateToV13(st) }
+        }
+        if (!applied.contains(14)) {
+            conn.createStatement().use { st -> migrateToV14(st) }
+            conn.prepareStatement("INSERT INTO schema_migrations(version) VALUES (14)").use { it.executeUpdate() }
+        } else {
+            // 同 v13：已记录版本也补一次列检查，防半途失败留下残局
+            conn.createStatement().use { st -> migrateToV14(st) }
+        }
+    }
+
+    /** v14：每连接查询超时（秒），0 = 不限时；存量行按列默认值取 20 秒。 */
+    private fun migrateToV14(st: Statement) {
+        val has = runCatching {
+            st.executeQuery("PRAGMA table_info(connections)").use { rs ->
+                while (rs.next()) if (rs.getString("name") == "query_timeout_seconds") return@use true
+                false
+            }
+        }.getOrElse { true } // 取不到元数据也视为已有（跳过 ALTER）
+        if (!has) {
+            runCatching {
+                st.executeUpdate(
+                    "ALTER TABLE connections ADD COLUMN query_timeout_seconds INTEGER NOT NULL DEFAULT 20",
+                )
+            }
         }
     }
 

@@ -130,4 +130,16 @@ class ProfileTransferTest {
         val conflicts = ProfileTransfer.findNameConflicts(imported, listOf("prod", "STAGE"))
         assertEquals(listOf("x1", "x2"), conflicts.map { it.id })
     }
+
+    @Test
+    fun `query timeout survives round trip and defaults to 20 for old bundles`() {
+        val profile = ConnectionProfile(id = "c1", name = "n", dbType = DbType.POSTGRES, queryTimeoutSeconds = 300)
+        val decoded = ProfileTransfer.decode(ProfileTransfer.encode(emptyList(), listOf(profile), includePasswords = false))
+        assertEquals(300, decoded.connections.single().queryTimeoutSeconds)
+
+        // 旧版导出文件没有该字段
+        val legacy = """{"formatVersion":1,"app":"db-k","exportedAt":1,"folders":[],"connections":[
+        {"id":"c2","name":"old","dbType":"POSTGRES"}]}"""
+        assertEquals(20, ProfileTransfer.decode(legacy).connections.single().queryTimeoutSeconds)
+    }
 }

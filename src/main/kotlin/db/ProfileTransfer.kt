@@ -1,5 +1,6 @@
 package db
 
+import engine.QueryTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -89,6 +90,7 @@ object ProfileTransfer {
                     sortOrder = p.sortOrder,
                     keySeparator = p.keySeparator,
                     displayTz = DisplayZone.toDb(p.displayZone),
+                    queryTimeoutSeconds = p.queryTimeoutSeconds,
                 )
             },
         )
@@ -128,6 +130,7 @@ object ProfileTransfer {
                 color = c.color,
                 sortOrder = c.sortOrder,
                 keySeparator = c.keySeparator,
+                queryTimeoutSeconds = c.queryTimeoutSeconds,
             )
         }
         return ProfileBundle(dto.formatVersion, dto.exportedAt, folders, connections, skipped)
@@ -253,5 +256,7 @@ object ProfileTransfer {
         val keySeparator: String = ":",
         /** 旧版导出文件无此字段 → 默认空（Local）。 */
         val displayTz: String = "",
+        /** 旧版导出文件无此字段 → 默认 20 秒（与新建连接一致）；想表达「不限时」会显式写 0。 */
+        val queryTimeoutSeconds: Int = QueryTimeout.DEFAULT_SECONDS,
     )
 }

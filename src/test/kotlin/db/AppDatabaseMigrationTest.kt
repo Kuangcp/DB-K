@@ -24,7 +24,7 @@ class AppDatabaseMigrationTest {
             c.createStatement().use { st ->
                 st.executeQuery("SELECT version FROM schema_migrations ORDER BY version").use { rs ->
                     val versions = buildList { while (rs.next()) add(rs.getInt(1)) }
-                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13), versions)
+                    assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), versions)
                 }
             }
         }
@@ -190,6 +190,25 @@ class AppDatabaseMigrationTest {
                 st.executeQuery("SELECT COUNT(*) FROM workspaces").use { rs ->
                     rs.next()
                     assertEquals(0, rs.getInt(1))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `v14 gives existing connections the default query timeout`() {
+        val db = dir.resolve("v14.db")
+        raw(db).use { AppDatabase.migrate(it) }
+        raw(db).use { c ->
+            c.createStatement().use { st ->
+                // 不显式写该列 → 取列默认值
+                st.executeUpdate(
+                    "INSERT INTO connections(id, name, db_type, created_at, updated_at) " +
+                        "VALUES ('c1','n','SQLITE',1,1)",
+                )
+                st.executeQuery("SELECT query_timeout_seconds FROM connections WHERE id = 'c1'").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals(20, rs.getInt(1))
                 }
             }
         }
