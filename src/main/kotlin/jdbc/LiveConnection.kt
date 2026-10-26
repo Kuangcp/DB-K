@@ -61,6 +61,10 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     @Volatile
     private var currentStmt: Statement? = null
 
+    /** 刚发起过 cancel（用户手动取消）：用于把「手动取消」与「查询超时」的错误文案区分开。 */
+    @Volatile
+    private var cancelRequested = false
+
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "jdbc-${profile.id.take(6)}").apply { isDaemon = true }
     }
@@ -189,6 +193,7 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
      */
     override fun cancel(): Boolean {
         val st = currentStmt ?: return false
+        cancelRequested = true
         return runCatching { st.cancel(); true }.getOrDefault(false)
     }
 
@@ -230,6 +235,16 @@ class LiveConnection(private val profile: ConnectionProfile) : DataSourceSession
     // ---------- 执行 ----------
 
     override fun runStatement(statement: String, sessionContextSql: String?): QueryResult =
+        try {
+            runStatementOnce(statement, sessionContextSql)
+        } catch (e: Throwable) {
+            // PG 之类把查询超时报成 SQLState 57014 的普通 SQLException：归一成超时类型，便于上层出可读文案
+            throw QueryExecutor.asTimeout(e, cancelRequested)
+        } finally {
+            cancelRequested = false
+        }
+
+    private fun runStatementOnce(statement: String, sessionContextSql: String?): QueryResult =
         runOnConnection({ QueryExecutor.isQueryLike(statement) }) { conn ->
             QueryExecutor.applyContext(conn, sessionContextSql, profile.queryTimeoutSeconds)
             QueryExecutor.execute(

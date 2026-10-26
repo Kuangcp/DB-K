@@ -100,6 +100,10 @@ JDBC 侧超时值经 `LiveConnection.runStatement` / `streamQuery`(不变) / `ap
   （「查询超过 {0} 秒未完成，已取消」/ "Query cancelled after {0} seconds"）。参数有默认值 → 其余调用点不动。
 - `ConsoleState.run` / `refreshOutcome` / `commitEdits` 三处把 `profile.queryTimeoutSeconds` 传进去
   （`run` 是长查询主战场，另外两处顺手一致）。
+- PG 的查询超时/取消报的是 SQLState `57014` 的普通 `SQLException`（驱动原文「canceling statement due to
+  user request」）。`jdbc.QueryExecutor.asTimeout(t, cancelRequested)` 把它归一成 `SQLTimeoutException`，
+  但**本连接刚发起过 cancel（用户手动取消）时保持原样**，避免把手动取消误报成超时。服务端
+  `statement_timeout` / DBA 杀查询同样是 57014，无法区分，也会走这条文案（比露出驱动原文有用）。
 - 超时后不特殊处理连接：JDBC 驱动多数只是取消语句（PG/MySQL 走 cancel/KILL QUERY，autocommit 下连接仍可用）；
   真被驱动打死的，下一次调用会走 `LiveConnection` 已有的探活/重连。Redis 侧 `cancel`/重连路径已存在。
 

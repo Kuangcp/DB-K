@@ -10,6 +10,7 @@ import org.tinylog.Logger
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.ResultSetMetaData
+import java.sql.SQLException
 import java.sql.Statement
 import java.sql.Types
 
@@ -140,6 +141,24 @@ object QueryExecutor {
             registerStatement?.invoke(null)
             runCatching { stmt.close() }
         }
+    }
+
+    /** PG 把「语句被取消」报成 SQLState 57014，而不是 `SQLTimeoutException`。 */
+    private fun isQueryCancelled(t: Throwable): Boolean =
+        generateSequence(t) { it.cause }.any { it is SQLException && it.sqlState == "57014" }
+
+    /**
+     * 把「语句被中止」归一成 [java.sql.SQLTimeoutException]，供上层给可读超时文案（驱动原文只有一句
+     * `canceling statement due to user request`，对用户没有信息量）。
+     *
+     * [cancelRequested] = 本连接**刚刚确实发起过** `cancel()`（用户手动取消）：此时保持原样，
+     * 免得把手动取消误报成超时。注意服务端 `statement_timeout` / DBA 杀查询同样是 57014，
+     * 无法与查询超时区分，也会走到这条文案（这比露出驱动原文更有用）。
+     */
+    fun asTimeout(t: Throwable, cancelRequested: Boolean): Throwable {
+        if (cancelRequested || !isQueryCancelled(t)) return t
+        val state = generateSequence(t) { it.cause }.filterIsInstance<SQLException>().firstOrNull()?.sqlState
+        return java.sql.SQLTimeoutException(t.message, state).also { it.initCause(t) }
     }
 
     /**

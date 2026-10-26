@@ -78,4 +78,26 @@ class QueryExecutorTest {
         assertEquals(0, RowUpdater.executeWriteBatch(rec.connection(), emptyList(), SQLiteDialect, timeoutSeconds = 45))
         assertEquals(-1, rec.preparedTimeout)
     }
+
+    @Test
+    fun `sqlstate 57014 without a local cancel is reported as a timeout`() {
+        val cancelled = java.sql.SQLException("ERROR: canceling statement due to user request", "57014")
+        val normalized = QueryExecutor.asTimeout(cancelled, cancelRequested = false)
+        assertTrue(normalized is java.sql.SQLTimeoutException, "57014 应归一成 SQLTimeoutException: $normalized")
+    }
+
+    @Test
+    fun `sqlstate 57014 after a local cancel keeps the driver message`() {
+        val cancelled = java.sql.SQLException("ERROR: canceling statement due to user request", "57014")
+        assertTrue(QueryExecutor.asTimeout(cancelled, cancelRequested = true) === cancelled)
+    }
+
+    @Test
+    fun `non cancellation errors pass through untouched`() {
+        val plain = java.sql.SQLException("relation does not exist", "42P01")
+        assertTrue(QueryExecutor.asTimeout(plain, cancelRequested = false) === plain)
+        // 被别的异常包住也要认出来
+        val wrapped = RuntimeException(java.sql.SQLException("canceling statement due to statement timeout", "57014"))
+        assertTrue(QueryExecutor.asTimeout(wrapped, cancelRequested = false) is java.sql.SQLTimeoutException)
+    }
 }
