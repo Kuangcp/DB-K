@@ -497,6 +497,8 @@ internal fun zh(key: Str): String = when (key) {
     Str.ConnUrlPreviewRedis -> "连接串：{0}"
     Str.ConnUrlPreviewEs -> "连接地址：{0}"
     Str.FormDisplayZone -> "时间显示时区"
+    Str.FormQueryTimeout -> "查询超时"
+    Str.QueryTimeoutHint -> "秒；0 = 不限时（留空用默认 20）"
     Str.DisplayZoneLocal -> "应用时区（默认）"
     Str.DisplayZoneSource -> "数据源时区"
     Str.DisplayZoneCustomOption -> "自定义…"

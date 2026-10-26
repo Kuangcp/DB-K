@@ -498,6 +498,8 @@ internal fun en(key: Str): String = when (key) {
     Str.ConnUrlPreviewRedis -> "URL: {0}"
     Str.ConnUrlPreviewEs -> "Address: {0}"
     Str.FormDisplayZone -> "Display time zone"
+    Str.FormQueryTimeout -> "Query timeout"
+    Str.QueryTimeoutHint -> "seconds; 0 = unlimited (empty = default 20)"
     Str.DisplayZoneLocal -> "App time zone (default)"
     Str.DisplayZoneSource -> "Source time zone"
     Str.DisplayZoneCustomOption -> "Custom…"

@@ -511,6 +511,8 @@ enum class Str {
     ConnTestOk,
     ConnSelect,
     FormDisplayZone,
+    FormQueryTimeout,
+    QueryTimeoutHint,
     DisplayZoneLocal,
     DisplayZoneSource,
     DisplayZoneCustomOption,

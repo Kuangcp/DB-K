@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.state.ConnectionEditorRequest
+import engine.QueryTimeout
 import app.i18n.t
 import app.state.SessionFactory
 import app.state.friendlySqlError
@@ -121,6 +122,9 @@ fun ConnectionEditorDialog(
     var extra by remember(request) { mutableStateOf(initial?.extraParams ?: "") }
     var keySeparator by remember(request) { mutableStateOf(initial?.keySeparator ?: ":") }
     var displayZone by remember(request) { mutableStateOf(initial?.displayZone ?: DisplayZone.Local) }
+    var timeoutText by remember(request) {
+        mutableStateOf((initial?.queryTimeoutSeconds ?: QueryTimeout.DEFAULT_SECONDS).toString())
+    }
 
     val isEmbedded = dbType == DbType.SQLITE || dbType == DbType.H2LOCAL
     val port = portText.toIntOrNull()
@@ -138,6 +142,7 @@ fun ConnectionEditorDialog(
         extraParams = if (isEmbedded) "" else extra.trim(),
         keySeparator = if (dbType == DbType.REDIS) keySeparator else ":",
         displayZone = displayZone,
+        queryTimeoutSeconds = QueryTimeout.normalize(timeoutText.toIntOrNull()),
     )
 
     val isRedis = dbType == DbType.REDIS
@@ -326,6 +331,20 @@ fun ConnectionEditorDialog(
                             placeholder = if (isEs) "scheme=https&path=/es" else "sslMode=require&connectTimeout=5",
                         )
                     }
+                }
+                FormRow(t(Str.FormQueryTimeout)) {
+                    CompactField(
+                        value = timeoutText,
+                        onValueChange = { timeoutText = it.filter { c -> c.isDigit() }.take(5) },
+                        placeholder = QueryTimeout.DEFAULT_SECONDS.toString(),
+                        modifier = Modifier.width(120.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        t(Str.QueryTimeoutHint),
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                    )
                 }
                 if (!isEmbedded || dbType == DbType.H2LOCAL) {
                     Text(
