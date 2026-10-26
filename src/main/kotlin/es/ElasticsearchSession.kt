@@ -5,6 +5,7 @@ import engine.BackendCapabilities
 import engine.DataSourceSession
 import engine.EditorLanguage
 import engine.Protocol
+import engine.QueryTimeout
 import engine.model.ColumnMeta
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
@@ -296,7 +297,9 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
             httpUsable = true
         }
         val uri = URI(baseUri.toString().trimEnd('/') + path)
-        val builder = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(60))
+        val builder = HttpRequest.newBuilder(uri)
+        // 查询超时（0 = 不限时）→ 请求超时；建连超时仍在 newClient() 里固定 10s
+        esRequestTimeout(profile)?.let { builder.timeout(it) }
         authHeader?.let { builder.header("Authorization", it) }
         builder.header("Accept", "application/json")
         when (method) {
@@ -390,3 +393,7 @@ class ElasticsearchSession(private val profile: ConnectionProfile) : DataSourceS
         return Regex(sb.toString())
     }
 }
+
+/** 查询超时（`0` = 不限时）→ HTTP 请求超时；null = 用 HttpClient 默认（无请求超时）。 */
+internal fun esRequestTimeout(profile: ConnectionProfile): Duration? =
+    QueryTimeout.httpTimeout(profile.queryTimeoutSeconds)
