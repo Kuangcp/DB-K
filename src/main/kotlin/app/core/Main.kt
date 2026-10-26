@@ -1037,6 +1037,8 @@ private fun WindowScope.AppBody(
                         val list = event.dragData() as? DragData.FilesList ?: return false
                         val files = list.readFiles().mapNotNull { dragUriToFile(it) }
                         if (files.isEmpty()) return false
+                        // 从外部拖入文件时，系统焦点可能在文件管理器中 → 把主窗口带到前台
+                        java.awt.Window.getWindows().firstOrNull()?.toFront()
                         openSqlFilesRef.value(files)
                         return true
                     }
