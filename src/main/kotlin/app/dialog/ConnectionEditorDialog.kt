@@ -66,11 +66,13 @@ import app.ui.ThemeSpec
 import db.DisplayZone
 import db.DbCategory
 import db.ConnectionProfile
+import db.connectionUri
 import db.DbType
 import db.FolderRow
 import i18n.I18n
 import i18n.Lang
 import i18n.Str
+import app.core.writeClipboardText
 import jdbc.ExternalDrivers
 import tree.TypeBadge
 import java.awt.FileDialog
@@ -106,6 +108,8 @@ fun ConnectionEditorDialog(
     language: Lang,
     onDismiss: () -> Unit,
     onSubmit: (ConnectionProfile) -> Unit,
+    /** 复制成功后调用（显示 Toast）。 */
+    onCopied: (() -> Unit)? = null,
 ) {
     val isEdit = request is ConnectionEditorRequest.Edit
     val initial = (request as? ConnectionEditorRequest.Edit)?.profile
@@ -160,6 +164,19 @@ fun ConnectionEditorDialog(
         else -> host.isNotBlank()
     }
 
+    // ---------- 复制连接信息 ----------
+    var showCopied by remember { mutableStateOf(false) }
+
+    fun onCopyConnectionString() {
+        val profile = build()
+        val uri = profile.connectionUri()
+        if (uri.isNotEmpty()) {
+            writeClipboardText(uri)
+            onCopied?.invoke()
+            showCopied = true
+        }
+    }
+
     fun runTestConnection() {
         if (testing) return
         testing = true
@@ -191,9 +208,9 @@ fun ConnectionEditorDialog(
             java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
                 .maximumWindowBounds.height
         }.getOrDefault(900)
-        (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(280.dp)
+        (with(density) { usablePx.toDp() } - 180.dp).coerceAtLeast(300.dp)
     }
-    val bodyHeight = maxFormHeight.coerceAtMost(480.dp)
+    val bodyHeight = maxFormHeight.coerceAtMost(540.dp)
     val title = t(if (isEdit) Str.TreeMenuEditConnection else Str.TreePillNewConnection)
     // 自绘无边框弹窗：外壳封装在 app/ui/FramelessDialog，这里只给尺寸与内容
     FramelessDialog(
@@ -220,6 +237,27 @@ fun ConnectionEditorDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 复制连接信息按钮（非嵌入式数据源可用）
+                    val canCopyConnUri = !isEmbedded
+                    if (canCopyConnUri) {
+                        TextButton(
+                            onClick = ::onCopyConnectionString,
+                            enabled = !showCopied,
+                        ) {
+                            Icon(
+                                DbIcons.Copy,
+                                contentDescription = t(Str.ConnCopyConnectionUrl),
+                                tint = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                if (showCopied) t(Str.ConnCopiedToClipboard) else t(Str.ConnCopyConnectionUrl),
+                                fontSize = 12.sp,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
                     TextButton(onClick = onDismiss) { Text(t(Str.CommonCancel)) }
                     Spacer(Modifier.width(8.dp))
                     TextButton(enabled = canSubmit, onClick = { onSubmit(build()) }) { Text(t(Str.CommonSave)) }
@@ -591,7 +629,7 @@ private fun CellWithHeader(label: String, modifier: Modifier = Modifier, content
     }
 }
 
-/** 紧凑单行输入框：自绘边框、水平小内边距（10dp），13sp 文本垂直居中，不裁切。 */
+/** 紧凑单行输入框：自绘边框、水平小内边距（10dp），13sp 文本垂直居中。 */
 @Composable
 private fun CompactField(
     value: String,
@@ -602,16 +640,82 @@ private fun CompactField(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    var visible by remember(isPassword) { mutableStateOf(false) }
+    val size = modifier.fillMaxWidth().height(FieldHeight)
+
+    if (isPassword) {
+        // 密码框：输入 + 眼睛，左右排布，互不干扰
+        Row(
+            modifier = size,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                InnerOutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    visualTransformation = VisualTransformation.None,
+                    size = Modifier.fillMaxSize(),
+                    focused = focused,
+                    interactionSource = interaction,
+                    placeholder = placeholder,
+                    isHidden = true,
+                    hiddenVisible = visible,
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+            IconButton(
+                onClick = { visible = !visible },
+                modifier = Modifier.size(24.dp),
+            ) {
+                Icon(
+                    if (visible) DbIcons.EyeOn else DbIcons.EyeOff,
+                    contentDescription = t(Str.ConnShowPassword),
+                    tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    } else {
+        // 普通输入框
+        InnerOutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            visualTransformation = VisualTransformation.None,
+            size = size,
+            focused = focused,
+            interactionSource = interaction,
+            placeholder = placeholder,
+            isHidden = false,
+            hiddenVisible = false,
+        )
+    }
+}
+
+/** 内部：带圆角边框 + 占位符的单行 BasicTextField（不含外部按钮）。
+ *  [size] 决定 BasicTextField 整体尺寸，默认由调用方传入 `fillMaxWidth().height(FieldHeight)`。
+ */
+@Composable
+private fun InnerOutlinedTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    visualTransformation: VisualTransformation,
+    size: Modifier,
+    focused: Boolean,
+    interactionSource: MutableInteractionSource,
+    placeholder: String?,
+    isHidden: Boolean,
+    hiddenVisible: Boolean,
+) {
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.fillMaxWidth().height(FieldHeight),
+        modifier = size,
         singleLine = true,
         textStyle = FieldTextStyle.copy(color = MaterialTheme.colors.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colors.primary),
-        visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-        interactionSource = interaction,
-        decorationBox = { inner ->
+        visualTransformation = if (isHidden && !hiddenVisible) PasswordVisualTransformation() else visualTransformation,
+        interactionSource = interactionSource,
+        decorationBox = { innerFields ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -628,7 +732,7 @@ private fun CompactField(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                inner()
+                innerFields()
             }
         },
     )

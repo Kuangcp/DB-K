@@ -1665,6 +1665,7 @@ private fun DialogHost(
                 }
                 dialogState.connectionEditor = null
             },
+            onCopied = { toastState.show(I18n.t(Str.ConnCopiedToClipboard)) },
         )
     }
     dialogState.passphrase?.let { request ->
