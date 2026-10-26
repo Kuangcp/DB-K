@@ -28,11 +28,12 @@ import tree.ConnUiStatus
 import tree.ConnectionRuntimeView
 import java.sql.SQLException
 
-/** 把异常压成一行可读短消息（供状态栏/弹层展示）。 */
-internal fun friendlySqlError(t: Throwable?): String {
+/** 把异常压成一行可读短消息（供状态栏/弹层展示）。[timeoutSeconds] = 该连接配置的查询超时，用于超时文案。 */
+internal fun friendlySqlError(t: Throwable?, timeoutSeconds: Int? = null): String {
     val cause = t ?: return I18n.t(Str.ConnectionUnknownError)
     // 连接中断：读操作已自动重试，写操作不重试（可能已执行）但连接已重建，提示用户重试
     if (isConnectionLost(cause)) return I18n.t(Str.ConnectionLost)
+    if (timeoutSeconds != null && isTimeout(cause)) return I18n.t(Str.QueryTimeoutExceeded, timeoutSeconds)
     val root = generateSequence(cause) { it.cause }.last()
     return when (root) {
         is SQLException -> {
@@ -43,6 +44,15 @@ internal fun friendlySqlError(t: Throwable?): String {
         else -> (root.message ?: root.javaClass.simpleName).take(180)
     }
 }
+
+/** 超时类异常（驱动取消 / socket 读超时 / HTTP 请求超时）——与「连接已断」区分开。 */
+internal fun isTimeout(t: Throwable?): Boolean =
+    generateSequence(t) { it.cause }.any { e ->
+        e is java.sql.SQLTimeoutException ||
+            e is java.net.SocketTimeoutException ||
+            e is java.net.http.HttpTimeoutException ||
+            e is java.util.concurrent.TimeoutException
+    }
 
 /**
  * 连接运行时状态：profileId -> ConnRuntime。

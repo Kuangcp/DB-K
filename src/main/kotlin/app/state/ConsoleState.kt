@@ -450,7 +450,7 @@ class ConsoleState(
             },
             onFailure = { t ->
                 Logger.error(t, "commit cell edits failed on {}", profile.name)
-                Result.failure(IllegalStateException(friendlySqlError(t)))
+                Result.failure(IllegalStateException(friendlySqlError(t, profile.queryTimeoutSeconds)))
             },
         )
     }
@@ -503,7 +503,7 @@ class ConsoleState(
             recordHistory(profile.id, stmt, true, r.durationMs, r.affectedRows ?: r.rowCount)
         }.onFailure { t ->
             Logger.error(t, "refresh outcome failed on {}", profile.name)
-            val msg = friendlySqlError(t)
+            val msg = friendlySqlError(t, profile.queryTimeoutSeconds)
             outcomes[idx] = StatementOutcome(stmt, error = msg, pinned = old.pinned, tabNo = old.tabNo)
             recordHistory(profile.id, stmt, false, 0, 0, msg)
         }
@@ -593,7 +593,7 @@ class ConsoleState(
             },
             onFailure = { t ->
                 Logger.error(t, "fetch more failed on {}", profile.name)
-                Result.failure(IllegalStateException(friendlySqlError(t)))
+                Result.failure(IllegalStateException(friendlySqlError(t, profile.queryTimeoutSeconds)))
             },
         )
     }
@@ -1227,7 +1227,7 @@ class ConsoleState(
                 )
             }.onFailure { t ->
                 Logger.error(t, "query failed on {}", profile.name)
-                val msg = friendlySqlError(t)
+                val msg = friendlySqlError(t, profile.queryTimeoutSeconds)
                 outcomes += StatementOutcome(stmt, error = msg, line = lines.getOrNull(i))
                 progress = progress.mapIndexed { j, p -> if (j == i) p.copy(status = RunStatus.FAILED) else p }
                 recordHistory(

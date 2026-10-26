@@ -502,6 +502,7 @@ internal fun en(key: Str): String = when (key) {
     Str.DisplayZoneSource -> "Source time zone"
     Str.DisplayZoneCustomOption -> "Custom…"
     Str.DisplayZoneInvalid -> "Invalid time zone: {0}"
+    Str.QueryTimeoutExceeded -> "Query cancelled after {0} seconds"
     Str.ConnTestButton -> "Test connection"
     Str.ConnTesting -> "Connecting…"
     Str.ConnTestHint -> "Fill in host/port/credentials, then test"

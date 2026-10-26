@@ -515,6 +515,7 @@ enum class Str {
     DisplayZoneSource,
     DisplayZoneCustomOption,
     DisplayZoneInvalid,
+    QueryTimeoutExceeded,
 
     // ── 导出弹窗 ──
     ExportTitle,

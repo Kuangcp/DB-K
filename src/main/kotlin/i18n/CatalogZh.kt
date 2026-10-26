@@ -501,6 +501,7 @@ internal fun zh(key: Str): String = when (key) {
     Str.DisplayZoneSource -> "数据源时区"
     Str.DisplayZoneCustomOption -> "自定义…"
     Str.DisplayZoneInvalid -> "不合法时区：{0}"
+    Str.QueryTimeoutExceeded -> "查询超过 {0} 秒未完成，已取消"
     Str.ConnTestButton -> "测试连接"
     Str.ConnTesting -> "正在连接…"
     Str.ConnTestHint -> "填入主机/端口/账号后点此验证"
