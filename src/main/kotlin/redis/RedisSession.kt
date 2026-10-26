@@ -5,6 +5,7 @@ import engine.BackendCapabilities
 import engine.DataSourceSession
 import engine.EditorLanguage
 import engine.Protocol
+import engine.QueryTimeout
 import engine.model.ColumnMeta
 import engine.model.DbObjectMeta
 import engine.model.ObjectKind
@@ -13,7 +14,10 @@ import engine.model.ObjectSearchResult
 import engine.model.QueryResult
 import engine.model.SchemaMeta
 import engine.model.SchemaObjects
+import redis.clients.jedis.DefaultJedisClientConfig
+import redis.clients.jedis.HostAndPort
 import redis.clients.jedis.Jedis
+import redis.clients.jedis.JedisClientConfig
 import redis.clients.jedis.commands.ProtocolCommand
 import redis.clients.jedis.params.ScanParams
 import java.util.concurrent.Callable
@@ -83,7 +87,7 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
     private fun buildConnection(): Jedis {
         val host = profile.host.ifBlank { "127.0.0.1" }
         val port = if (profile.port > 0) profile.port else 6379
-        val j = Jedis(host, port)
+        val j = Jedis(HostAndPort(host, port), redisClientConfig(profile))
         profile.password?.takeIf { it.isNotBlank() }?.let { pass ->
             val user = profile.user?.takeIf { it.isNotBlank() }
             if (user != null) j.auth(user, pass) else j.auth(pass)
@@ -261,3 +265,13 @@ class RedisSession(private val profile: ConnectionProfile) : DataSourceSession {
         const val MAX_ROUNDS = 10
     }
 }
+
+/**
+ * Jedis 客户端配置：**查询超时 → socket 读超时**（`0` = 无限等待，靠取消断开 socket 解开），
+ * 建连超时固定 [QueryTimeout.CONNECT_TIMEOUT_MS]——避免「不限时」让 TCP 建连也无限等。
+ */
+internal fun redisClientConfig(profile: ConnectionProfile): JedisClientConfig =
+    DefaultJedisClientConfig.builder()
+        .connectionTimeoutMillis(QueryTimeout.CONNECT_TIMEOUT_MS)
+        .socketTimeoutMillis(QueryTimeout.socketTimeoutMillis(profile.queryTimeoutSeconds))
+        .build()
