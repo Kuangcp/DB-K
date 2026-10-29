@@ -7,6 +7,7 @@ import i18n.I18n
 import i18n.Lang
 import i18n.Str
 import org.tinylog.Logger
+import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.ResultSetMetaData
@@ -216,7 +217,7 @@ object QueryExecutor {
         val raw: String? = when {
             isBinaryColumn(col.sqlType) -> readBinaryCell(rs, i)
             isCharColumn(col.sqlType) -> readTextCell(rs, i)
-            else -> clampCell(runCatching { rs.getObject(i)?.toString() }.getOrNull())
+            else -> clampCell(runCatching { convertToCell(rs.getObject(i)) }.getOrNull())
         }
         return clampCell(TemporalCells.render(raw, col, ctx))
     }
@@ -261,6 +262,14 @@ object QueryExecutor {
     private fun clampCell(s: String?): String? {
         if (s == null || s.length <= MAX_CELL_CHARS) return s
         return s.take(MAX_CELL_CHARS) + CELL_TRUNCATION_MARKER
+    }
+
+    /** JDBC getObject → 字符串：DECIMAL/NUMERIC 用 stripTrailingZeros().toPlainString() 同时解决
+     * 科学计数法（0E-8→0）和尾随冗余零（0.00240000→0.0024、1.500→1.5），非 BigDecimal 走 toString。 */
+    private fun convertToCell(obj: Any?): String? = when (obj) {
+        null -> null
+        is BigDecimal -> obj.stripTrailingZeros().toPlainString()
+        else -> obj.toString()
     }
 
     private fun isBinaryColumn(sqlType: Int): Boolean = when (sqlType) {
