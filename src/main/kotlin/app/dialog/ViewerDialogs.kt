@@ -83,6 +83,11 @@ import kotlinx.serialization.json.JsonElement
 /** 查看器窗口的初始尺寸（显式指定，绝不能留 Unspecified——见文件末注释）。 */
 private val VIEWER_WINDOW_SIZE = DpSize(780.dp, 580.dp)
 
+/** JSON 单元格查看器窗口的初始尺寸——JSON 通常结构复杂，需要更宽更高的窗口方便滚动查看。 */
+private val JSON_VIEWER_WINDOW_SIZE = DpSize(960.dp, 720.dp)
+/** JSON 弹窗初始 Y 方向偏移（负值 = 向上），避免屏幕底部空间被裁掉。 */
+private val JSON_DIALOG_Y_OFFSET = -60
+
 /** 单元格内容按 Base64 图片解码的字节上限（防超大图撑爆内存）。 */
 private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
@@ -529,13 +534,17 @@ fun CellViewerDialog(
         }
     }
 
+    // JSON 初筛已通过：用更大的默认窗口尺寸 + 初始位置上移（避免屏幕底部裁掉）
+    val dialogSize = if (looksJson) JSON_VIEWER_WINDOW_SIZE else VIEWER_WINDOW_SIZE
+    val yOffset = if (looksJson) JSON_DIALOG_Y_OFFSET else 0
     FramelessDialog(
         title = title,
-        width = VIEWER_WINDOW_SIZE.width,
-        height = VIEWER_WINDOW_SIZE.height,
+        width = dialogSize.width,
+        height = dialogSize.height,
         colors = LocalThemeColors.current,
         language = LocalLang.current,
         onCloseRequest = onDismiss,
+        initialYOffset = yOffset,
     ) {
         Column(
             modifier = Modifier

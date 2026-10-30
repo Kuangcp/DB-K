@@ -90,6 +90,8 @@ fun FramelessDialog(
     resizable: Boolean = true,
     /** 额外的按键钩子；Esc 已内部处理（关闭），其余按键交给这里，返回 true 表示已消费。 */
     onPreviewKeyEvent: (KeyEvent) -> Boolean = { false },
+    /** 初始 Y 方向偏移（负值 = 向上移），默认不偏移。用于窗口打开时避开屏幕底部。 */
+    initialYOffset: Int = 0,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val transparent = transparentWindowsSupported
@@ -116,6 +118,12 @@ fun FramelessDialog(
             }
         },
     ) {
+        // 初始 Y 偏移：窗口打开后自动上移，避免被屏幕底部裁掉
+        if (initialYOffset != 0) {
+            LaunchedEffect(initialYOffset) {
+                window.setLocation(window.location.x, window.location.y + initialYOffset)
+            }
+        }
         ProvideUiScale {
             ProvideI18n(language) {
                 MaterialTheme(colors = colors.toMaterialColors()) {
