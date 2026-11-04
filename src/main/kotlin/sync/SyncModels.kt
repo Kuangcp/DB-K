@@ -157,6 +157,8 @@ enum class SyncFailure {
     PUSH_REJECTED,
     GIT_FAILED,
     IO_FAILED,
+    /** 本地没有任何同步内容、仓库里却有连接 → 拒绝推送（避免把远端清空）。 */
+    EMPTY_LOCAL_GUARD,
 }
 
 data class SyncOutcome(
