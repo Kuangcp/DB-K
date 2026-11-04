@@ -58,6 +58,10 @@ class SyncEngineExportTest {
         assertTrue(plain.contains("\"host\": \"10.0.0.1\""))
         assertTrue(plain.contains("\"password\": \"secret-c1\""))
         assertFalse(Files.exists(root.resolve("meta.json")), "数据源 meta 信息不进仓库")
+        // 旧版本残留的 meta.json 在下次导出时清理
+        Files.writeString(root.resolve("meta.json"), """{"formatVersion":1}""")
+        e.writeTree(key)
+        assertFalse(Files.exists(root.resolve("meta.json")))
     }
 
     @Test

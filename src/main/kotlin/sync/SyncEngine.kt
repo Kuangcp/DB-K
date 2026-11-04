@@ -110,6 +110,8 @@ class SyncEngine(
         var unchanged = 0
 
         writeReadmeIfAbsent(root)
+        // 迁移清理：早期版本写过应用级 meta.json（数据源元信息不进仓库），已有仓库里残留的顺手删掉。
+        runCatching { Files.deleteIfExists(root.resolve("meta.json")) }
 
         val expected = HashSet<Path>()
         for (folder in snapshot.folders.sortedBy { it.id }) {
