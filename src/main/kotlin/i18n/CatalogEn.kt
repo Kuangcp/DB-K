@@ -715,7 +715,6 @@ internal fun en(key: Str): String = when (key) {
     Str.SyncPassphraseUnset -> "Not set"
     Str.SyncPassphrasePromptTitle -> "Enter sync passphrase"
     Str.SyncPassphrasePrompt -> "The passphrase stays on this device and never enters the repository."
-    Str.SyncPassphraseRemember -> "Remember on this device"
     Str.SyncPassphraseStoredLocally -> "The passphrase is stored in plain text in this device's config file (mode 600)."
     Str.SyncPassphraseClear -> "Forget passphrase"
     Str.SyncPassphraseChange -> "Change passphrase…"

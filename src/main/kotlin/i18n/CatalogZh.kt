@@ -714,7 +714,6 @@ internal fun zh(key: Str): String = when (key) {
     Str.SyncPassphraseUnset -> "未设置"
     Str.SyncPassphrasePromptTitle -> "输入同步口令"
     Str.SyncPassphrasePrompt -> "口令只保存在本机，不会进入仓库。"
-    Str.SyncPassphraseRemember -> "在本机记住口令"
     Str.SyncPassphraseStoredLocally -> "口令以明文保存在本机配置文件中（权限 600）。"
     Str.SyncPassphraseClear -> "清除口令"
     Str.SyncPassphraseChange -> "更换口令…"

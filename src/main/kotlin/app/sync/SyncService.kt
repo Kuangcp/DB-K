@@ -5,6 +5,7 @@ import db.ConnectionsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import org.tinylog.Logger
 import sync.ConflictChoice
@@ -194,6 +195,8 @@ class SyncService(
             state.passphraseSet = false
             return@serialized fail(SyncFailure.WRONG_PASSPHRASE)
         }
+        prefs.save(settings.copy(passphrase = passphrase))
+        refreshState()
         val plan = engine.readTree(key).getOrElse { e ->
             return@serialized fail(SyncFailure.WRONG_PASSPHRASE, e.message)
         }
@@ -214,6 +217,9 @@ class SyncService(
         if (settings.remoteUrl.isBlank()) return@serialized fail(SyncFailure.NOT_CONFIGURED)
         if (new.isBlank()) return@serialized fail(SyncFailure.WRONG_PASSPHRASE)
         val engine = engineFactory(settings)
+        if (engine.isRemoteEmptyGuardTripped()) {
+            return@serialized fail(SyncFailure.EMPTY_LOCAL_GUARD, "local-empty")
+        }
         val oldKey = keyFor(engine, old)
         if (!engine.loadOrCreateCheck(oldKey)) return@serialized fail(SyncFailure.WRONG_PASSPHRASE)
 
@@ -252,6 +258,17 @@ class SyncService(
         outcome
     }
 
+    /**
+     * 退出时自动推送（开关默认关）：失败只记日志，不阻塞退出、不弹窗。
+     * 未配置 / 没记住口令 / 开关关闭 → 什么也不做。
+     */
+    suspend fun exitAutoPush() {
+        val settings = prefs.load()
+        if (!settings.autoPushOnExit || settings.remoteUrl.isBlank() || settings.passphrase == null) return
+        runCatching { withTimeoutOrNull(EXIT_PUSH_TIMEOUT_MS) { push() } }
+            .onFailure { Logger.warn(it, "sync: exit auto-push failed") }
+    }
+
     /** 冲突弹窗取消：放弃整次拉取（工作树回到拉取前）。 */
     suspend fun cancelConflicts() = withContext(Dispatchers.IO) {
         pendingEngine?.abortMerge()
@@ -287,6 +304,8 @@ class SyncService(
 
     private companion object {
         const val APP = "db-k"
+        /** 退出自动推送最多等待 30s，避免网络问题卡住关窗。 */
+        const val EXIT_PUSH_TIMEOUT_MS = 30_000L
 
         fun defaultHostLabel(): String =
             runCatching { InetAddress.getLocalHost().hostName }.getOrDefault("local")
@@ -298,4 +317,14 @@ internal fun resolveLocalDir(dataDir: Path, settings: SyncSettings): Path {
     val raw = settings.localDir.trim().ifEmpty { "sync" }
     val path = Paths.get(raw)
     return if (path.isAbsolute) path else dataDir.resolve(path)
+}
+
+/**
+ * 「导入后刷新界面」的延迟绑定点。
+ *
+ * Compose 里同步服务创建在 AppRoot（退出自动推送需要），而刷新依赖 AppBody 中后声明的
+ * 设置快照；用这个 holder 在声明顺序上解耦，服务回调时再读 [run]。
+ */
+class SyncRefreshHook {
+    var run: () -> Unit = {}
 }

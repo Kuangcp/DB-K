@@ -255,6 +255,18 @@ private fun AppRoot(onExit: () -> Unit) {
         }
     }
 
+    // 云同步服务：仓库/口令/状态；「导入后刷新」由 AppBody 在设置快照就绪后绑定。
+    val syncRefresh = remember { app.sync.SyncRefreshHook() }
+    val syncService = remember {
+        SyncService(
+            repo = repository,
+            dataDir = AppPaths.dataDirectory(),
+            onBeforeExport = { consoleState.flushAllSync() },
+            onAfterImport = { syncRefresh.run() },
+        )
+    }
+    LaunchedEffect(Unit) { syncService.probeGit() }
+
     // 窗口几何：只在浮动状态落盘（最大化/全屏时尺寸是桌面给的，不是用户的恢复尺寸）；
     // 三栏布局（树宽 / 编辑-结果比例）无论窗口状态都落盘，几何保留上次值。
     fun persistWindowGeometry() {
@@ -279,7 +291,17 @@ private fun AppRoot(onExit: () -> Unit) {
     val performExit: () -> Unit = {
         consoleState.flushAllSync()
         persistWindowGeometry()
-        onExit()
+        val pushOnExit = syncService.state.settings.autoPushOnExit &&
+            syncService.state.passphraseSet && syncService.state.configured
+        if (pushOnExit) {
+            // 退出自动推送：最多等 30s（服务内部超时），完成后再真正关窗。
+            scope.launch {
+                syncService.exitAutoPush()
+                onExit()
+            }
+        } else {
+            onExit()
+        }
     }
 
     // 自定义标题栏的关闭按钮与系统窗口关闭走同一条路径。
@@ -356,6 +378,8 @@ private fun AppRoot(onExit: () -> Unit) {
         ProvideUiScale {
             AppBody(
                 repository = repository,
+                syncService = syncService,
+                syncRefresh = syncRefresh,
                 treeState = treeState,
                 connectionsState = connectionsState,
                 consoleState = consoleState,
@@ -378,6 +402,8 @@ private fun AppRoot(onExit: () -> Unit) {
 @Composable
 private fun WindowScope.AppBody(
     repository: ConnectionsRepository,
+    syncService: SyncService,
+    syncRefresh: app.sync.SyncRefreshHook,
     treeState: TreeState,
     connectionsState: ConnectionsState,
     consoleState: ConsoleState,
@@ -640,24 +666,15 @@ private fun WindowScope.AppBody(
     var liveTemplates by remember {
         mutableStateOf(runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() })
     }
-
-    // 云同步：服务持有仓库/口令/状态；UI 只读 syncService.state（设置 → 云同步）。
-    val syncService = remember {
-        SyncService(
-            repo = repository,
-            dataDir = AppPaths.dataDirectory(),
-            onBeforeExport = { consoleState.flushAllSync() },
-            onAfterImport = {
-                treeState.refresh()
-                consoleState.reloadAfterSync()
-                liveTemplates = runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
-                keymap = KeymapPrefs.load()
-                customThemes = themesStore.load()
-                if (mergeThemes(customThemes).none { it.id == activeThemeId }) selectTheme(defaultThemeId)
-            },
-        )
+    syncRefresh.run = {
+        treeState.refresh()
+        consoleState.reloadAfterSync()
+        liveTemplates = runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
+        keymap = KeymapPrefs.load()
+        customThemes = themesStore.load()
+        if (mergeThemes(customThemes).none { it.id == activeThemeId }) selectTheme(defaultThemeId)
     }
-    LaunchedEffect(Unit) { syncService.probeGit() }
+
     val syncActions = SyncActions(
         onSaveSettings = { settings -> scope.launch { syncService.configure(settings) } },
         onSubmitPassphrase = { passphrase -> scope.launch { syncService.submitPassphrase(passphrase) } },

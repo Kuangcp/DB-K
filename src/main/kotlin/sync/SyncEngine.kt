@@ -85,6 +85,11 @@ class SyncEngine(
         }.getOrDefault(false)
     }
 
+    /** 强制写入口令校验串（更换口令时用）。 */
+    fun writeCheck(key: SecretKey) {
+        writeText(SyncPaths.checkFile(root()), SecretBox.encrypt(key, SecretBox.CHECK_PLAINTEXT.toByteArray()))
+    }
+
     /** 仓库里是否已经有密钥材料（用于区分「首台设备的空仓库」）。 */
     fun hasSecrets(): Boolean = Files.isRegularFile(SyncPaths.checkFile(root()))
 

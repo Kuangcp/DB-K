@@ -723,7 +723,6 @@ enum class Str {
     SyncPassphraseUnset,
     SyncPassphrasePromptTitle,
     SyncPassphrasePrompt,
-    SyncPassphraseRemember,
     SyncPassphraseStoredLocally,
     SyncPassphraseClear,
     SyncPassphraseChange,
