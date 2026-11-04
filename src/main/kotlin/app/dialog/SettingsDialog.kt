@@ -93,6 +93,8 @@ fun SettingsDialog(
     onManageThemes: () -> Unit = {},
     /** 实时预览：拖动滑块时立即把比例广播到全局（取消时由调用方回退）。 */
     onUiScalePreview: (Float) -> Unit = {},
+    /** 「云同步」分区内容（由 Main 注入：持有 SyncState 与 suspend 动作）。 */
+    syncPanel: @Composable () -> Unit = {},
 ) {
     if (!visible) return
     FramelessDialog(
@@ -110,6 +112,7 @@ fun SettingsDialog(
             onSave = onSave,
             onManageThemes = onManageThemes,
             onUiScalePreview = onUiScalePreview,
+            syncPanel = syncPanel,
         )
     }
 }
@@ -122,6 +125,7 @@ private fun SettingsBody(
     onSave: (SettingsSnapshot) -> Unit,
     onManageThemes: () -> Unit,
     onUiScalePreview: (Float) -> Unit = {},
+    syncPanel: @Composable () -> Unit = {},
 ) {
     var section by remember { mutableIntStateOf(0) }
     var fontFamily by remember { mutableStateOf(initial.editor.fontFamilyName) }
@@ -149,6 +153,7 @@ private fun SettingsBody(
                 SettingsNavRow(label = t(Str.SettingsSectionGeneral), selected = section == 0) { section = 0 }
                 SettingsNavRow(label = t(Str.SettingsSectionShortcuts), selected = section == 1) { section = 1 }
                 SettingsNavRow(label = t(Str.SettingsSectionLiveTemplates), selected = section == 2) { section = 2 }
+                SettingsNavRow(label = t(Str.SettingsSectionSync), selected = section == 3) { section = 3 }
             }
             Divider(
                 modifier = Modifier.width(1.dp).fillMaxHeight(),
@@ -188,6 +193,7 @@ private fun SettingsBody(
                         templates = liveTemplates,
                         onChange = { liveTemplates = it },
                     )
+                    3 -> syncPanel()
                 }
             }
         }

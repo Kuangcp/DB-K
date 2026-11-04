@@ -179,6 +179,61 @@ class SyncService(
         outcome
     }
 
+    /** 首次接入：克隆远端 → 校验口令 → 导入（本地目录已有 .git 时拒绝）。 */
+    suspend fun cloneAndImport(passphrase: String): SyncOutcome = serialized {
+        val settings = prefs.load()
+        if (settings.remoteUrl.isBlank()) return@serialized fail(SyncFailure.NOT_CONFIGURED)
+        val tree = resolveLocalDir(dataDir, settings)
+        if (Files.isDirectory(tree.resolve(".git"))) {
+            return@serialized fail(SyncFailure.GIT_FAILED, "already-initialized")
+        }
+        val engine = engineFactory(settings)
+        engine.gitClone(settings.remoteUrl, settings.branch)?.let { return@serialized fail(it) }
+        val key = keyFor(engine, passphrase)
+        if (!engine.loadOrCreateCheck(key)) {
+            state.passphraseSet = false
+            return@serialized fail(SyncFailure.WRONG_PASSPHRASE)
+        }
+        val plan = engine.readTree(key).getOrElse { e ->
+            return@serialized fail(SyncFailure.WRONG_PASSPHRASE, e.message)
+        }
+        val applied = runCatching { engine.apply(plan) }.getOrElse { e ->
+            Logger.error(e, "sync: import after clone failed")
+            return@serialized fail(SyncFailure.IO_FAILED, e.message)
+        }
+        onAfterImport()
+        markSynced()
+        val outcome = SyncOutcome(ok = true, skippedConsoles = applied + plan.skippedConsoles)
+        state.lastResult = outcome
+        outcome
+    }
+
+    /** 更换同步口令：校验旧口令 → 用新密钥重写 check 与全部 `.enc` → 提交并推送。 */
+    suspend fun changePassphrase(old: String, new: String): SyncOutcome = serialized {
+        val settings = prefs.load()
+        if (settings.remoteUrl.isBlank()) return@serialized fail(SyncFailure.NOT_CONFIGURED)
+        if (new.isBlank()) return@serialized fail(SyncFailure.WRONG_PASSPHRASE)
+        val engine = engineFactory(settings)
+        val oldKey = keyFor(engine, old)
+        if (!engine.loadOrCreateCheck(oldKey)) return@serialized fail(SyncFailure.WRONG_PASSPHRASE)
+
+        val newKey = keyFor(engine, new)
+        engine.writeCheck(newKey)
+        engine.writeTree(newKey) // 旧密钥解不开 → 全部 .enc 重写
+        engine.commitLocal(hostLabel)
+        val outcome = engine.push("origin", settings.branch)
+        if (!outcome.ok) {
+            state.lastResult = outcome
+            return@serialized outcome
+        }
+        prefs.save(settings.copy(passphrase = new))
+        refreshState()
+        markSynced()
+        val ok = SyncOutcome(ok = true)
+        state.lastResult = ok
+        ok
+    }
+
     /** 冲突弹窗确认后继续拉取（完成导入 + 可选推送）。 */
     suspend fun resolveConflicts(choices: Map<String, ConflictChoice>): SyncOutcome = serialized {
         val engine = pendingEngine ?: return@serialized fail(SyncFailure.GIT_FAILED, "no-pending-pull")

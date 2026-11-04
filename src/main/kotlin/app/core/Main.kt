@@ -69,6 +69,9 @@ import app.dialog.FolderNameDialog
 import app.dialog.ImportConflictDialog
 import app.dialog.PassphraseDialog
 import app.dialog.SettingsDialog
+import app.dialog.SyncActions
+import app.dialog.SyncConflictDialog
+import app.dialog.SyncPanel
 import app.dialog.ThemeDialog
 import app.dialog.SettingsSnapshot
 import app.i18n.LocalLang
@@ -83,6 +86,7 @@ import app.settings.TreeExpandPrefs
 import app.settings.TabBarPrefs
 import app.settings.UiScalePrefs
 import app.settings.WindowPrefs
+import app.sync.SyncService
 import app.state.CommitPreviewRequest
 import app.state.ConfirmRequest
 import app.state.ExternalMissingExitRequest
@@ -636,6 +640,33 @@ private fun WindowScope.AppBody(
     var liveTemplates by remember {
         mutableStateOf(runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() })
     }
+
+    // 云同步：服务持有仓库/口令/状态；UI 只读 syncService.state（设置 → 云同步）。
+    val syncService = remember {
+        SyncService(
+            repo = repository,
+            dataDir = AppPaths.dataDirectory(),
+            onBeforeExport = { consoleState.flushAllSync() },
+            onAfterImport = {
+                treeState.refresh()
+                consoleState.reloadAfterSync()
+                liveTemplates = runCatching { LiveTemplatesStore.load() }.getOrElse { defaultLiveTemplates() }
+                keymap = KeymapPrefs.load()
+                customThemes = themesStore.load()
+                if (mergeThemes(customThemes).none { it.id == activeThemeId }) selectTheme(defaultThemeId)
+            },
+        )
+    }
+    LaunchedEffect(Unit) { syncService.probeGit() }
+    val syncActions = SyncActions(
+        onSaveSettings = { settings -> scope.launch { syncService.configure(settings) } },
+        onSubmitPassphrase = { passphrase -> scope.launch { syncService.submitPassphrase(passphrase) } },
+        onClearPassphrase = { scope.launch { syncService.clearPassphrase() } },
+        onChangePassphrase = { old, new -> scope.launch { syncService.changePassphrase(old, new) } },
+        onClone = { passphrase -> scope.launch { syncService.cloneAndImport(passphrase) } },
+        onPull = { scope.launch { syncService.pull() } },
+        onPush = { scope.launch { syncService.push() } },
+    )
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
     val completionFunctions: List<String> = activeProfile?.let { p ->
         connectionsState.searchSchemasOf(p.id).orEmpty()
@@ -1531,6 +1562,7 @@ private fun WindowScope.AppBody(
                     theme = activeTheme,
                     language = effectiveLang,
                     initial = SettingsSnapshot(editorSettings, keymap, languagePref, settingsInitialScale, liveTemplates, multiRowTabs),
+                    syncPanel = { SyncPanel(syncService.state, syncActions) },
                     onDismiss = {
                         // 取消/关闭：回退实时预览的缩放，不落盘
                         UiScaleState.set(settingsInitialScale)
@@ -1557,6 +1589,15 @@ private fun WindowScope.AppBody(
                     },
                     onManageThemes = { dialogState.showThemeDialog = true },
                     onUiScalePreview = { UiScaleState.set(it) },
+                )
+                SyncConflictDialog(
+                    items = syncService.state.conflicts,
+                    theme = activeTheme,
+                    language = effectiveLang,
+                    onConfirm = { choices ->
+                        scope.launch { syncService.resolveConflicts(choices) }
+                    },
+                    onCancel = { scope.launch { syncService.cancelConflicts() } },
                 )
                 ThemeDialog(
                     visible = dialogState.showThemeDialog,

@@ -1037,6 +1037,25 @@ class ConsoleState(
         caretDrafts.keys.toList().forEach { flushCaretNow(it) }
     }
 
+    /**
+     * 云同步导入后重建控制台视图：先落盘编辑器改动，再丢弃缓存/缓冲区/光标草稿，
+     * 让下一次读取从仓库结果重建（同步是显式用户动作，未推送内容此前已 flush）。
+     */
+    fun reloadAfterSync() {
+        flushAllSync()
+        val active = activeConsoleId
+        consolesByConnection.clear()
+        buffers.clear()
+        loaded.clear()
+        caretDrafts.clear()
+        dirtyConsoleIds = emptySet()
+        if (active != null && repository.getConsole(active) != null) {
+            reloadFromDisk(active)
+        } else {
+            activeConsoleId = null
+        }
+    }
+
     // ---------- 光标记忆 / 持久化：每个控制台记住上次焦点所在行 ----------
 
     /**
