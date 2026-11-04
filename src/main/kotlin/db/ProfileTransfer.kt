@@ -7,10 +7,8 @@ import java.io.File
 import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
-import javax.crypto.SecretKeyFactory
+import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
-import javax.crypto.spec.SecretKeySpec
 import i18n.I18n
 import i18n.Str
 
@@ -39,11 +37,9 @@ object ProfileTransfer {
 
     /** 加密文件前缀（用于区分旧版明文 JSON）。 */
     const val ENCRYPTED_PREFIX = "dbk-enc:v1:"
-    private const val PBKDF2_ITERATIONS = 200_000
     private const val SALT_BYTES = 16
     private const val IV_BYTES = 12
     private const val GCM_TAG_BITS = 128
-    private const val KEY_BITS = 256
 
     private val random = SecureRandom()
 
@@ -198,12 +194,9 @@ object ProfileTransfer {
         }
     }
 
-    /** PBKDF2-HMAC-SHA256 → AES-256 密钥。 */
-    private fun deriveKey(passphrase: String, salt: ByteArray): SecretKeySpec {
-        val spec = PBEKeySpec(passphrase.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_BITS)
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
-    }
+    /** PBKDF2-HMAC-SHA256 → AES-256 密钥（参数与云同步共用，见 [sync.SecretBox]）。 */
+    private fun deriveKey(passphrase: String, salt: ByteArray): SecretKey =
+        sync.SecretBox.deriveKey(passphrase, salt)
 
     /**
      * 找出 [imported] 中与 [existingNames] 同名（忽略大小写 + 首尾空白）的连接。
