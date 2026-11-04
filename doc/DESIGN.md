@@ -363,3 +363,22 @@ saved_queries (id TEXT PK, folder_id NULL, name, sql_text)   -- 后置里程碑
 10. 错误人性化：SQLState + 方言友好文案，展示在消息区而非弹窗刷屏。
 11. debugHome 沙箱重定向，开发期不污染真实数据。
 12. 所有长耗时动作带 loading/取消，符合桌面工具心智。
+
+---
+
+## 14. 云同步（git 仓库，可选）
+
+把「数据源配置 / 控制台 SQL / 设置（Live 模板、快捷键覆盖、自定义主题）」通过一个 git 仓库
+在多设备间同步。完整设计见 `doc/superpowers/specs/2026-11-04-git-config-sync-design.md`，
+实施计划见 `doc/superpowers/plans/2026-11-04-git-config-sync.md`。要点：
+
+- **传输**：调用系统 `git`（不内置 JGit）；凭证复用 ssh key / credential helper。
+- **仓库布局**：`<repo>/db-k/{connections/<id>.enc, consoles/<id>.{sql,meta.json}, folders/, workspaces/, settings/}`；
+  id 即文件名，冲突粒度 = 实体。仓库可同时容纳 `api-x/` 命名空间。
+- **加密**：连接条目整条 AES-256-GCM 加密，密钥 = PBKDF2(同步口令, `salt.bin`)；口令只存本机
+  `<dataDir>/sync.properties`（600），不进仓库。控制台 SQL 明文（可 diff/合并）。
+- **合并**：拉取 = 先提交本地快照 → fetch/merge → 冲突逐项取舍 → 导入合并结果；删除靠文件消失
+  （git 三路合并天然处理「一边删一边没改」）。
+- **不同步**：`sql_history`、元数据缓存、光标、标签关闭态、窗口几何、明暗模式、字号/缩放、Redis 视图偏好、驱动、日志。
+- **分层**：`sync/` 是纯叶层（JDK + kotlinx-serialization + tinylog，禁止 compose/coroutines）；
+  `app/sync/` 放 db-k 适配器与串行服务；`db/SyncImportModels` 保证 db 层不依赖 `sync`。

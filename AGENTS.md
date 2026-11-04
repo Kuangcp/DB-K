@@ -19,6 +19,9 @@
 - `jdbc/` → JDBC 后端（`LiveConnection` 实现 `engine.DataSourceSession`）；**禁止 import compose/coroutines**
 - `redis/` → Redis 后端（N5，`RedisSession` 用 Jedis + `RedisProtocol` 纯逻辑）；**禁止 import compose/coroutines**
 - `es/` → Elasticsearch 后端（N6，`ElasticsearchSession` 用 `java.net.http.HttpClient` + `ElasticsearchProtocol` 纯逻辑）；**禁止 import compose/coroutines**
+- `sync/` → **配置云同步纯叶层**（口令派生/AES-GCM、仓库路径约定、系统 git 封装、合并编排）：
+  **只依赖 JDK + kotlinx-serialization + tinylog**，禁止 import compose/coroutines/db/app；
+  `db/ProfileTransfer` 复用其 `SecretBox.deriveKey`（唯一 db→sync 依赖边）。
 - `engine/` → **协议无关契约层**（`DataSourceSession` / `BackendCapabilities` / `Protocol` + `engine/model`）：
   **纯叶层，不得 import `jdbc`/`db`/`app`/compose/coroutines**；新数据源（Redis / ES）实现同一接口，
   JDBC 专属能力（主键写回等）另立接口（如 `jdbc.EditableSession`），不污染通用层。

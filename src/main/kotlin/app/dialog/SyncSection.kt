@@ -269,6 +269,13 @@ fun SyncPanel(state: SyncState, actions: SyncActions) {
             color = MaterialTheme.colors.onSurface,
         )
     }
+    (state.lastResult?.skippedConsoles ?: 0).takeIf { it > 0 }?.let { skipped ->
+        Text(
+            t(Str.SyncResultSkipped, skipped),
+            style = MaterialTheme.typography.caption,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+        )
+    }
     Text(
         t(Str.SyncHintCiphertext),
         style = MaterialTheme.typography.caption,
@@ -333,6 +340,14 @@ private fun SyncPassphraseDialog(
                     style = MaterialTheme.typography.body2,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
                 )
+                if (mode == PassphraseDialogMode.Change) {
+                    Text(
+                        t(Str.SyncReencryptHint),
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 if (mode == PassphraseDialogMode.Change) {
                     OutlinedTextField(
                         value = current,

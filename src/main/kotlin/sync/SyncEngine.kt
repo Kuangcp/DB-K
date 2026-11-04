@@ -39,6 +39,7 @@ class SyncEngine(
             }
             git.setLocalIdentity()
         }
+        ensureGitAttributes()
         val remote = git.setRemote("origin", remoteUrl)
         if (!remote.ok) {
             Logger.warn("sync: git remote setup failed: {}", remote.out)
@@ -508,6 +509,30 @@ class SyncEngine(
         val file = SyncPaths.metaFile(root)
         if (Files.isRegularFile(file)) return
         writeText(file, syncJson.encodeToString(SyncMeta.serializer(), SyncMeta(app = app)))
+    }
+
+    /**
+     * 仓库根 `.gitattributes`：`.enc` 标二进制（禁换行归一化，否则密文会被改坏）、
+     * `.sql` 统一 LF（跨平台 diff/合并稳定）。已存在则只追加缺失行，不覆盖用户内容。
+     */
+    private fun ensureGitAttributes() {
+        val file = workTree.resolve(".gitattributes")
+        val required = listOf("*.enc -text", "*.sql text eol=lf")
+        val existing = if (Files.isRegularFile(file)) {
+            runCatching { Files.readAllLines(file) }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        val present = existing.map { it.trim() }.toSet()
+        val missing = required.filterNot { it in present }
+        if (missing.isEmpty()) return
+        val content = buildString {
+            if (existing.isNotEmpty()) {
+                existing.forEach { appendLine(it) }
+            }
+            missing.forEach { appendLine(it) }
+        }
+        writeBytes(file, content.toByteArray(Charsets.UTF_8))
     }
 
     private fun writeReadmeIfAbsent(root: Path) {
