@@ -68,9 +68,6 @@ data class ConsoleMetaSync(
     val updatedAt: Long = 0,
 )
 
-@Serializable
-data class SyncMeta(val formatVersion: Int = 1, val app: String)
-
 /** `settings/keymap.json`：只存与默认不同的命令（空串 = 显式解绑）。 */
 @Serializable
 data class KeymapSync(val overrides: Map<String, String> = emptyMap())

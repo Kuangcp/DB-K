@@ -95,7 +95,6 @@ SQL 的文本三路合并因此仍然可用。
   db-k/
     salt.bin                     # 16B 随机盐（口令派生用，首次 push 时生成）
     secret.check                 # AES-GCM 加密的固定串，用于校验口令是否正确
-    meta.json                    # { "formatVersion": 1, "app": "db-k" }（向前兼容用）
     folders/<folderId>.json
     connections/<connId>.enc     # 整条连接（含 password 明文）密文
     workspaces/<workspaceId>.json  # 名称 + 成员 consoleId 列表
@@ -112,6 +111,8 @@ SQL 的文本三路合并因此仍然可用。
 
 - **id 即文件名**，现有 24 位 UUID 稳定；重命名不换 id。
 - 文件只由应用写；`README.md` 明确「`*.enc` 是密文，手工编辑会损坏」。
+- **不写应用级 `meta.json`**：数据源元信息（以及 `meta_cache` 结构缓存）不进仓库，仓库里只有
+  连接条目/控制台/工作区/设置与两份密钥材料。
 - 写盘统一「临时文件 + ATOMIC_MOVE」（复用 `ConsoleFiles.write` 的做法）。
 - JSON 一律 `prettyPrint = true`、`encodeDefaults = false`、字段顺序由 DTO 固定 → diff 稳定。
 - 集合型文件（folders/workspaces/consoles/settings）**不用单一大文件**，避免整份文件冲突。

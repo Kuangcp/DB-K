@@ -26,7 +26,7 @@ class SyncPathsTest {
 
     @Test
     fun `infra files are not entities`() {
-        listOf(SyncPaths.saltFile(root), SyncPaths.checkFile(root), SyncPaths.metaFile(root))
+        listOf(SyncPaths.saltFile(root), SyncPaths.checkFile(root))
             .forEach { assertNull(SyncPaths.parse(root, it)) }
         assertNull(SyncPaths.parse(root, root.resolve(SyncPaths.README_FILE)))
         assertNull(SyncPaths.parse(root, root.resolve("unknown.json")))

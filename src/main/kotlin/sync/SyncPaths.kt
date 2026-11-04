@@ -8,7 +8,7 @@ import java.nio.file.Path
  *
  * ```
  * <workTree>/db-k/
- *   salt.bin  secret.check  meta.json  README.md
+ *   salt.bin  secret.check  README.md
  *   folders/<id>.json
  *   connections/<id>.enc
  *   workspaces/<id>.json
@@ -20,7 +20,6 @@ object SyncPaths {
 
     const val SALT_FILE = "salt.bin"
     const val CHECK_FILE = "secret.check"
-    const val META_FILE = "meta.json"
     const val README_FILE = "README.md"
 
     /** `settings/` 下受同步管理的文件名（新增设置项时在此登记）。 */
@@ -30,7 +29,6 @@ object SyncPaths {
 
     fun saltFile(root: Path): Path = root.resolve(SALT_FILE)
     fun checkFile(root: Path): Path = root.resolve(CHECK_FILE)
-    fun metaFile(root: Path): Path = root.resolve(META_FILE)
 
     fun folderFile(root: Path, id: String): Path = root.resolve("folders").resolve("$id.json")
     fun connectionFile(root: Path, id: String): Path = root.resolve("connections").resolve("$id.enc")
@@ -40,7 +38,7 @@ object SyncPaths {
     fun settingFile(root: Path, name: String): Path = root.resolve("settings").resolve(name)
 
     /**
-     * 把仓库内文件解析成实体引用；`salt.bin` / `secret.check` / `meta.json` / README / 未知文件 → null。
+     * 把仓库内文件解析成实体引用；`salt.bin` / `secret.check` / README / 未知文件 → null。
      * 只认「目录 + 文件名」两层结构，避免把别处文件误当实体。
      */
     fun parse(root: Path, file: Path): SyncRef? {

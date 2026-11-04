@@ -109,7 +109,6 @@ class SyncEngine(
         var deleted = 0
         var unchanged = 0
 
-        writeMetaIfAbsent(root)
         writeReadmeIfAbsent(root)
 
         val expected = HashSet<Path>()
@@ -507,12 +506,6 @@ class SyncEngine(
         if (Files.isRegularFile(file)) runCatching { Files.readString(file) }.getOrNull() else null
 
     // ---------- 写文件助手 ----------
-
-    private fun writeMetaIfAbsent(root: Path) {
-        val file = SyncPaths.metaFile(root)
-        if (Files.isRegularFile(file)) return
-        writeText(file, syncJson.encodeToString(SyncMeta.serializer(), SyncMeta(app = app)))
-    }
 
     /**
      * 仓库根 `.gitattributes`：`.enc` 标二进制（禁换行归一化，否则密文会被改坏）、

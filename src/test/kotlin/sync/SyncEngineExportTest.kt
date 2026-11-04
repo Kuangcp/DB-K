@@ -57,7 +57,7 @@ class SyncEngineExportTest {
         val plain = String(SecretBox.decrypt(key, stored))
         assertTrue(plain.contains("\"host\": \"10.0.0.1\""))
         assertTrue(plain.contains("\"password\": \"secret-c1\""))
-        assertEquals("db-k", syncJson.decodeFromString(SyncMeta.serializer(), Files.readString(SyncPaths.metaFile(root))).app)
+        assertFalse(Files.exists(root.resolve("meta.json")), "数据源 meta 信息不进仓库")
     }
 
     @Test
@@ -86,7 +86,7 @@ class SyncEngineExportTest {
     }
 
     @Test
-    fun `salt check and meta survive tree rewrites`() {
+    fun `salt check and readme survive tree rewrites`() {
         val e = engine(FakeAdapter(snapshot("c1")))
         assertTrue(e.loadOrCreateCheck(key))
         e.writeTree(key)
@@ -94,7 +94,7 @@ class SyncEngineExportTest {
         assertEquals(0, stats.deleted)
         assertEquals(16, e.loadOrCreateSalt().size)
         assertTrue(Files.exists(SyncPaths.checkFile(e.root())))
-        assertTrue(Files.exists(SyncPaths.metaFile(e.root())))
+        assertTrue(Files.exists(e.root().resolve(SyncPaths.README_FILE)))
         assertFalse(e.loadOrCreateCheck(SecretBox.deriveKey("other", e.loadOrCreateSalt())))
     }
 
