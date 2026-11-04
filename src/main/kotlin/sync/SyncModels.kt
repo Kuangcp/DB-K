@@ -102,6 +102,15 @@ data class RemovedIds(
 
 data class SyncStats(val written: Int = 0, val deleted: Int = 0, val unchanged: Int = 0)
 
+/** 读取合并结果后的导入计划：要写入的快照 + 要删除的本地 id + 被跳过的孤儿控制台数。 */
+data class SyncPlan(
+    val snapshot: SyncSnapshot,
+    val removed: RemovedIds,
+    val skippedConsoles: Int = 0,
+    /** 无法解析的非密文文件（相对仓库路径）；不阻断整次导入，只报告。 */
+    val corruptFiles: List<String> = emptyList(),
+)
+
 /** 冲突项摘要（UI 渲染用；**永不含密码**）。 */
 sealed interface ConflictPreview {
     data class Connection(
