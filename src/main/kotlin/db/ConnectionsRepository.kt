@@ -693,6 +693,273 @@ class ConnectionsRepository(
         caretEnd = rs.getInt("caret_end"),
     )
 
+    // ---------- 云同步导入 ----------
+
+    /** 全部控制台（不限连接），按连接 + 顺序排序。 */
+    fun listAllConsoles(): List<ConsoleRecord> =
+        conn.createStatement().use { st ->
+            st.executeQuery(
+                "SELECT id, connection_id, name, file_path, external, sort_order, updated_at, target, " +
+                    "caret_start, caret_end FROM consoles ORDER BY connection_id, sort_order, created_at",
+            ).use { rs -> buildList { while (rs.next()) add(mapConsole(rs)) } }
+        }
+
+    /** 连接的 `updated_at`（内容变更时间，云同步用；[ConnectionProfile] 本身不带该字段）。 */
+    fun connectionUpdatedAt(): Map<String, Long> =
+        conn.createStatement().use { st ->
+            st.executeQuery("SELECT id, updated_at FROM connections").use { rs ->
+                buildMap { while (rs.next()) put(rs.getString(1), rs.getLong(2)) }
+            }
+        }
+
+    /**
+     * 应用云同步的合并结果（单事务；失败整体回滚）。
+     *
+     * 只写**同步字段**，设备本地列（`consoles.caret_* / closed / external / file_path`、
+     * 各表 `created_at`）保持现值，避免拉取把本机光标/标签状态冲掉。
+     */
+    fun importSyncedState(req: SyncImportRequest) {
+        val folderIds = req.folders.map { it.id }.toSet()
+        val connectionIds = req.connections.map { it.id }.toSet()
+        val workspaceIds = req.workspaces.map { it.id }.toSet()
+        val consoleIds = req.consoles.map { it.id }.toSet()
+        val now = System.currentTimeMillis()
+
+        conn.autoCommit = false
+        try {
+            // 1) 成员关系：被删工作区/控制台，以及本次要重写的工作区
+            for (wsId in req.removedWorkspaceIds + workspaceIds) {
+                conn.prepareStatement("DELETE FROM workspace_consoles WHERE workspace_id = ?").use { ps ->
+                    ps.setString(1, wsId)
+                    ps.executeUpdate()
+                }
+            }
+            for (consoleId in req.removedConsoleIds) {
+                conn.prepareStatement("DELETE FROM workspace_consoles WHERE console_id = ?").use { ps ->
+                    ps.setString(1, consoleId)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 2) 删除控制台（含 .sql 文件）
+            for (id in req.removedConsoleIds) {
+                val rec = getConsole(id) ?: continue
+                deleteConsoleFile(rec)
+                conn.prepareStatement("DELETE FROM consoles WHERE id = ?").use { ps ->
+                    ps.setString(1, id)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 3) 删除连接（其控制台行随 FK 级联；文件需先手工清）
+            for (id in req.removedConnectionIds) {
+                listConsoles(id).forEach { deleteConsoleFile(it) }
+                conn.prepareStatement("DELETE FROM connections WHERE id = ?").use { ps ->
+                    ps.setString(1, id)
+                    ps.executeUpdate()
+                }
+                conn.prepareStatement("DELETE FROM meta_cache WHERE profile_id = ?").use { ps ->
+                    ps.setString(1, id)
+                    ps.executeUpdate()
+                }
+            }
+            if (req.removedConnectionIds.isNotEmpty()) {
+                conn.createStatement().use { it.executeUpdate("DELETE FROM sql_history WHERE profile_id IS NULL") }
+            }
+
+            // 4) 删除文件夹（子文件夹随 FK 级联，连接 folder_id 置 NULL）与工作区
+            for (id in req.removedFolderIds) {
+                conn.prepareStatement("DELETE FROM folders WHERE id = ?").use { ps ->
+                    ps.setString(1, id)
+                    ps.executeUpdate()
+                }
+            }
+            for (id in req.removedWorkspaceIds) {
+                conn.prepareStatement("DELETE FROM workspaces WHERE id = ?").use { ps ->
+                    ps.setString(1, id)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 5) upsert：文件夹
+            for (folder in req.folders) {
+                val parentId = folder.parentId?.takeIf { it in folderIds }
+                conn.prepareStatement(
+                    "INSERT OR IGNORE INTO folders(id, name, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                ).use { ps ->
+                    ps.setString(1, folder.id)
+                    ps.setString(2, folder.name)
+                    ps.setString(3, parentId)
+                    ps.setInt(4, folder.sortOrder)
+                    ps.setLong(5, now)
+                    ps.executeUpdate()
+                }
+                conn.prepareStatement("UPDATE folders SET name = ?, parent_id = ?, sort_order = ? WHERE id = ?").use { ps ->
+                    ps.setString(1, folder.name)
+                    ps.setString(2, parentId)
+                    ps.setInt(3, folder.sortOrder)
+                    ps.setString(4, folder.id)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 6) upsert：工作区
+            for (workspace in req.workspaces) {
+                val lastActive = workspace.lastActiveConsoleId?.takeIf { it in consoleIds }
+                conn.prepareStatement(
+                    "INSERT OR IGNORE INTO workspaces(id, name, auto_named, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                ).use { ps ->
+                    ps.setString(1, workspace.id)
+                    ps.setString(2, workspace.name)
+                    ps.setInt(3, if (workspace.autoNamed) 1 else 0)
+                    ps.setInt(4, workspace.sortOrder)
+                    ps.setLong(5, workspace.createdAt.takeIf { it > 0 } ?: now)
+                    ps.executeUpdate()
+                }
+                conn.prepareStatement(
+                    "UPDATE workspaces SET name = ?, auto_named = ?, sort_order = ?, last_active_console_id = ? WHERE id = ?",
+                ).use { ps ->
+                    ps.setString(1, workspace.name)
+                    ps.setInt(2, if (workspace.autoNamed) 1 else 0)
+                    ps.setInt(3, workspace.sortOrder)
+                    ps.setString(4, lastActive)
+                    ps.setString(5, workspace.id)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 7) upsert：连接（password 仍按本机 secret.key 加密落盘）
+            for (profile in req.connections) {
+                val folderId = profile.folderId?.takeIf { it in folderIds }
+                val updatedAt = req.connectionUpdatedAt[profile.id] ?: now
+                val encrypted = PasswordVault.encrypt(keyFile, profile.password)
+                conn.prepareStatement(
+                    """
+                    INSERT OR IGNORE INTO connections(id, folder_id, name, db_type, host, port, database_name,
+                        user_name, password, extra_params, color, sort_order, key_separator, display_tz,
+                        query_timeout_seconds, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { ps ->
+                    ps.setString(1, profile.id)
+                    ps.setString(2, folderId)
+                    ps.setString(3, profile.name)
+                    ps.setString(4, profile.dbType.name)
+                    ps.setString(5, profile.host)
+                    ps.setInt(6, profile.port)
+                    ps.setString(7, profile.database)
+                    ps.setString(8, profile.user)
+                    ps.setString(9, encrypted)
+                    ps.setString(10, profile.extraParams)
+                    ps.setString(11, profile.color)
+                    ps.setInt(12, profile.sortOrder)
+                    ps.setString(13, profile.keySeparator)
+                    ps.setString(14, DisplayZone.toDb(profile.displayZone))
+                    ps.setInt(15, profile.queryTimeoutSeconds)
+                    ps.setLong(16, now)
+                    ps.setLong(17, updatedAt)
+                    ps.executeUpdate()
+                }
+                conn.prepareStatement(
+                    """
+                    UPDATE connections SET folder_id = ?, name = ?, db_type = ?, host = ?, port = ?,
+                        database_name = ?, user_name = ?, password = ?, extra_params = ?, color = ?,
+                        sort_order = ?, key_separator = ?, display_tz = ?, query_timeout_seconds = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """.trimIndent(),
+                ).use { ps ->
+                    ps.setString(1, folderId)
+                    ps.setString(2, profile.name)
+                    ps.setString(3, profile.dbType.name)
+                    ps.setString(4, profile.host)
+                    ps.setInt(5, profile.port)
+                    ps.setString(6, profile.database)
+                    ps.setString(7, profile.user)
+                    ps.setString(8, encrypted)
+                    ps.setString(9, profile.extraParams)
+                    ps.setString(10, profile.color)
+                    ps.setInt(11, profile.sortOrder)
+                    ps.setString(12, profile.keySeparator)
+                    ps.setString(13, DisplayZone.toDb(profile.displayZone))
+                    ps.setInt(14, profile.queryTimeoutSeconds)
+                    ps.setLong(15, updatedAt)
+                    ps.setString(16, profile.id)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 8) upsert：控制台（file_path 按 id 重算；caret/closed/external 不动）
+            for (console in req.consoles) {
+                if (console.connectionId !in connectionIds) continue
+                val path = consolesDir.resolve("${console.id}.sql").toString()
+                conn.prepareStatement(
+                    """
+                    INSERT OR IGNORE INTO consoles(id, connection_id, name, file_path, sort_order, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { ps ->
+                    ps.setString(1, console.id)
+                    ps.setString(2, console.connectionId)
+                    ps.setString(3, console.name)
+                    ps.setString(4, path)
+                    ps.setInt(5, console.sortOrder)
+                    ps.setLong(6, now)
+                    ps.setLong(7, console.updatedAt.takeIf { it > 0 } ?: now)
+                    ps.executeUpdate()
+                }
+                conn.prepareStatement(
+                    "UPDATE consoles SET connection_id = ?, name = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+                ).use { ps ->
+                    ps.setString(1, console.connectionId)
+                    ps.setString(2, console.name)
+                    ps.setInt(3, console.sortOrder)
+                    ps.setLong(4, console.updatedAt.takeIf { it > 0 } ?: now)
+                    ps.setString(5, console.id)
+                    ps.executeUpdate()
+                }
+                // target 与 caret 不同：target 属同步字段（"" = 连接默认）
+                conn.prepareStatement("UPDATE consoles SET target = ? WHERE id = ?").use { ps ->
+                    ps.setString(1, console.target)
+                    ps.setString(2, console.id)
+                    ps.executeUpdate()
+                }
+            }
+
+            // 9) 工作区成员（整体重写；指向不存在控制台的成员丢弃）
+            for (workspace in req.workspaces) {
+                val ids = req.workspaceConsoles[workspace.id].orEmpty()
+                var order = 0
+                for (consoleId in ids) {
+                    if (consoleId !in consoleIds) continue
+                    conn.prepareStatement(
+                        "INSERT OR IGNORE INTO workspace_consoles(workspace_id, console_id, sort_order, added_at) " +
+                            "VALUES (?, ?, ?, ?)",
+                    ).use { ps ->
+                        ps.setString(1, workspace.id)
+                        ps.setString(2, consoleId)
+                        ps.setInt(3, order++)
+                        ps.setLong(4, now)
+                        ps.executeUpdate()
+                    }
+                }
+            }
+
+            conn.commit()
+        } catch (e: Exception) {
+            conn.rollback()
+            throw e
+        } finally {
+            conn.autoCommit = true
+        }
+    }
+
+    private fun deleteConsoleFile(rec: ConsoleRecord) {
+        if (!rec.external && rec.filePath.isNotBlank()) {
+            runCatching { ConsoleFiles.delete(java.nio.file.Paths.get(rec.filePath)) }
+        }
+    }
+
     // ---------- workspaces（控制台的虚拟分组） ----------
 
     fun listWorkspaces(): List<WorkspaceRecord> =
