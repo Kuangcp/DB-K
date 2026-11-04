@@ -10,3 +10,4 @@ logs
 
 # superpowers 隔离工作树
 .worktrees/
+.superpowers/
