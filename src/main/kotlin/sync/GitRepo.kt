@@ -136,6 +136,9 @@ class GitRepo(val workTree: Path) {
     fun conflictedPaths(): List<String> =
         run("diff", "--name-only", "--diff-filter=U").out.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
+    /** 某个合并阶段是否存在该路径（用于区分「删除」与「空文件」）。 */
+    fun stageExists(stage: Int, path: String): Boolean = run("cat-file", "-e", ":$stage:$path").ok
+
     /** `git show :<stage>:<path>` 的原始字节（stage 2 = ours，3 = theirs）。 */
     fun stageBlob(stage: Int, path: String): ByteArray {
         val raw = execBytes(listOf("show", ":$stage:$path"), workTree) ?: return ByteArray(0)

@@ -102,6 +102,13 @@ data class RemovedIds(
 
 data class SyncStats(val written: Int = 0, val deleted: Int = 0, val unchanged: Int = 0)
 
+/** 拉取结果：成功 / 需要用户取舍冲突 / 失败。 */
+sealed interface PullOutcome {
+    data class Synced(val stats: SyncStats = SyncStats(), val skippedConsoles: Int = 0) : PullOutcome
+    data class NeedResolution(val conflicts: List<ConflictItem>) : PullOutcome
+    data class Failed(val failure: SyncFailure, val detail: String? = null) : PullOutcome
+}
+
 /** 读取合并结果后的导入计划：要写入的快照 + 要删除的本地 id + 被跳过的孤儿控制台数。 */
 data class SyncPlan(
     val snapshot: SyncSnapshot,

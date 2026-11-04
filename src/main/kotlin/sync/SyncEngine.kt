@@ -205,6 +205,199 @@ class SyncEngine(
         return Files.list(dir).use { s -> s.anyMatch { Files.isRegularFile(it) } }
     }
 
+    // ---------- 拉取 / 冲突 ----------
+
+    private var pendingConflicts: List<ConflictItem> = emptyList()
+    private var pendingRemote: String = "origin"
+    private var pendingBranch: String = "main"
+    private var pendingHost: String = "local"
+
+    /**
+     * 拉取并合并：本地快照先提交（首次同步/克隆场景除外）→ fetch → merge →
+     * 冲突则返回 [PullOutcome.NeedResolution]（不导入任何东西）→ 无冲突则导入合并结果。
+     *
+     * @param firstSync 本设备从未成功同步过（`sync.properties.lastSyncAtMs == 0`）。此时工作树可能刚
+     *   从远端克隆而来，**不能**用本地快照提交（会把远端独有实体当成“本地删除”提交），直接从合并结果导入。
+     */
+    fun pull(
+        remote: String,
+        branch: String,
+        key: SecretKey,
+        passphraseOk: Boolean,
+        hostLabel: String,
+        firstSync: Boolean = false,
+    ): PullOutcome {
+        pendingRemote = remote
+        pendingBranch = branch
+        pendingHost = hostLabel.ifBlank { "local" }
+        if (!passphraseOk) return PullOutcome.Failed(SyncFailure.WRONG_PASSPHRASE)
+        if (!Files.isDirectory(workTree.resolve(".git"))) {
+            return PullOutcome.Failed(SyncFailure.GIT_FAILED, "repository-not-initialized")
+        }
+        if (git.mergeInProgress()) git.mergeAbort()
+
+        val remoteRef = "origin/$branch"
+        if (!git.hasCommits()) {
+            val fetch = git.fetch(remote, branch)
+            if (!fetch.ok) return PullOutcome.Failed(SyncFailure.GIT_FAILED, fetch.out.take(300))
+            if (git.run("rev-parse", "--verify", remoteRef).ok) {
+                val reset = git.resetHard(remoteRef)
+                if (!reset.ok) return PullOutcome.Failed(SyncFailure.GIT_FAILED, reset.out.take(300))
+            }
+            return importMerged(key)
+        }
+
+        val skipLocalExport = firstSync || isRemoteEmptyGuardTripped()
+        if (!skipLocalExport) {
+            writeTree(key)
+            commitLocal(pendingHost)
+        }
+
+        val fetch = git.fetch(remote, branch)
+        if (!fetch.ok) return PullOutcome.Failed(SyncFailure.GIT_FAILED, fetch.out.take(300))
+
+        if (git.run("rev-parse", "--verify", remoteRef).ok) {
+            val allowUnrelated = !git.hasMergeBase(remoteRef)
+            val merge = git.merge(remoteRef, allowUnrelated = allowUnrelated)
+            if (!merge.ok) {
+                val conflicts = buildConflicts(key)
+                if (conflicts.isEmpty()) {
+                    git.mergeAbort()
+                    return PullOutcome.Failed(SyncFailure.GIT_FAILED, merge.out.take(300))
+                }
+                pendingConflicts = conflicts
+                return PullOutcome.NeedResolution(conflicts)
+            }
+        }
+        return importMerged(key)
+    }
+
+    /** 用用户在冲突弹窗里的选择解决冲突，然后导入合并结果（可选再推送）。 */
+    fun resolveConflicts(
+        choices: Map<String, ConflictChoice>,
+        key: SecretKey,
+        autoPush: Boolean,
+    ): SyncOutcome {
+        val conflicted = git.conflictedPaths()
+        if (conflicted.isEmpty()) {
+            return SyncOutcome(ok = false, failure = SyncFailure.GIT_FAILED, detail = "no-conflict")
+        }
+        val missing = conflicted.filter { it !in choices }
+        if (missing.isNotEmpty()) {
+            return SyncOutcome(ok = false, failure = SyncFailure.GIT_FAILED, detail = "unresolved: $missing")
+        }
+        for (path in conflicted) {
+            val stage = if (choices[path] == ConflictChoice.LOCAL) 2 else 3
+            if (git.stageExists(stage, path)) {
+                git.writeFile(path, git.stageBlob(stage, path))
+            } else {
+                git.deleteFile(path) // 选择的那一侧已删除该实体
+            }
+            git.add(listOf(path))
+        }
+        git.commit("$app sync: resolve conflicts $pendingHost ${java.time.Instant.now()}")
+        pendingConflicts = emptyList()
+
+        return when (val imported = importMerged(key)) {
+            is PullOutcome.Failed -> SyncOutcome(ok = false, failure = imported.failure, detail = imported.detail)
+            is PullOutcome.NeedResolution -> SyncOutcome(ok = false, failure = SyncFailure.GIT_FAILED)
+            is PullOutcome.Synced -> {
+                if (!autoPush) return SyncOutcome(ok = true, skippedConsoles = imported.skippedConsoles)
+                push(pendingRemote, pendingBranch)
+            }
+        }
+    }
+
+    /** 放弃当前冲突（回到拉取前的状态）。 */
+    fun abortMerge() {
+        if (git.mergeInProgress()) git.mergeAbort()
+        pendingConflicts = emptyList()
+    }
+
+    /** 当前待用户取舍的冲突（取消后为空）。 */
+    fun pendingConflicts(): List<ConflictItem> = pendingConflicts
+
+    private fun importMerged(key: SecretKey): PullOutcome {
+        val plan = readTree(key).getOrElse { e ->
+            Logger.error(e, "sync: cannot read merged tree")
+            return PullOutcome.Failed(SyncFailure.WRONG_PASSPHRASE, e.message)
+        }
+        return runCatching { apply(plan) }
+            .fold(
+                onSuccess = { skipped -> PullOutcome.Synced(skippedConsoles = skipped + plan.skippedConsoles) },
+                onFailure = { e ->
+                    Logger.error(e, "sync: applying merged tree failed")
+                    PullOutcome.Failed(SyncFailure.IO_FAILED, e.message)
+                },
+            )
+    }
+
+    private fun buildConflicts(key: SecretKey): List<ConflictItem> {
+        val root = root()
+        return git.conflictedPaths().map { path ->
+            val file = workTree.resolve(path)
+            val ref = runCatching { SyncPaths.parse(root, file) }.getOrNull()
+            val kind = kindOf(ref)
+            val local = git.stageBlob(2, path)
+            val remote = git.stageBlob(3, path)
+            ConflictItem(
+                path = path,
+                kind = kind,
+                id = ref?.id,
+                local = preview(kind, local, key, ref),
+                remote = preview(kind, remote, key, ref),
+                localBytes = local,
+                remoteBytes = remote,
+            )
+        }
+    }
+
+    private fun kindOf(ref: SyncRef?): SyncEntityKind = when (ref) {
+        is SyncRef.Folder -> SyncEntityKind.FOLDER
+        is SyncRef.Connection -> SyncEntityKind.CONNECTION
+        is SyncRef.Workspace -> SyncEntityKind.WORKSPACE
+        is SyncRef.ConsoleMeta -> SyncEntityKind.CONSOLE_META
+        is SyncRef.ConsoleBody -> SyncEntityKind.CONSOLE_BODY
+        is SyncRef.Setting -> SyncEntityKind.SETTINGS
+        null -> SyncEntityKind.UNKNOWN
+    }
+
+    /** 冲突摘要：密码永远不出现（连接只显示 name/dbType/host/port/database/user）。 */
+    private fun preview(kind: SyncEntityKind, bytes: ByteArray, key: SecretKey, ref: SyncRef?): ConflictPreview {
+        if (bytes.isEmpty()) return ConflictPreview.Unknown(0)
+        val text = String(bytes, Charsets.UTF_8)
+        return when (kind) {
+            SyncEntityKind.CONNECTION -> runCatching {
+                val plain = if (SecretBox.isEncrypted(text)) SecretBox.decrypt(key, text) else bytes
+                val c = syncJson.decodeFromString(ConnectionSync.serializer(), String(plain, Charsets.UTF_8))
+                ConflictPreview.Connection(c.name, c.dbType, c.host, c.port, c.database, c.user)
+            }.getOrElse { ConflictPreview.Unknown(bytes.size) }
+
+            SyncEntityKind.CONSOLE_BODY -> {
+                val lines = text.lines()
+                ConflictPreview.Sql(
+                    lineCount = lines.size,
+                    head = lines.take(5).map { it.take(120) },
+                )
+            }
+
+            SyncEntityKind.FOLDER -> named(text) { syncJson.decodeFromString(FolderSync.serializer(), it).name }
+                ?: ConflictPreview.Named(ref?.id.orEmpty())
+
+            SyncEntityKind.WORKSPACE -> named(text) { syncJson.decodeFromString(WorkspaceSync.serializer(), it).name }
+                ?: ConflictPreview.Named(ref?.id.orEmpty())
+
+            SyncEntityKind.CONSOLE_META -> named(text) { syncJson.decodeFromString(ConsoleMetaSync.serializer(), it).name }
+                ?: ConflictPreview.Named(ref?.id.orEmpty())
+
+            SyncEntityKind.SETTINGS -> ConflictPreview.Named(ref?.id ?: "settings")
+            SyncEntityKind.UNKNOWN -> ConflictPreview.Unknown(bytes.size)
+        }
+    }
+
+    private fun named(text: String, name: (String) -> String): ConflictPreview? =
+        runCatching { ConflictPreview.Named(name(text)) }.getOrNull()
+
     // ---------- 读取合并结果 ----------
 
     /**
