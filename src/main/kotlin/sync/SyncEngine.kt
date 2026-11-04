@@ -16,11 +16,47 @@ class SyncEngine(
     private val app: String,
     private val adapter: SyncAdapter,
     private val git: GitRepo,
-    private val workTree: Path,
+    val workTree: Path,
 ) {
 
     /** 仓库内本应用的命名空间目录（`<workTree>/<app>/`）。 */
     fun root(): Path = SyncPaths.appRoot(workTree, app)
+
+    // ---------- 仓库生命周期 ----------
+
+    /**
+     * 确保工作树是一个 git 仓库并指向 [remoteUrl]；返回 null 表示就绪。
+     * 首次使用（目录为空/不存在）时 `git init` 并设置本仓库的提交身份。
+     */
+    fun ensureRepo(remoteUrl: String, branch: String): SyncFailure? {
+        if (remoteUrl.isBlank()) return SyncFailure.NOT_CONFIGURED
+        if (branch.isBlank()) return SyncFailure.NOT_CONFIGURED
+        if (!Files.isDirectory(workTree.resolve(".git"))) {
+            val init = git.init()
+            if (!init.ok) {
+                Logger.warn("sync: git init failed: {}", init.out)
+                return SyncFailure.GIT_FAILED
+            }
+            git.setLocalIdentity()
+        }
+        val remote = git.setRemote("origin", remoteUrl)
+        if (!remote.ok) {
+            Logger.warn("sync: git remote setup failed: {}", remote.out)
+            return SyncFailure.GIT_FAILED
+        }
+        return null
+    }
+
+    /** 克隆远端到工作树（仅「克隆并导入」与测试用）；已有 .git 时返回 [SyncFailure.GIT_FAILED]。 */
+    fun gitClone(remoteUrl: String, branch: String): SyncFailure? {
+        if (Files.isDirectory(workTree.resolve(".git"))) return SyncFailure.GIT_FAILED
+        val result = GitRepo(workTree).clone(remoteUrl, branch)
+        if (!result.ok) {
+            Logger.warn("sync: clone failed: {}", result.out)
+            return SyncFailure.GIT_FAILED
+        }
+        return null
+    }
 
     // ---------- 仓库级密钥材料 ----------
 
@@ -131,6 +167,42 @@ class SyncEngine(
             }
         }
         return removed
+    }
+
+    // ---------- 提交 / 推送 ----------
+
+    /** 暂存本应用命名空间并提交；返回是否产生了提交（无变更 = false，不算失败）。 */
+    fun commitLocal(hostLabel: String): Boolean {
+        val add = git.add(listOf(app))
+        if (!add.ok) {
+            Logger.warn("sync: git add failed: {}", add.out)
+            return false
+        }
+        return git.commit("$app sync: $hostLabel ${java.time.Instant.now()}")
+    }
+
+    fun push(remote: String, branch: String): SyncOutcome {
+        val result = git.push(remote, branch)
+        if (result.ok) return SyncOutcome(ok = true)
+        val text = result.out
+        val rejected = listOf("rejected", "non-fast-forward", "fetch first", "Updates were rejected")
+            .any { text.contains(it, ignoreCase = true) }
+        return SyncOutcome(
+            ok = false,
+            failure = if (rejected) SyncFailure.PUSH_REJECTED else SyncFailure.GIT_FAILED,
+            detail = text.take(500),
+        )
+    }
+
+    /**
+     * 空库守卫：本地同步态为空，但工作树里已有连接条目 —— 说明要么新装设备还没拉取，
+     * 要么本地数据目录被清空。此时若照常导出，会把远端仓库清成空。
+     */
+    fun isRemoteEmptyGuardTripped(): Boolean {
+        if (!adapter.exportSnapshot().isEmpty()) return false
+        val dir = root().resolve("connections")
+        if (!Files.isDirectory(dir)) return false
+        return Files.list(dir).use { s -> s.anyMatch { Files.isRegularFile(it) } }
     }
 
     // ---------- 读取合并结果 ----------
