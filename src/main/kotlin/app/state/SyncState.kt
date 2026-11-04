@@ -17,12 +17,17 @@ import sync.SyncOutcome
  * - [lastResult]：最近一次动作结果（成功摘要 / 失败分类）。
  * - [conflicts]：待用户取舍的冲突；非空时主窗口显示冲突弹窗。
  */
-class SyncState {
+class SyncState(initial: SyncSettings = SyncSettings()) {
     var running by mutableStateOf(false)
-    var configured by mutableStateOf(false)
-    var passphraseSet by mutableStateOf(false)
+
+    /** 远端 URL 已填写（决定按钮可用性）。 */
+    var configured by mutableStateOf(initial.remoteUrl.isNotBlank())
+
+    /** 本机已记住口令。 */
+    var passphraseSet by mutableStateOf(initial.passphrase != null)
+
     var gitAvailable by mutableStateOf(true)
-    var settings by mutableStateOf(SyncSettings())
+    var settings by mutableStateOf(initial)
     var lastResult by mutableStateOf<SyncOutcome?>(null)
     var conflicts by mutableStateOf<List<ConflictItem>>(emptyList())
 }

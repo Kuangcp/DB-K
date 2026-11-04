@@ -69,10 +69,16 @@ class SyncServiceFlowTest {
         assertTrue(server.push("origin", "main").ok)
     }
 
-    private fun service(adapter: FakeAdapter): SyncService = SyncService(
+    private fun service(
+        adapter: FakeAdapter,
+        onAfterImport: () -> Unit = {},
+        onBeforeExport: () -> Unit = {},
+    ): SyncService = SyncService(
         repo = ConnectionsRepository(dir.resolve("app.db"), dir.resolve("consoles")),
         dataDir = dir,
         hostLabel = "test-device",
+        onBeforeExport = onBeforeExport,
+        onAfterImport = onAfterImport,
         engineFactory = { settings ->
             val tree = dir.resolve(settings.localDir)
             SyncEngine("db-k", adapter, GitRepo(tree), tree)
@@ -253,6 +259,34 @@ class SyncServiceFlowTest {
         service.configure(service.state.settings.copy(autoPushOnExit = true))
         service.exitAutoPush()
         assertEquals(headBefore, remoteHead(remote))
+    }
+
+    @Test
+    fun `import callbacks run on the caller thread, not on an IO worker`() = runTest {
+        assumeTrue(GitRepo.isAvailable())
+        val remote = bare("threads.git")
+        seedRemote(remote)
+        val threads = mutableListOf<String>()
+        val service = service(
+            FakeAdapter(SyncSnapshot()),
+            onBeforeExport = { threads += Thread.currentThread().name },
+            onAfterImport = { threads += Thread.currentThread().name },
+        )
+        service.configure(SyncSettings(remoteUrl = remote.toString(), localDir = "sync", branch = "main"))
+        assertTrue(service.cloneAndImport(passphrase).ok)
+
+        // 本地已有数据后走一次 pull，覆盖 onBeforeExport 路径
+        assertTrue(GitRepo(dir.resolve("sync")).run("remote", "set-url", "origin", remote.toString()).ok)
+        service.pull()
+
+        // clone → onAfterImport；pull → onBeforeExport + onAfterImport
+        assertEquals(3, threads.size, threads.toString())
+        threads.forEach { name ->
+            assertFalse(
+                name.startsWith("DefaultDispatcher") || name.startsWith("IO"),
+                "同步状态回写不能在 IO 线程（Compose 会报 concurrent change）：$name",
+            )
+        }
     }
 
     @Test
