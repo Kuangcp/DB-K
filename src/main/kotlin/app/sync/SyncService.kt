@@ -197,9 +197,13 @@ class SyncService(
         }
         prefs.save(settings.copy(passphrase = passphrase))
         refreshState()
-        val plan = engine.readTree(key).getOrElse { e ->
+        val plan0 = engine.readTree(key).getOrElse { e ->
             return@serialized fail(SyncFailure.WRONG_PASSPHRASE, e.message)
         }
+        // 首次接入前本地可能已有数据（例如本地目录还没建，但用户已配了连接）：
+        // 远端为准更新同名实体，但**不删**本地独有实体 —— 它们会在下一次推送里补进仓库。
+        val localHasData = !engine.localSnapshotIsEmpty()
+        val plan = if (localHasData) plan0.copy(removed = sync.RemovedIds()) else plan0
         val applied = runCatching { engine.apply(plan) }.getOrElse { e ->
             Logger.error(e, "sync: import after clone failed")
             return@serialized fail(SyncFailure.IO_FAILED, e.message)
@@ -227,13 +231,14 @@ class SyncService(
         engine.writeCheck(newKey)
         engine.writeTree(newKey) // 旧密钥解不开 → 全部 .enc 重写
         engine.commitLocal(hostLabel)
+        // 先记住新口令：即使推送失败，本地文件也已用新口令加密，否则下次拉取会解不开。
+        prefs.save(settings.copy(passphrase = new))
+        refreshState()
         val outcome = engine.push("origin", settings.branch)
         if (!outcome.ok) {
             state.lastResult = outcome
             return@serialized outcome
         }
-        prefs.save(settings.copy(passphrase = new))
-        refreshState()
         markSynced()
         val ok = SyncOutcome(ok = true)
         state.lastResult = ok
@@ -280,10 +285,10 @@ class SyncService(
 
     // ---------- 内部 ----------
 
-    private suspend fun <T> serialized(block: suspend () -> T): T {
+    private suspend fun <T> serialized(block: suspend () -> T): T = mutex.withLock {
         state.running = true
-        return try {
-            mutex.withLock { withContext(Dispatchers.IO) { block() } }
+        try {
+            withContext(Dispatchers.IO) { block() }
         } finally {
             state.running = false
         }

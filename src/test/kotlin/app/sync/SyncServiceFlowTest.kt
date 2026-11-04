@@ -31,9 +31,11 @@ class SyncServiceFlowTest {
 
     private class FakeAdapter(var snapshot: SyncSnapshot) : SyncAdapter {
         var lastApplied: SyncSnapshot? = null
+        var lastRemoved: RemovedIds? = null
         override fun exportSnapshot(): SyncSnapshot = snapshot
         override fun applySnapshot(snapshot: SyncSnapshot, removed: RemovedIds): Int {
             lastApplied = snapshot
+            lastRemoved = removed
             this.snapshot = snapshot
             return 0
         }
@@ -101,6 +103,49 @@ class SyncServiceFlowTest {
         assertTrue(service.state.passphraseSet)
         assertTrue(service.state.settings.lastSyncAtMs > 0)
         assertTrue(Files.isDirectory(dir.resolve("sync/.git")))
+    }
+
+    @Test
+    fun `clone and import keeps local-only entities instead of deleting them`() = runTest {
+        assumeTrue(GitRepo.isAvailable())
+        val remote = bare("clone3.git")
+        seedRemote(remote)
+        val localOnly = ConnectionSync(id = "c2", name = "local", dbType = "SQLITE", database = "b.db")
+        val adapter = FakeAdapter(SyncSnapshot(connections = listOf(localOnly)))
+        val service = service(adapter)
+        service.configure(SyncSettings(remoteUrl = remote.toString(), localDir = "sync", branch = "main"))
+
+        val outcome = service.cloneAndImport(passphrase)
+        assertTrue(outcome.ok, outcome.toString())
+        assertEquals(emptySet(), adapter.lastRemoved!!.connections, "首次接入不能删本地独有实体")
+        assertEquals(setOf("c1"), adapter.lastApplied!!.connections.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `passphrase is remembered even when the post-change push is rejected`() = runTest {
+        assumeTrue(GitRepo.isAvailable())
+        val remote = bare("change4.git")
+        seedRemote(remote)
+        val adapter = FakeAdapter(SyncSnapshot())
+        val service = service(adapter)
+        service.configure(SyncSettings(remoteUrl = remote.toString(), localDir = "sync", branch = "main"))
+        assertTrue(service.cloneAndImport(passphrase).ok)
+
+        // 远端先前进一次，使随后的推送被拒
+        val other = dir.resolve("other")
+        val otherRepo = GitRepo(other)
+        assertTrue(otherRepo.clone(remote.toString(), "main").ok)
+        Files.writeString(other.resolve("db-k/README.md"), "changed by other device\n")
+        assertTrue(otherRepo.add(listOf("db-k")).ok)
+        assertTrue(otherRepo.commit("other"))
+        assertTrue(otherRepo.push("origin", "main").ok)
+
+        val outcome = service.changePassphrase(passphrase, newPassphrase)
+        assertEquals(SyncFailure.PUSH_REJECTED, outcome.failure)
+        assertEquals(newPassphrase, SyncPrefs(dir.resolve("sync.properties")).load().passphrase)
+        val salt = Files.readAllBytes(dir.resolve("sync/db-k/salt.bin"))
+        val enc = Files.readString(dir.resolve("sync/db-k/connections/c1.enc"))
+        assertTrue(runCatching { SecretBox.decrypt(SecretBox.deriveKey(newPassphrase, salt), enc) }.isSuccess)
     }
 
     @Test

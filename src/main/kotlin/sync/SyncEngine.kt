@@ -205,7 +205,7 @@ class SyncEngine(
      * 要么本地数据目录被清空。此时若照常导出，会把远端仓库清成空。
      */
     fun isRemoteEmptyGuardTripped(): Boolean {
-        if (!adapter.exportSnapshot().isEmpty()) return false
+        if (!localSnapshotIsEmpty()) return false
         val dir = root().resolve("connections")
         if (!Files.isDirectory(dir)) return false
         return Files.list(dir).use { s -> s.anyMatch { Files.isRegularFile(it) } }
@@ -403,6 +403,9 @@ class SyncEngine(
 
     private fun named(text: String, name: (String) -> String): ConflictPreview? =
         runCatching { ConflictPreview.Named(name(text)) }.getOrNull()
+
+    /** 本地同步态是否为空（连接与控制台都为空）。 */
+    fun localSnapshotIsEmpty(): Boolean = adapter.exportSnapshot().isEmpty()
 
     // ---------- 读取合并结果 ----------
 

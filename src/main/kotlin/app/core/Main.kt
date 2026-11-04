@@ -679,10 +679,30 @@ private fun WindowScope.AppBody(
         onSaveSettings = { settings -> scope.launch { syncService.configure(settings) } },
         onSubmitPassphrase = { passphrase -> scope.launch { syncService.submitPassphrase(passphrase) } },
         onClearPassphrase = { scope.launch { syncService.clearPassphrase() } },
-        onChangePassphrase = { old, new -> scope.launch { syncService.changePassphrase(old, new) } },
-        onClone = { passphrase -> scope.launch { syncService.cloneAndImport(passphrase) } },
-        onPull = { scope.launch { syncService.pull() } },
-        onPush = { scope.launch { syncService.push() } },
+        onChangePassphrase = { settings, old, new ->
+            scope.launch {
+                syncService.configure(settings)
+                syncService.changePassphrase(old, new)
+            }
+        },
+        onClone = { settings, passphrase ->
+            scope.launch {
+                syncService.configure(settings)
+                syncService.cloneAndImport(passphrase)
+            }
+        },
+        onPull = { settings ->
+            scope.launch {
+                syncService.configure(settings)
+                syncService.pull()
+            }
+        },
+        onPush = { settings ->
+            scope.launch {
+                syncService.configure(settings)
+                syncService.push()
+            }
+        },
     )
     // 函数/过程/聚合名（PG 等能探测到的数据源；其余为空集），补全时排在表名之前
     val completionFunctions: List<String> = activeProfile?.let { p ->

@@ -58,10 +58,11 @@ data class SyncActions(
     val onSaveSettings: (SyncSettings) -> Unit,
     val onSubmitPassphrase: (String) -> Unit,
     val onClearPassphrase: () -> Unit,
-    val onChangePassphrase: (old: String, new: String) -> Unit,
-    val onClone: (passphrase: String) -> Unit,
-    val onPull: () -> Unit,
-    val onPush: () -> Unit,
+    /** 每个动作都携带表单当前值：先保存配置再执行动作，避免「改了 URL 马上点拉取」用到旧配置。 */
+    val onChangePassphrase: (settings: SyncSettings, old: String, new: String) -> Unit,
+    val onClone: (settings: SyncSettings, passphrase: String) -> Unit,
+    val onPull: (settings: SyncSettings) -> Unit,
+    val onPush: (settings: SyncSettings) -> Unit,
 )
 
 /**
@@ -125,16 +126,16 @@ fun SyncPanel(state: SyncState, actions: SyncActions) {
         autoPushOnExit = state.settings.autoPushOnExit
     }
 
+    fun formSettings(): SyncSettings = state.settings.copy(
+        remoteUrl = remoteUrl.trim(),
+        localDir = localDir.trim().ifEmpty { "sync" },
+        branch = branch.trim().ifEmpty { "main" },
+        autoPushAfterPull = autoPushAfterPull,
+        autoPushOnExit = autoPushOnExit,
+    )
+
     fun saveForm() {
-        actions.onSaveSettings(
-            state.settings.copy(
-                remoteUrl = remoteUrl.trim(),
-                localDir = localDir.trim().ifEmpty { "sync" },
-                branch = branch.trim().ifEmpty { "main" },
-                autoPushAfterPull = autoPushAfterPull,
-                autoPushOnExit = autoPushOnExit,
-            ),
-        )
+        actions.onSaveSettings(formSettings())
     }
 
     val busy = state.running
@@ -219,8 +220,8 @@ fun SyncPanel(state: SyncState, actions: SyncActions) {
                 passphraseDialog = PassphraseDialogMode.Enter
             },
         )
-        OutlinedButtonLike(label = t(Str.SyncPull), enabled = canPull, onClick = actions.onPull)
-        OutlinedButtonLike(label = t(Str.SyncPush), enabled = canPull, onClick = actions.onPush)
+        OutlinedButtonLike(label = t(Str.SyncPull), enabled = canPull, onClick = { actions.onPull(formSettings()) })
+        OutlinedButtonLike(label = t(Str.SyncPush), enabled = canPull, onClick = { actions.onPush(formSettings()) })
         if (busy) {
             Text(
                 t(Str.SyncRunning),
@@ -288,10 +289,10 @@ fun SyncPanel(state: SyncState, actions: SyncActions) {
             onSubmit = { old, new ->
                 passphraseDialog = null
                 when {
-                    mode == PassphraseDialogMode.Change -> actions.onChangePassphrase(old, new)
+                    mode == PassphraseDialogMode.Change -> actions.onChangePassphrase(formSettings(), old, new)
                     clonePending -> {
                         clonePending = false
-                        actions.onClone(new)
+                        actions.onClone(formSettings(), new)
                     }
                     else -> actions.onSubmitPassphrase(new)
                 }
